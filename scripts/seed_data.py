@@ -229,7 +229,8 @@ class DatabaseSeeder:
                     "time_slots":TimeSlot
                 }.get(entity_type)
                 if model:
-                    session.add(model(**rec)); saved+=1
+                    session.add(model(**rec))
+                    saved+=1
             return {"success":True,"saved_records":saved}
 
 def main():
