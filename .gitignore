@@ -123,3 +123,5 @@ sample_data/
 demo_files/
 docker-compose.yml
 
+*.yml
+docker-compose.yml
