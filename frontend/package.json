@@ -1,0 +1,42 @@
+{
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.2.2",
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    
+    "zustand": "^4.4.7",
+    "@tanstack/react-query": "^5.8.4",
+    "axios": "^1.6.2",
+    
+    "tailwindcss": "^3.3.6",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    
+    "react-router-dom": "^6.20.1",
+    "@types/node": "^20.9.4",
+    
+    "react-hook-form": "^7.48.2",
+    "react-dropzone": "^14.2.3",
+    "react-table": "^7.8.0",
+    "@types/react-table": "^7.7.18",
+    
+    "recharts": "^2.8.0",
+    "react-hot-toast": "^2.4.1",
+    "lucide-react": "^0.294.0",
+    
+    "socket.io-client": "^4.7.4",
+    "react-beautiful-dnd": "^13.1.1",
+    "@types/react-beautiful-dnd": "^13.1.8"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.1.1",
+    "vite": "^5.0.0",
+    "eslint": "^8.54.0",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "prettier": "^3.1.0",
+    "prettier-plugin-tailwindcss": "^0.5.7"
+  }
+}
