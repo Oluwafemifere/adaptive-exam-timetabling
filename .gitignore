@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 # Environment & Secrets
 .env
 .env.*.local
@@ -15,7 +15,7 @@
 .env.*.local
 .env.production
 .env.staging
->>>>>>> abb1650c35bda11eb54f3eae5f161adccb7de8cd
+
 *.pem
 *.key
 *.p12
@@ -267,17 +267,17 @@ Dockerfile.prod
 # DATABASE
 # =================================================================
 # PostgreSQL
->>>>>>> abb1650c35bda11eb54f3eae5f161adccb7de8cd
+
 *.sql
 *.dump
 *.backup
 pgdata/
 postgres_data/
-<<<<<<< HEAD
+
 =======
 
 # SQLite
->>>>>>> abb1650c35bda11eb54f3eae5f161adccb7de8cd
+
 *.sqlite
 *.sqlite3
 *.db
@@ -302,7 +302,7 @@ lerna-debug.log*
 
 # Runtime data
 pids/
->>>>>>> abb1650c35bda11eb54f3eae5f161adccb7de8cd
+
 *.pid
 *.seed
 *.pid.lock
@@ -313,7 +313,7 @@ pids/
 # =================================================================
 # FILE UPLOADS & USER DATA
 # =================================================================
->>>>>>> abb1650c35bda11eb54f3eae5f161adccb7de8cd
+
 uploads/
 media/
 static/uploads/
@@ -333,7 +333,7 @@ uploads*/
 # SCHEDULING ENGINE DATA
 # =================================================================
 # Solver outputs
->>>>>>> abb1650c35bda11eb54f3eae5f161adccb7de8cd
+
 solutions/
 *.sol
 *.lp
@@ -348,7 +348,6 @@ benchmarks/results/
 performance_logs/
 
 # Cache files
->>>>>>> abb1650c35bda11eb54f3eae5f161adccb7de8cd
 .cpsat_cache/
 .ga_cache/
 .solution_cache/
@@ -497,16 +496,11 @@ mkdocs_site/
 # =================================================================
 # Add any project-specific files to ignore here
 # Example: custom configuration files, local scripts, etc.
->>>>>>> abb1650c35bda11eb54f3eae5f161adccb7de8cd
+
 local_config/
 scripts/local_*
 test_data/
 sample_data/
 demo_files/
-<<<<<<< HEAD
-docker-compose.yml
 
 *.yml
-docker-compose.yml
-=======
->>>>>>> abb1650c35bda11eb54f3eae5f161adccb7de8cd
