@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, current_user
 from app.models.users import User
-from app.services.notification.websocket_manager import subscribe_job  # async generator that yields job updates
+from app.services.notification import subscribe_job  # async generator that yields job updates
 
 router = APIRouter()
 

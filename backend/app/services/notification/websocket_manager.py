@@ -1,3 +1,4 @@
+#C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\services\notification\websocket_manager.py
 import json
 import logging
 from typing import Dict, Set, Any, AsyncGenerator, Optional, cast
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 
-from app.models.jobs import TimetableJob
+from app.models import TimetableJob
 from app.core import Settings as settings
 
 logger = logging.getLogger(__name__)
