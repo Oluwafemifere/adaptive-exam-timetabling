@@ -1,3 +1,4 @@
+#C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\services\scheduling\engine_manager.py
 import logging
 import asyncio
 from typing import Dict, Optional, Any, cast, TYPE_CHECKING
@@ -7,13 +8,13 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.jobs import TimetableJob, TimetableVersion
-from app.models.academic import AcademicSession, Exam
+from app.models import TimetableJob, TimetableVersion
+from app.models import AcademicSession, Exam
 from app.services.notification.websocket_manager import publish_job_update
 from app.services.scheduling.constraint_builder import ConstraintBuilder
 from app.services.scheduling.solution_evaluator import SolutionEvaluator
 from app.services.scheduling.incremental_solver import IncrementalSolver
-from app.core.exceptions import SchedulingError, InfeasibleProblemError #TODO implement
+from app.core import SchedulingError, InfeasibleProblemError 
 
 # Avoid importing runtime model types except for annotations
 if TYPE_CHECKING:
@@ -84,42 +85,50 @@ class SchedulingService:
             await self.db.rollback()
             logger.error(f"Failed to start timetable job: {e}")
             raise SchedulingError(f"Failed to start timetabling: {e}")
-
+    
+    if TYPE_CHECKING:
+        from app.models.jobs import TimetableJob, TimetableVersion
     async def get_timetable(self, timetable_id: str) -> Optional[Dict[str, Any]]:
         """Get timetable data by ID."""
         try:
-            version_query = select(TimetableVersion).options(
-                selectinload(TimetableVersion.job),
-                selectinload(TimetableVersion.job).selectinload(TimetableJob.session)
-            ).where(TimetableVersion.id == UUID(timetable_id))
+            timetable_uuid = UUID(timetable_id)
 
-            result = await self.db.execute(version_query)
-            version = result.scalar_one_or_none()
-
-            if version:
-                return await self._format_timetable_response(version)
-
-            job_query = select(TimetableJob).options(
-                selectinload(TimetableJob.versions),  # keep if relationship exists
-                selectinload(TimetableJob.session)
-            ).where(TimetableJob.id == UUID(timetable_id))
-
-            result = await self.db.execute(job_query)
-            job = result.scalar_one_or_none()
-
-            if job and getattr(job, "versions", None):
-                active_version = next(
-                    (v for v in job.versions if getattr(v, "is_active", False)),
-                    job.versions[-1] if job.versions else None
+            # Try to get TimetableVersion first
+            version_query = (
+                select(TimetableVersion)
+                .options(
+                    selectinload(TimetableVersion.job),
+                    selectinload(TimetableVersion.job).selectinload(TimetableJob.session)
                 )
-                if active_version:
-                    return await self._format_timetable_response(active_version)
+                .where(TimetableVersion.id == timetable_uuid)
+            )
+            result = await self.db.execute(version_query)
+            version_instance: Optional["TimetableVersion"] = result.scalar_one_or_none()
+
+            if version_instance is not None:
+                return await self._format_timetable_response(version_instance)
+
+            # Fallback: Try to get TimetableJob
+            job_query = (
+                select(TimetableJob)
+                .options(
+                    selectinload(TimetableJob.version),
+                    selectinload(TimetableJob.session)
+                )
+                .where(TimetableJob.id == timetable_uuid)
+            )
+            result = await self.db.execute(job_query)
+            job_instance = result.scalar_one_or_none()
+
+            if job_instance is not None and job_instance.version is not None:
+                return await self._format_timetable_response(job_instance.version) 
 
             return None
 
         except Exception as e:
             logger.error(f"Failed to get timetable {timetable_id}: {e}")
             raise
+
 
     async def generate_timetable(self, job_id: UUID) -> Dict[str, Any]:
         """Core timetable generation logic."""
@@ -255,7 +264,7 @@ class SchedulingService:
             exams_query = select(Exam).options(
                 selectinload(Exam.course),
                 selectinload(Exam.course).selectinload(Exam.course.registrations),
-                selectinload(Exam.rooms),
+                selectinload(Exam.exam_rooms),
                 selectinload(Exam.invigilators)
             ).where(Exam.session_id == session_id)
 

@@ -1,10 +1,11 @@
+#C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\api\v1\routes\auth.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session
 from app.core.auth import authenticate_user, create_access_token
-from app.schemas.auth import TokenData as Token
+from app.schemas import TokenData as Token
 
 router = APIRouter()
 

@@ -1,3 +1,4 @@
+#C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\services\job.py
 import logging
 from typing import List, Optional, cast
 from datetime import datetime, timedelta
@@ -8,8 +9,8 @@ from sqlalchemy import select, update, func
 
 from app.models.jobs import TimetableJob
 from app.models.users import User
-from app.schemas.jobs import JobCreate #TODO doesnt exist
-from app.core.exceptions import JobNotFoundError, JobAccessDeniedError # TODO will implement later
+from app.schemas import TimetableJobCreate as JobCreate
+from app.core import JobNotFoundError, JobAccessDeniedError
 
 logger = logging.getLogger(__name__)
 

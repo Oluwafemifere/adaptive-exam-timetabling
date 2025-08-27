@@ -17,7 +17,8 @@ async def websocket_job_updates(
 ):
     await websocket.accept()
     try:
-        async for update in subscribe_job(job_id, user.id, db):
+        # Convert user.id (UUID) to string to match the expected type
+        async for update in subscribe_job(job_id, str(user.id), db):
             await websocket.send_json(update)
     except WebSocketDisconnect:
         # client disconnected normally

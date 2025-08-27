@@ -1,0 +1,50 @@
+# app/schemas/__init__.py
+"""Expose schema modules and primary Pydantic models for convenient imports."""
+
+from . import auth, jobs, scheduling, uploads
+
+# Re-export commonly used classes for direct import
+from .auth import TokenData
+from .jobs import TimetableJobBase, TimetableJobCreate, TimetableJobRead
+from .scheduling import (
+    TimeSlotRead,
+    RoomAssignment,
+    ExamRead,
+    StaffRead,
+    StaffUnavailabilityRead,
+)
+from .uploads import (
+    UploadedFileBase,
+    UploadedFileCreate,
+    UploadedFileRead,
+    FileUploadSessionBase,
+    FileUploadSessionCreate,
+    FileUploadSessionRead,
+)
+
+__all__ = [
+    # modules
+    "auth",
+    "jobs",
+    "scheduling",
+    "uploads",
+    # auth
+    "TokenData",
+    # jobs
+    "TimetableJobBase",
+    "TimetableJobCreate",
+    "TimetableJobRead",
+    # scheduling
+    "TimeSlotRead",
+    "RoomAssignment",
+    "ExamRead",
+    "StaffRead",
+    "StaffUnavailabilityRead",
+    # uploads
+    "UploadedFileBase",
+    "UploadedFileCreate",
+    "UploadedFileRead",
+    "FileUploadSessionBase",
+    "FileUploadSessionCreate",
+    "FileUploadSessionRead",
+]
