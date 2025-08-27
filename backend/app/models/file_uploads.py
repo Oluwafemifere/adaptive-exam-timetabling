@@ -1,14 +1,16 @@
-# app/models/file_uploads.py
+#C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\models\file_uploads.py
 import uuid
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 from sqlalchemy import String, Integer, ForeignKey, DateTime, Text, JSON, BigInteger, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from .base import Base, TimestampMixin
-from .users import User
-from .academic import AcademicSession
 
+# Use TYPE_CHECKING to avoid circular imports
+if TYPE_CHECKING:
+    from .users import User
+    from .academic import AcademicSession
 
 class FileUploadSession(Base, TimestampMixin):
     __tablename__ = "file_upload_sessions"
@@ -23,7 +25,7 @@ class FileUploadSession(Base, TimestampMixin):
     validation_errors: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     completed_at: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
 
-    # Relationships
+    # Use string references to avoid circular imports
     uploader: Mapped["User"] = relationship("User")
     session: Mapped["AcademicSession"] = relationship("AcademicSession", back_populates="file_uploads")
     uploaded_files: Mapped[List["UploadedFile"]] = relationship("UploadedFile", back_populates="upload_session")
@@ -44,5 +46,4 @@ class UploadedFile(Base):
     validation_errors: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     uploaded_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
-    # Relationships
     upload_session: Mapped["FileUploadSession"] = relationship("FileUploadSession", back_populates="uploaded_files")

@@ -9,6 +9,7 @@ import logging
 from typing import Optional, AsyncGenerator, Dict, Any
 from contextlib import asynccontextmanager
 
+
 from sqlalchemy import text, event
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
@@ -17,7 +18,6 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.pool import QueuePool
 from sqlalchemy.exc import SQLAlchemyError
 
 # Configure logging
@@ -66,15 +66,20 @@ class DatabaseManager:
         try:
             # create async engine; pool options forwarded to the sync engine
             self.engine = create_async_engine(
-                db_url,
-                echo=echo,
-                poolclass=QueuePool,
-                pool_size=pool_size,
-                max_overflow=max_overflow,
-                pool_timeout=pool_timeout,
-                pool_recycle=pool_recycle,
-                pool_pre_ping=True,
-            )
+                    db_url,
+                    echo=echo,
+                    pool_size=pool_size,
+                    max_overflow=max_overflow,
+                    pool_timeout=pool_timeout,
+                    pool_recycle=pool_recycle,
+                    pool_pre_ping=True,
+                    connect_args={
+                        "server_settings": {
+                            "search_path": "exam_system,public"
+                        }
+                    }
+                )
+
 
             # async session factory
             self.AsyncSessionLocal = async_sessionmaker(
