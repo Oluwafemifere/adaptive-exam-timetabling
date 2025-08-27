@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import TimetableJob, TimetableVersion
 from app.models import AcademicSession, Exam
-from app.services.notification.websocket_manager import publish_job_update
+from app.services.notification import publish_job_update
 from app.services.scheduling.constraint_builder import ConstraintBuilder
 from app.services.scheduling.solution_evaluator import SolutionEvaluator
 from app.services.scheduling.incremental_solver import IncrementalSolver
@@ -120,8 +120,8 @@ class SchedulingService:
             result = await self.db.execute(job_query)
             job_instance = result.scalar_one_or_none()
 
-            if job_instance is not None and job_instance.version is not None:
-                return await self._format_timetable_response(job_instance.version) 
+            if job_instance is not None and job_instance.version is not None: # type: ignore
+                return await self._format_timetable_response(job_instance.version) # type: ignore
 
             return None
 
