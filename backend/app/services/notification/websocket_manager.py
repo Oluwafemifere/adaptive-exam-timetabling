@@ -1,7 +1,6 @@
-import asyncio
 import json
 import logging
-from typing import Dict, Set, Any, AsyncGenerator, Optional
+from typing import Dict, Set, Any, AsyncGenerator, Optional, cast
 from uuid import UUID
 from datetime import datetime
 from fastapi import WebSocket
@@ -10,15 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 
 from app.models.jobs import TimetableJob
-from app.core.config import Settings as settings
-
+from app.core import Settings as settings
 
 logger = logging.getLogger(__name__)
+
 
 class ConnectionManager:
     """Manages WebSocket connections for real-time updates."""
     
-    def __init__(self):
+    def __init__(self) -> None:
         # Active connections by job_id -> set of websockets
         self.job_connections: Dict[str, Set[WebSocket]] = {}
         # User connections by user_id -> set of websockets  
@@ -28,15 +27,15 @@ class ConnectionManager:
         self._redis: Optional[Redis] = None
         
     async def get_redis(self) -> Redis:
-        """Get Redis connection for pub/sub."""
         if not self._redis:
             self._redis = Redis.from_url(
                 settings.REDIS_URL,
                 encoding="utf-8",
                 decode_responses=True
             )
+        assert self._redis is not None
         return self._redis
-    
+
     async def connect_job_updates(
         self, 
         websocket: WebSocket, 
@@ -210,6 +209,7 @@ async def subscribe_job(
     """
     redis = await connection_manager.get_redis()
     channel_name = f"job_updates_{job_id}"
+    pubsub = None
     
     try:
         # Subscribe to Redis channel
@@ -242,11 +242,9 @@ async def subscribe_job(
     except Exception as e:
         logger.error(f"Error in job subscription for {job_id}: {e}")
     finally:
-        try:
+        if pubsub is not None:
             await pubsub.unsubscribe(channel_name)
             await pubsub.close()
-        except Exception as e:
-            logger.error(f"Error closing Redis subscription: {e}")
 
 
 async def publish_job_update(
@@ -280,12 +278,20 @@ async def get_initial_job_status(job_id: str, db: AsyncSession) -> Optional[Dict
         if not job:
             return None
         
+        # Convert SQLAlchemy DateTime to ISO string
+        # At runtime, job.started_at is actually a Python datetime object
+        started_at_iso = None
+        if job.started_at is not None:
+            # Cast to datetime to satisfy type checker
+            started_at_datetime = cast(datetime, job.started_at)
+            started_at_iso = started_at_datetime.isoformat()
+        
         return {
             'status': job.status,
             'progress': job.progress_percentage,
             'phase': job.solver_phase,
             'message': getattr(job, 'status_message', ''),
-            'started_at': job.started_at.isoformat() if job.started_at else None,
+            'started_at': started_at_iso,
             'estimated_completion': None  # Could calculate based on progress
         }
         

@@ -1,3 +1,4 @@
+#C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\core\auth.py
 from datetime import timedelta
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -8,7 +9,7 @@ from .config import Settings
 from .security import verify_password, create_access_token
 from ..database import get_db
 from ..models import User
-from ..schemas.auth import TokenData
+from ..schemas import TokenData
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
