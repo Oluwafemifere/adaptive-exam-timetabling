@@ -8,7 +8,7 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from .base import Base, TimestampMixin
 from .scheduling import Exam
 
-class Building(Base, TimestampMixin):
+class Building(Base):
     __tablename__ = "buildings"
 
     id: Mapped[uuid.UUID]      = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -28,7 +28,7 @@ class RoomType(Base):
 
     rooms: Mapped[List["Room"]]    = relationship(back_populates="room_type")
 
-class Room(Base, TimestampMixin):
+class Room(Base):
     __tablename__ = "rooms"
 
     id: Mapped[uuid.UUID]      = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -49,7 +49,7 @@ class Room(Base, TimestampMixin):
     room_type: Mapped["RoomType"]= relationship(back_populates="rooms")
     exam_rooms: Mapped[List["ExamRoom"]] = relationship(back_populates="room")
 
-class ExamRoom(Base, TimestampMixin):
+class ExamRoom(Base):
     __tablename__ = "exam_rooms"
 
     id: Mapped[uuid.UUID]      = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

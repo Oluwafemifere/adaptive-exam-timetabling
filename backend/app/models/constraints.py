@@ -7,7 +7,7 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from .base import Base, TimestampMixin
 from .users import SystemConfiguration 
 
-class ConstraintCategory(Base, TimestampMixin):
+class ConstraintCategory(Base):
     __tablename__ = "constraint_categories"
 
     id: Mapped[uuid.UUID]     = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -17,7 +17,7 @@ class ConstraintCategory(Base, TimestampMixin):
 
     rules: Mapped[list["ConstraintRule"]] = relationship(back_populates="category")
 
-class ConstraintRule(Base, TimestampMixin):
+class ConstraintRule(Base):
     __tablename__ = "constraint_rules"
 
     id: Mapped[uuid.UUID]     = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -34,7 +34,7 @@ class ConstraintRule(Base, TimestampMixin):
     category: Mapped["ConstraintCategory"] = relationship(back_populates="rules")
     configurations: Mapped[list["ConfigurationConstraint"]] = relationship(back_populates="rule")
 
-class ConfigurationConstraint(Base, TimestampMixin):
+class ConfigurationConstraint(Base):
     __tablename__ = "configuration_constraints"
 
     id: Mapped[uuid.UUID]     = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

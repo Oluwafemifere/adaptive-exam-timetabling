@@ -1,17 +1,20 @@
 #C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\models\academic.py
 import uuid
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
 from sqlalchemy import Date, DateTime, String, Boolean, Integer, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from .scheduling import Exam, StaffUnavailability, Staff
-from .jobs import TimetableJob
-from .file_uploads import FileUploadSession
 from .base import Base, TimestampMixin
 
+# Remove direct imports that cause circular dependencies
+# Use TYPE_CHECKING for type hints only
+if TYPE_CHECKING:
+    from .scheduling import Exam, StaffUnavailability, Staff
+    from .jobs import TimetableJob
+    from .file_uploads import FileUploadSession
 
-class AcademicSession(Base, TimestampMixin):
+class AcademicSession(Base):
     __tablename__ = "academic_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -21,14 +24,13 @@ class AcademicSession(Base, TimestampMixin):
     end_date: Mapped[str] = mapped_column(Date, nullable=False)
     is_active: Mapped[Optional[bool]] = mapped_column(Boolean, default=False, nullable=True)
 
+    # Use string references to avoid circular imports
     exams: Mapped[List["Exam"]] = relationship("Exam", back_populates="session")
     registrations: Mapped[List["CourseRegistration"]] = relationship("CourseRegistration", back_populates="session")
-    file_uploads: Mapped[List["FileUploadSession"]] = relationship("FileUploadSession", back_populates="session")
     staff_unavailability: Mapped[List["StaffUnavailability"]] = relationship("StaffUnavailability", back_populates="session")
     jobs: Mapped[List["TimetableJob"]] = relationship("TimetableJob", back_populates="session")
 
-
-class Department(Base, TimestampMixin):
+class Department(Base):
     __tablename__ = "departments"
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -42,8 +44,7 @@ class Department(Base, TimestampMixin):
     staff: Mapped[List["Staff"]] = relationship("Staff", back_populates="department")
     courses: Mapped[List["Course"]] = relationship("Course", back_populates="department")
 
-
-class Faculty(Base, TimestampMixin):
+class Faculty(Base):
     __tablename__ = "faculties"
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -53,8 +54,7 @@ class Faculty(Base, TimestampMixin):
 
     departments: Mapped[List["Department"]] = relationship("Department", back_populates="faculty")
 
-
-class Programme(Base, TimestampMixin):
+class Programme(Base):
     __tablename__ = "programmes"
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -68,8 +68,7 @@ class Programme(Base, TimestampMixin):
     department: Mapped["Department"] = relationship("Department", back_populates="programmes")
     students: Mapped[List["Student"]] = relationship("Student", back_populates="programme")
 
-
-class Course(Base, TimestampMixin):
+class Course(Base):
     __tablename__ = "courses"
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -88,8 +87,7 @@ class Course(Base, TimestampMixin):
     exams: Mapped[List["Exam"]] = relationship("Exam", back_populates="course")
     registrations: Mapped[List["CourseRegistration"]] = relationship("CourseRegistration", back_populates="course")
 
-
-class Student(Base, TimestampMixin):
+class Student(Base):
     __tablename__ = "students"
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -104,8 +102,7 @@ class Student(Base, TimestampMixin):
     programme: Mapped["Programme"] = relationship("Programme", back_populates="students")
     registrations: Mapped[List["CourseRegistration"]] = relationship("CourseRegistration", back_populates="student")
 
-
-class CourseRegistration(Base, TimestampMixin):
+class CourseRegistration(Base):
     __tablename__ = "course_registrations"
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
