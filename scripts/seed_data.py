@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\scripts\seed_data.py
+#scripts\seed_data.py
 import os
 import sys
 import asyncio

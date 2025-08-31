@@ -1,8 +1,9 @@
 # app/schemas/scheduling.py
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
 from uuid import UUID
-from datetime import date, time
+from datetime import date, time, datetime
+
 
 class TimeSlotRead(BaseModel):
     id: UUID
@@ -15,6 +16,7 @@ class TimeSlotRead(BaseModel):
     class Config:
         orm_mode = True
 
+
 class RoomAssignment(BaseModel):
     room_id: UUID
     allocated_capacity: int
@@ -22,6 +24,7 @@ class RoomAssignment(BaseModel):
 
     class Config:
         orm_mode = True
+
 
 class ExamRead(BaseModel):
     id: UUID
@@ -39,6 +42,7 @@ class ExamRead(BaseModel):
     class Config:
         orm_mode = True
 
+
 class StaffRead(BaseModel):
     id: UUID
     staff_number: str
@@ -53,6 +57,7 @@ class StaffRead(BaseModel):
     class Config:
         orm_mode = True
 
+
 class StaffUnavailabilityRead(BaseModel):
     id: UUID
     staff_id: UUID
@@ -63,3 +68,35 @@ class StaffUnavailabilityRead(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+# New schemas for the scheduling router
+class SchedulingDataResponse(BaseModel):
+    success: bool
+    message: str
+    data: Dict[str, Any]
+
+
+class TimetableGenerationRequest(BaseModel):
+    session_id: UUID
+    configuration_id: UUID
+    options: Optional[Dict[str, Any]] = None
+
+
+class TimetableGenerationResponse(BaseModel):
+    success: bool
+    message: str
+    job_id: UUID
+    status: str
+    estimated_completion_minutes: int
+
+
+class ConflictAnalysisResponse(BaseModel):
+    success: bool
+    message: str
+    data: Dict[str, Any]
+
+
+class SchedulingJobResponse(BaseModel):
+    success: bool
+    job: Any  # This should be TimetableJobRead from jobs schema

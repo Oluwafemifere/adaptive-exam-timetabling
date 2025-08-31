@@ -1,4 +1,4 @@
-#C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\services\job.py
+# backend/app/services/job.py
 import logging
 from typing import List, Optional, cast
 from datetime import datetime, timedelta
@@ -9,8 +9,8 @@ from sqlalchemy import select, update, func
 
 from app.models.jobs import TimetableJob
 from app.models.users import User
-from app.schemas import TimetableJobCreate as JobCreate
-from app.core import JobNotFoundError, JobAccessDeniedError
+from app.schemas.jobs import TimetableJobCreate as JobCreate
+from app.core.exceptions import JobNotFoundError, JobAccessDeniedError
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,11 @@ class JobService:
                 update_data["status"] = "completed"
                 update_data["completed_at"] = datetime.utcnow()
 
-            query = update(TimetableJob).where(TimetableJob.id == job_id).values(**update_data)
+            query = (
+                update(TimetableJob)
+                .where(TimetableJob.id == job_id)
+                .values(**update_data)
+            )
 
             await self.db.execute(query)
             await self.db.commit()
@@ -138,7 +142,11 @@ class JobService:
             query = (
                 update(TimetableJob)
                 .where(TimetableJob.id == job_id)
-                .values(status="failed", error_message=error_message, completed_at=datetime.utcnow())
+                .values(
+                    status="failed",
+                    error_message=error_message,
+                    completed_at=datetime.utcnow(),
+                )
             )
 
             await self.db.execute(query)
@@ -154,8 +162,10 @@ class JobService:
     async def get_active_jobs(self) -> List[TimetableJob]:
         """Get all currently active jobs."""
         try:
-            query = select(TimetableJob).where(TimetableJob.status.in_(["queued", "running"])).order_by(
-                TimetableJob.created_at
+            query = (
+                select(TimetableJob)
+                .where(TimetableJob.status.in_(["queued", "running"]))
+                .order_by(TimetableJob.created_at)
             )
 
             result = await self.db.execute(query)
@@ -172,19 +182,21 @@ class JobService:
         try:
             cutoff_date = datetime.utcnow() - timedelta(days=days_old)
 
-            count_query = (
-                select(func.count(TimetableJob.id))
-                .where(TimetableJob.completed_at < cutoff_date, TimetableJob.status.in_(["completed", "failed"]))
+            count_query = select(func.count(TimetableJob.id)).where(
+                TimetableJob.completed_at < cutoff_date,
+                TimetableJob.status.in_(["completed", "failed"]),
             )
 
             count_result = await self.db.execute(count_query)
-            # scalar_one returns an int for count queries
             count = int(count_result.scalar_one())
 
             if count > 0:
                 delete_query = (
                     update(TimetableJob)
-                    .where(TimetableJob.completed_at < cutoff_date, TimetableJob.status.in_(["completed", "failed"]))
+                    .where(
+                        TimetableJob.completed_at < cutoff_date,
+                        TimetableJob.status.in_(["completed", "failed"]),
+                    )
                     .values(deleted=True, deleted_at=datetime.utcnow())
                 )
 
@@ -227,7 +239,11 @@ class JobService:
             query = (
                 update(TimetableJob)
                 .where(TimetableJob.id == job_id)
-                .values(status="cancelled", completed_at=datetime.utcnow(), error_message="Job cancelled by user")
+                .values(
+                    status="cancelled",
+                    completed_at=datetime.utcnow(),
+                    error_message="Job cancelled by user",
+                )
             )
 
             await self.db.execute(query)

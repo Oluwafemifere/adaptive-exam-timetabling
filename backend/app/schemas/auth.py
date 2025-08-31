@@ -1,11 +1,20 @@
+# backend\app\schemas\auth.py
 from pydantic import BaseModel, Field, model_validator
 from datetime import datetime, timezone
 from typing import Optional
 
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
 class TokenData(BaseModel):
     sub: str = Field(..., description="Subject (user identifier)")
     exp: Optional[int] = Field(None, description="Expiration time as UNIX timestamp")
-    exp_datetime: Optional[datetime] = Field(None, description="Expiration time as datetime")
+    exp_datetime: Optional[datetime] = Field(
+        None, description="Expiration time as datetime"
+    )
 
     # This runs before model creation
     @model_validator(mode="before")

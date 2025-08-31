@@ -1,6 +1,11 @@
 # app/core/__init__.py
-from .config import Settings
-from .security import hash_password, verify_password, create_access_token, decode_access_token
+from .config import Settings, settings
+from .security import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    decode_access_token,
+)
 from .auth import authenticate_user, get_current_user, create_token_for_user
 from .exceptions import (
     AppError,
@@ -10,7 +15,9 @@ from .exceptions import (
     JobAccessDeniedError,
 )
 
+
 __all__ = [
+    "Settings",
     "settings",
     "hash_password",
     "verify_password",
