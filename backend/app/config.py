@@ -1,3 +1,4 @@
+# backend\app\config.py
 """
 Configuration management for the Adaptive Exam Timetabling System.
 Uses Pydantic for settings validation and environment variable management.
@@ -29,7 +30,7 @@ class Settings(BaseSettings):
 
     # Database settings
     DATABASE_URL: str = Field(
-        default="postgresql://postgres:password@localhost:5432/exam_system",
+        default="postgresql+asyncpg://postgres:password@localhost:5432/postgres",
         alias="DATABASE_URL",
     )
     DATABASE_POOL_SIZE: int = Field(default=10, alias="DB_POOL_SIZE")
@@ -64,7 +65,9 @@ class Settings(BaseSettings):
 
     # File upload settings
     UPLOAD_DIR: str = Field(default="./uploads", alias="UPLOAD_DIR")
-    MAX_UPLOAD_SIZE: int = Field(default=10 * 1024 * 1024, alias="MAX_UPLOAD_SIZE")  # 10MB
+    MAX_UPLOAD_SIZE: int = Field(
+        default=10 * 1024 * 1024, alias="MAX_UPLOAD_SIZE"
+    )  # 10MB
     ALLOWED_EXTENSIONS: List[str] = Field(
         default=[".csv", ".xlsx", ".xls"],
         alias="ALLOWED_EXTENSIONS",
@@ -76,7 +79,9 @@ class Settings(BaseSettings):
 
     # AWS settings
     AWS_ACCESS_KEY_ID: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY: Optional[str] = Field(default=None, alias="AWS_SECRET_ACCESS_KEY")
+    AWS_SECRET_ACCESS_KEY: Optional[str] = Field(
+        default=None, alias="AWS_SECRET_ACCESS_KEY"
+    )
     AWS_REGION: str = Field(default="us-east-1", alias="AWS_REGION")
 
     # Email settings
@@ -85,11 +90,15 @@ class Settings(BaseSettings):
     SMTP_USERNAME: Optional[str] = Field(default=None, alias="SMTP_USERNAME")
     SMTP_PASSWORD: Optional[str] = Field(default=None, alias="SMTP_PASSWORD")
     SMTP_TLS: bool = Field(default=True, alias="SMTP_TLS")
-    EMAIL_FROM: str = Field(default="noreply@baze.edu.ng", alias="EMAIL_FROM")
+    EMAIL_FROM: str = Field(default="noreply@baze.edu.ng", alias="SMTP_FROM")
 
     # Scheduling engine settings
-    SCHEDULING_TIMEOUT_SECONDS: int = Field(default=900, alias="SCHEDULING_TIMEOUT")  # 15 minutes
-    CPSAT_TIME_LIMIT_SECONDS: int = Field(default=300, alias="CPSAT_TIME_LIMIT")  # 5 minutes
+    SCHEDULING_TIMEOUT_SECONDS: int = Field(
+        default=900, alias="SCHEDULING_TIMEOUT"
+    )  # 15 minutes
+    CPSAT_TIME_LIMIT_SECONDS: int = Field(
+        default=300, alias="CPSAT_TIME_LIMIT"
+    )  # 5 minutes
     GA_TIME_LIMIT_SECONDS: int = Field(default=600, alias="GA_TIME_LIMIT")  # 10 minutes
     GA_POPULATION_SIZE: int = Field(default=50, alias="GA_POPULATION_SIZE")
     GA_GENERATIONS: int = Field(default=100, alias="GA_GENERATIONS")
@@ -121,12 +130,18 @@ class Settings(BaseSettings):
     # University-specific settings
     UNIVERSITY_NAME: str = Field(default="Baze University", alias="UNIVERSITY_NAME")
     UNIVERSITY_CODE: str = Field(default="BU", alias="UNIVERSITY_CODE")
-    ACADEMIC_YEAR_START_MONTH: int = Field(default=9, alias="ACADEMIC_YEAR_START_MONTH")  # September
-    DEFAULT_EXAM_DURATION: int = Field(default=180, alias="DEFAULT_EXAM_DURATION")  # 3 hours
+    ACADEMIC_YEAR_START_MONTH: int = Field(
+        default=9, alias="ACADEMIC_YEAR_START_MONTH"
+    )  # September
+    DEFAULT_EXAM_DURATION: int = Field(
+        default=180, alias="DEFAULT_EXAM_DURATION"
+    )  # 3 hours
 
     # Validators
     @field_validator("CELERY_BROKER_URL")
-    def set_celery_broker_url(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+    def set_celery_broker_url(
+        cls, v: Optional[str], info: ValidationInfo
+    ) -> Optional[str]:
         """Build a Redis-based broker URL if not provided."""
         if v is None:
             redis_url = info.data.get("REDIS_URL") or "redis://localhost:6379/0"
@@ -137,7 +152,9 @@ class Settings(BaseSettings):
         return v
 
     @field_validator("CELERY_RESULT_BACKEND")
-    def set_celery_result_backend(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+    def set_celery_result_backend(
+        cls, v: Optional[str], info: ValidationInfo
+    ) -> Optional[str]:
         """Build a Redis-based result backend if not provided."""
         if v is None:
             redis_url = info.data.get("REDIS_URL") or "redis://localhost:6379/0"
@@ -153,7 +170,9 @@ class Settings(BaseSettings):
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
-    @field_validator("CORS_ORIGINS", "ALLOWED_HOSTS", "ALLOWED_EXTENSIONS", mode="before")
+    @field_validator(
+        "CORS_ORIGINS", "ALLOWED_HOSTS", "ALLOWED_EXTENSIONS", mode="before"
+    )
     def parse_comma_separated(cls, v):
         """Parse comma-separated strings into lists when values come from environment."""
         if isinstance(v, str):

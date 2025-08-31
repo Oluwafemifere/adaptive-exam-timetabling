@@ -4,9 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, current_user
 from app.models.users import User
-from app.services.scheduling.engine_manager import SchedulingService
+from app.services.scheduling.integrated_engine_manager import (
+    IntegratedSchedulingEngineManager as SchedulingService,
+)
 
 router = APIRouter()
+
 
 @router.post("/")
 async def create_timetable(
@@ -17,6 +20,7 @@ async def create_timetable(
     service = SchedulingService(db, user)
     job = await service.start_timetable_job(session_id)
     return job
+
 
 @router.get("/{timetable_id}")
 async def get_timetable(

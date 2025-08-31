@@ -4,7 +4,7 @@
 from . import auth, jobs, scheduling, uploads
 
 # Re-export commonly used classes for direct import
-from .auth import TokenData
+from .auth import TokenData, Token
 from .jobs import TimetableJobBase, TimetableJobCreate, TimetableJobRead
 from .scheduling import (
     TimeSlotRead,
@@ -30,6 +30,7 @@ __all__ = [
     "uploads",
     # auth
     "TokenData",
+    "Token",
     # jobs
     "TimetableJobBase",
     "TimetableJobCreate",
