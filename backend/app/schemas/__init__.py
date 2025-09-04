@@ -1,7 +1,7 @@
 # app/schemas/__init__.py
 """Expose schema modules and primary Pydantic models for convenient imports."""
 
-from . import auth, jobs, scheduling, uploads
+from . import auth, academic, jobs, scheduling, uploads
 
 # Re-export commonly used classes for direct import
 from .auth import TokenData, Token
@@ -25,6 +25,7 @@ from .uploads import (
 __all__ = [
     # modules
     "auth",
+    "academic",
     "jobs",
     "scheduling",
     "uploads",

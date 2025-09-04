@@ -1,22 +1,28 @@
-# backend\app\schemas\auth.py
-from pydantic import BaseModel, Field, model_validator
+# backend/app/schemas/auth.py
+from __future__ import annotations
+from pydantic import BaseModel, Field, model_validator, ConfigDict
 from datetime import datetime, timezone
 from typing import Optional
 
+MODEL_CONFIG = ConfigDict(from_attributes=True)
+
 
 class Token(BaseModel):
+    model_config = MODEL_CONFIG
+
     access_token: str
     token_type: str
 
 
 class TokenData(BaseModel):
+    model_config = MODEL_CONFIG
+
     sub: str = Field(..., description="Subject (user identifier)")
     exp: Optional[int] = Field(None, description="Expiration time as UNIX timestamp")
     exp_datetime: Optional[datetime] = Field(
         None, description="Expiration time as datetime"
     )
 
-    # This runs before model creation
     @model_validator(mode="before")
     def compute_exp_datetime(cls, values: dict) -> dict:
         exp = values.get("exp")
@@ -24,7 +30,6 @@ class TokenData(BaseModel):
             values["exp_datetime"] = datetime.fromtimestamp(exp, tz=timezone.utc)
         return values
 
-    # This runs after model creation
     @model_validator(mode="after")
     def check_not_expired(self) -> "TokenData":
         if self.exp_datetime and self.exp_datetime < datetime.now(timezone.utc):

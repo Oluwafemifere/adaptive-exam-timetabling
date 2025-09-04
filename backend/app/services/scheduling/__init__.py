@@ -1,57 +1,64 @@
 # backend/app/services/scheduling/__init__.py
 
-"""
-Consolidated scheduling services package with optimized components.
-"""
-
-# Core scheduling components
-from .enhanced_engine_connector import (
-    EnhancedSchedulingEngineConnector,
-    ProblemInstance,
-    OptimizationResult,
+# Import main classes and types from each module
+from .timetable_job_orchestrator import OrchestratorOptions, TimetableJobOrchestrator
+from .upload_ingestion_bridge import UploadIngestionSummary, UploadIngestionBridge
+from .versioning_and_edit_service import ProposedEdit, VersioningAndEditService
+from .admin_configuration_manager import (
+    ConfigurationTemplate,
+    ObjectiveFunction,
+    ConstraintConfiguration,
+    ConfigurationValidationResult,
+    AdminConfigurationManager,
 )
-
-from .integrated_engine_manager import IntegratedSchedulingEngineManager
-
-from .hybrid_optimization_coordinator import (
-    HybridOptimizationCoordinator,
-    OptimizationPhaseResult,
+from .data_preparation_service import PreparedDataset, DataPreparationService
+from .faculty_partitioning_service import (
+    PartitionStrategy,
+    DependencyType,
+    PartitionNode,
+    PartitionDependency,
+    PartitionGroup,
+    PartitioningResult,
+    FacultyPartitioningService,
 )
-
-from .incremental_optimizer import IncrementalOptimizer
-
-from .problem_instance_builder import (
-    ProblemInstanceBuilder,
-    CPSATModel,
-    CPSATVariables,
-    GAChromosome,
+from .invigilator_assignment_service import (
+    InvigilationAssignment,
+    InvigilatorAssignmentService,
 )
+from .room_allocation_service import RoomAssignmentProposal, RoomAllocationService
 
-# Legacy compatibility imports
-from .constraint_builder import ConstraintBuilder
-
-# Create aliases for backward compatibility
-SchedulingService = IntegratedSchedulingEngineManager
-SchedulingEngineConnector = EnhancedSchedulingEngineConnector
-IncrementalSolver = IncrementalOptimizer
-
+# Optional: Define public API for the scheduling package
 __all__ = [
-    # Primary interfaces
-    "IntegratedSchedulingEngineManager",
-    "EnhancedSchedulingEngineConnector",
-    "HybridOptimizationCoordinator",
-    "IncrementalOptimizer",
-    "ProblemInstanceBuilder",
-    # Data structures
-    "ProblemInstance",
-    "OptimizationResult",
-    "OptimizationPhaseResult",
-    "CPSATModel",
-    "CPSATVariables",
-    "GAChromosome",
-    # Legacy/compatibility
-    "ConstraintBuilder",
-    "SchedulingService",
-    "SchedulingEngineConnector",
-    "IncrementalSolver",
+    # From timetable_job_orchestrator
+    "OrchestratorOptions",
+    "TimetableJobOrchestrator",
+    # From upload_ingestion_bridge
+    "UploadIngestionSummary",
+    "UploadIngestionBridge",
+    # From versioning_and_edit_service
+    "ProposedEdit",
+    "VersioningAndEditService",
+    # From admin_configuration_manager
+    "ConfigurationTemplate",
+    "ObjectiveFunction",
+    "ConstraintConfiguration",
+    "ConfigurationValidationResult",
+    "AdminConfigurationManager",
+    # From data_preparation_service
+    "PreparedDataset",
+    "DataPreparationService",
+    # From faculty_partitioning_service
+    "PartitionStrategy",
+    "DependencyType",
+    "PartitionNode",
+    "PartitionDependency",
+    "PartitionGroup",
+    "PartitioningResult",
+    "FacultyPartitioningService",
+    # From invigilator_assignment_service
+    "InvigilationAssignment",
+    "InvigilatorAssignmentService",
+    # From room_allocation_service
+    "RoomAssignmentProposal",
+    "RoomAllocationService",
 ]

@@ -23,6 +23,26 @@ class JobData:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def create_job(
+        self,
+        session_id: UUID,
+        configuration_id: UUID,
+        initiated_by: UUID,
+        status: str = "queued",
+        progress_percentage: float = 0.0,
+    ) -> UUID:
+        """Create a new timetable job"""
+        job = TimetableJob(
+            session_id=session_id,
+            configuration_id=configuration_id,
+            initiated_by=initiated_by,
+            status=status,
+            progress_percentage=progress_percentage,
+        )
+        self.session.add(job)
+        await self.session.flush()
+        return job.id
+
     # Timetable Jobs
     async def get_all_timetable_jobs(self) -> List[Dict]:
         """Get all timetable jobs with session and configuration information"""
