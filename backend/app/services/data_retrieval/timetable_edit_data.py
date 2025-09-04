@@ -4,10 +4,10 @@
 Service for retrieving timetable edit data from the database
 """
 
-from typing import Dict, List, cast, Optional
+from typing import Dict, List, cast, Optional, Any
 from uuid import UUID
 from datetime import datetime as ddatetime
-from sqlalchemy import select, func, and_, or_, text
+from sqlalchemy import select, func, and_, or_, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.timetable_edits import TimetableEdit
@@ -18,6 +18,42 @@ class TimetableEditData:
 
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def create_edit(
+        self,
+        version_id: UUID,
+        exam_id: UUID,
+        edited_by: UUID,
+        edit_type: str,
+        old_values: Dict,
+        new_values: Dict,
+        reason: Optional[str] = None,
+        validation_status: str = "pending",
+    ) -> UUID:
+        """Create a new timetable edit"""
+        edit = TimetableEdit(
+            version_id=version_id,
+            exam_id=exam_id,
+            edited_by=edited_by,
+            edit_type=edit_type,
+            old_values=old_values,
+            new_values=new_values,
+            reason=reason,
+            validation_status=validation_status,
+        )
+        self.session.add(edit)
+        await self.session.flush()
+        return edit.id
+
+    async def update_edit_status(self, edit_id: UUID, status: str) -> None:
+        """Update the validation status of a timetable edit"""
+        stmt = (
+            update(TimetableEdit)
+            .where(TimetableEdit.id == edit_id)
+            .values(validation_status=status)
+        )
+        await self.session.execute(stmt)
+        await self.session.commit()
 
     async def get_all_timetable_edits(self, limit: int = 100) -> List[Dict]:
         """Get all timetable edits with pagination"""
@@ -52,8 +88,8 @@ class TimetableEditData:
             for edit in edits
         ]
 
-    async def get_edits_by_version(self, version_id: UUID) -> List[Dict]:
-        """Get timetable edits for a specific version"""
+    async def get_edits_by_version(self, version_id: UUID) -> List[Dict[str, Any]]:
+        """Get timetable edits for a specific version."""
         stmt = (
             select(TimetableEdit)
             .where(TimetableEdit.version_id == version_id)
@@ -62,24 +98,28 @@ class TimetableEditData:
         result = await self.session.execute(stmt)
         edits = result.scalars().all()
 
-        return [
-            {
-                "id": str(edit.id),
-                "exam_id": str(edit.exam_id),
-                "edited_by": str(edit.edited_by),
-                "edit_type": edit.edit_type,
-                "old_values": edit.old_values,
-                "new_values": edit.new_values,
-                "reason": edit.reason,
-                "validation_status": edit.validation_status,
-                "created_at": (
-                    cast(ddatetime, edit.created_at).isoformat()
-                    if edit.created_at
-                    else None
-                ),
-            }
-            for edit in edits
-        ]
+        out: List[Dict[str, Any]] = []
+        for edit in edits:
+            created_at = (
+                cast(ddatetime, edit.created_at).isoformat()
+                if edit.created_at
+                else None
+            )
+            out.append(
+                {
+                    "id": str(edit.id),
+                    "exam_id": str(edit.exam_id),
+                    "edited_by": str(edit.edited_by),
+                    "edit_type": edit.edit_type,
+                    "old_values": edit.old_values,
+                    "new_values": edit.new_values,
+                    "reason": edit.reason,
+                    "validation_status": edit.validation_status,
+                    "created_at": created_at,
+                }
+            )
+
+        return out
 
     async def get_edits_by_exam(self, exam_id: UUID) -> List[Dict]:
         """Get timetable edits for a specific exam"""
@@ -201,14 +241,23 @@ class TimetableEditData:
             for edit in edits
         ]
 
-    async def get_edit_by_id(self, edit_id: UUID) -> Dict | None:
-        """Get timetable edit by ID"""
+    async def get_edit_by_id(self, edit_id: UUID) -> Optional[Dict[str, Any]]:
+        """Get timetable edit by ID."""
         stmt = select(TimetableEdit).where(TimetableEdit.id == edit_id)
         result = await self.session.execute(stmt)
         edit = result.scalar_one_or_none()
 
         if not edit:
             return None
+
+        created_at = (
+            cast(ddatetime, edit.created_at).isoformat() if edit.created_at else None
+        )
+        updated_at = (
+            cast(ddatetime, edit.updated_at).isoformat()
+            if getattr(edit, "updated_at", None)
+            else None
+        )
 
         return {
             "id": str(edit.id),
@@ -220,16 +269,8 @@ class TimetableEditData:
             "new_values": edit.new_values,
             "reason": edit.reason,
             "validation_status": edit.validation_status,
-            "created_at": (
-                cast(ddatetime, edit.created_at).isoformat()
-                if edit.created_at
-                else None
-            ),
-            "updated_at": (
-                cast(ddatetime, edit.updated_at).isoformat()
-                if edit.updated_at
-                else None
-            ),
+            "created_at": created_at,
+            "updated_at": updated_at,
         }
 
     async def get_pending_edits(self) -> List[Dict]:
