@@ -2,11 +2,14 @@
 from fastapi import APIRouter, WebSocket, Depends, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import db_session, current_user
-from app.models.users import User
-from app.services.notification import subscribe_job  # async generator that yields job updates
+from ....api.deps import db_session, current_user
+from ....models.users import User
+from ....services.notification import (
+    subscribe_job,
+)  # async generator that yields job updates
 
 router = APIRouter()
+
 
 @router.websocket("/jobs/{job_id}")
 async def websocket_job_updates(

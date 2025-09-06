@@ -32,7 +32,7 @@ from .soft_constraints import (
     get_optimization_focused_constraints,
     validate_soft_constraint_set,
 )
-from ..core.constraint_registry import (
+from ..core.constraint_types import (
     ConstraintType,
     ConstraintCategory,
 )

@@ -11,7 +11,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Retrieval services
-from app.services.data_retrieval import (
+from ...services.data_retrieval import (
     SchedulingData,
     AcademicData,
     InfrastructureData,
@@ -20,7 +20,7 @@ from app.services.data_retrieval import (
 )
 
 # Helpers
-from app.services.data_retrieval.helpers import iso_date_range
+from ...services.data_retrieval.helpers import iso_date_range
 
 logger = logging.getLogger(__name__)
 

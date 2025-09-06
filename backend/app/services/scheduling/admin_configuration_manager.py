@@ -20,16 +20,16 @@ import json
 from collections import defaultdict
 
 # Import data retrieval services
-from app.services.data_retrieval import ConstraintData, UserData, AuditData
+from ...services.data_retrieval import ConstraintData, UserData, AuditData
 
 # Import models
-from app.models.constraints import (
+from ...models.constraints import (
     ConstraintCategory,
     ConstraintRule,
     ConfigurationConstraint,
 )
-from app.models.users import SystemConfiguration
-from app.models.audit_logs import AuditLog
+from ...models.users import SystemConfiguration
+from ...models.audit_logs import AuditLog
 
 logger = logging.getLogger(__name__)
 

@@ -57,7 +57,7 @@ class EmailService:
     def _load_config_from_settings(self) -> EmailConfig:
         """Load email configuration from settings"""
         try:
-            from app.core.config import settings
+            from ...core.config import settings
 
             return EmailConfig(
                 smtp_server=getattr(settings, "SMTP_SERVER", "localhost"),

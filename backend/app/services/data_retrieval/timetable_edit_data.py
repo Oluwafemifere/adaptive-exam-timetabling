@@ -10,7 +10,7 @@ from datetime import datetime as ddatetime
 from sqlalchemy import select, func, and_, or_, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.timetable_edits import TimetableEdit
+from ...models.timetable_edits import TimetableEdit
 
 
 class TimetableEditData:

@@ -27,12 +27,12 @@ from datetime import datetime, time, date
 from dateutil import parser as _dateutil_parser
 
 from ..enhanced_base_constraint import EnhancedBaseConstraint
-from ...core.constraint_registry import (
-    ConstraintDefinition,
+from ...core.constraint_types import (
     ConstraintType,
     ConstraintCategory,
     ConstraintViolation,
     ConstraintSeverity,
+    ConstraintDefinition,
 )
 from ...core import ExamSchedulingProblem, TimetableSolution, TimeSlot
 

@@ -19,13 +19,6 @@ class SolverPhase(Enum):
     HYBRID_COORDINATION = "hybrid_coordination"
 
 
-class ConstraintType(Enum):
-    """Constraint classification"""
-
-    HARD = "hard"
-    SOFT = "soft"
-
-
 class OptimizationObjective(Enum):
     """Optimization objectives"""
 

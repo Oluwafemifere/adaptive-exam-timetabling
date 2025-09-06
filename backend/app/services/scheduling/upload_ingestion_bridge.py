@@ -10,7 +10,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.data_retrieval import FileUploadData, AuditData, SchedulingData
+from ...services.data_retrieval import FileUploadData, AuditData, SchedulingData
 
 logger = logging.getLogger(__name__)
 

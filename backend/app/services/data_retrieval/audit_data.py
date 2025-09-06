@@ -10,7 +10,7 @@ from datetime import datetime as ddatetime, date as ddate
 from sqlalchemy import select, func, and_, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import ProgrammingError
-from app.models.audit_logs import AuditLog
+from ...models.audit_logs import AuditLog
 
 
 class AuditData:

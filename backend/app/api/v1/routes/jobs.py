@@ -2,15 +2,19 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID  # Import UUID
-from app.api.deps import db_session
-from app.services.job import JobService
+from ....api.deps import db_session
+from ....services.job import JobService
 
 router = APIRouter()
+
 
 @router.get("/")
 async def list_jobs(db: AsyncSession = Depends(db_session)):
     return await JobService(db).list_jobs()
 
+
 @router.get("/{job_id}")
-async def get_job(job_id: UUID, db: AsyncSession = Depends(db_session)):  # Change type to UUID
+async def get_job(
+    job_id: UUID, db: AsyncSession = Depends(db_session)
+):  # Change type to UUID
     return await JobService(db).get_job_status(job_id)

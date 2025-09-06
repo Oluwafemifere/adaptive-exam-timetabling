@@ -10,10 +10,10 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import update
 
-from app.services.data_retrieval import TimetableEditData, JobData, AuditData
-from app.models.timetable_edits import TimetableEdit
-from app.models.jobs import TimetableVersion
-from app.models.audit_logs import AuditLog
+from ...services.data_retrieval import TimetableEditData, JobData, AuditData
+from ...models.timetable_edits import TimetableEdit
+from ...models.jobs import TimetableVersion
+from ...models.audit_logs import AuditLog
 
 logger = logging.getLogger(__name__)
 

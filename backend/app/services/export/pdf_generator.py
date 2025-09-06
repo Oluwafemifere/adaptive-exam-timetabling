@@ -1,8 +1,9 @@
-#C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\services\export\pdf_generator.py
+# C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\services\export\pdf_generator.py
 from io import BytesIO
 from typing import List, Dict, Any
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+
 
 class PDFGenerator:
     """Generates simple tabular PDFs."""
@@ -20,13 +21,13 @@ class PDFGenerator:
         y = height - 60
         # Header
         for idx, col in enumerate(columns):
-            p.drawString(40 + idx*100, y, col)
+            p.drawString(40 + idx * 100, y, col)
         y -= 20
         # Rows
         for row in rows:
             for idx, col in enumerate(columns):
                 text = str(row.get(col, ""))
-                p.drawString(40 + idx*100, y, text)
+                p.drawString(40 + idx * 100, y, text)
             y -= 15
             if y < 40:
                 p.showPage()

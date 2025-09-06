@@ -11,7 +11,7 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.constraints import (
+from ...models.constraints import (
     ConstraintCategory,
     ConstraintRule,
     ConfigurationConstraint,

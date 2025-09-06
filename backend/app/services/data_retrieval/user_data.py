@@ -11,7 +11,7 @@ from sqlalchemy import select, func, and_, or_, not_  # Added not_ import
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.users import (
+from ...models.users import (
     User,
     UserRole,
     UserRoleAssignment,

@@ -34,7 +34,7 @@ class ConnectionManager:
         """Get Redis connection if available"""
         if self._redis is None:
             try:
-                from app.core.config import settings
+                from ...core.config import settings
 
                 if hasattr(settings, "REDIS_URL") and settings.REDIS_URL:
                     from redis.asyncio import Redis
@@ -320,7 +320,7 @@ async def get_initial_job_status(
 ) -> Optional[Dict[str, Any]]:
     """Get initial job status for new WebSocket connections."""
     try:
-        from app.models import TimetableJob
+        from ...models import TimetableJob
 
         job_uuid = UUID(job_id)
         query = select(TimetableJob).where(TimetableJob.id == job_uuid)
@@ -358,7 +358,7 @@ async def get_initial_job_status(
 async def user_can_access_job(user_id: str, job_id: str, db: AsyncSession) -> bool:
     """Check if user can access job updates."""
     try:
-        from app.models import TimetableJob
+        from ...models import TimetableJob
 
         job_uuid = UUID(job_id)
         user_uuid = UUID(user_id)

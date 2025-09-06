@@ -6,9 +6,9 @@ import uvicorn
 import logging
 
 # Import your components
-from app.api.v1.api import api_router
-from app.database import init_db
-from app.config import get_settings
+from .api.v1.api import api_router
+from .database import init_db
+from .config import get_settings
 
 
 # Configure logging
@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down the application...")
-    from app.database import db_manager
+    from .database import db_manager
 
     await db_manager.close()
 
@@ -72,7 +72,7 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    from app.database import check_db_health
+    from .database import check_db_health
 
     db_health = await check_db_health()
     return {

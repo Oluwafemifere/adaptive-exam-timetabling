@@ -11,7 +11,6 @@ for exam timetabling, based on the research paper:
 from .config import (
     SchedulingEngineConfig,
     SolverPhase,
-    ConstraintType,
     OptimizationObjective,
     config,
     get_logger,
@@ -34,7 +33,6 @@ __all__ = [
     # Configuration
     "SchedulingEngineConfig",
     "SolverPhase",
-    "ConstraintType",
     "OptimizationObjective",
     "config",
     "get_logger",
