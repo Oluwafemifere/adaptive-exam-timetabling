@@ -14,12 +14,14 @@ import logging
 from dataclasses import dataclass
 
 from ..core.constraint_registry import (
-    ConstraintDefinition,
+    BaseConstraint,
+)
+from ..core.constraint_types import (
     ConstraintType,
     ConstraintCategory,
     ConstraintViolation,
     ConstraintSeverity,
-    BaseConstraint,
+    ConstraintDefinition,
 )
 from ..core.problem_model import ExamSchedulingProblem
 from ..core.solution import TimetableSolution

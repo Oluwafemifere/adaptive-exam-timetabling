@@ -50,8 +50,10 @@ from .soft_constraints import (
 from ..core.constraint_registry import (
     ConstraintRegistry,
     BaseConstraint,
-    ConstraintDefinition,
+)
+from ..core.constraint_types import (
     ConstraintType,
+    ConstraintDefinition,
 )
 
 try:

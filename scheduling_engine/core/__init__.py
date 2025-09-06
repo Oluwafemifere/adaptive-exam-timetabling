@@ -12,8 +12,15 @@ from .problem_model import (
     Student,
 )
 from .solution import TimetableSolution, ExamAssignment, SolutionStatus
-from .constraint_registry import ConstraintRegistry, ConstraintDefinition
+from .constraint_registry import ConstraintRegistry
 from .metrics import SolutionMetrics, QualityScore, PerformanceMetrics
+from scheduling_engine.core.constraint_types import (
+    ConstraintType,
+    ConstraintCategory,
+    ConstraintViolation,
+    ConstraintSeverity,
+    ConstraintDefinition,
+)
 
 __all__ = [
     # Problem model
@@ -28,7 +35,12 @@ __all__ = [
     "SolutionStatus",
     # Constraint system
     "ConstraintRegistry",
+    # Constraint Types
     "ConstraintDefinition",
+    "ConstraintType",
+    "ConstraintCategory",
+    "ConstraintViolation",
+    "ConstraintSeverity",
     # Metrics and evaluation
     "SolutionMetrics",
     "QualityScore",

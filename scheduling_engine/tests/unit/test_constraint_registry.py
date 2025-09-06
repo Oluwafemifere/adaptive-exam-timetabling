@@ -19,12 +19,14 @@ from datetime import datetime
 from scheduling_engine.core.constraint_registry import (
     ConstraintRegistry,
     BaseConstraint,
-    ConstraintDefinition,
+    LegacyConstraintAdapter,
+)
+from scheduling_engine.core.constraint_types import (
     ConstraintType,
     ConstraintCategory,
     ConstraintViolation,
     ConstraintSeverity,
-    LegacyConstraintAdapter,
+    ConstraintDefinition,
 )
 
 

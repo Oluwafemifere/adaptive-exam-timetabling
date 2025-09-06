@@ -16,12 +16,12 @@ from dataclasses import dataclass
 import math
 
 from ..enhanced_base_constraint import EnhancedBaseConstraint
-from ...core.constraint_registry import (
-    ConstraintDefinition,
+from ...core.constraint_types import (
     ConstraintType,
     ConstraintCategory,
     ConstraintViolation,
     ConstraintSeverity,
+    ConstraintDefinition,
 )
 from ...core.problem_model import ExamSchedulingProblem
 from ...core.solution import TimetableSolution

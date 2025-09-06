@@ -11,7 +11,7 @@ from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.file_uploads import (
+from ...models.file_uploads import (
     FileUploadSession,
     UploadedFile,
 )

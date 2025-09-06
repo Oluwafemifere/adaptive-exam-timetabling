@@ -2,8 +2,8 @@
 import os
 from fastapi import APIRouter, File, UploadFile, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.deps import db_session
-from app.services.data_validation.csv_processor import CSVProcessor
+from ....api.deps import db_session
+from ....services.data_validation.csv_processor import CSVProcessor
 
 router = APIRouter()
 

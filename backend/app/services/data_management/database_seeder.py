@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 from collections import defaultdict
 
-from app.models import (
+from ...models import (
     # Infrastructure
     Building,
     RoomType,

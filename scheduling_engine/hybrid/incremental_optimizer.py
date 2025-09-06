@@ -18,7 +18,10 @@ from ..config import get_logger, SchedulingEngineConfig
 from ..core.problem_model import ExamSchedulingProblem
 from ..core.solution import TimetableSolution
 from ..core.metrics import SolutionMetrics
-from ..core.constraint_registry import ConstraintRegistry, ConstraintViolation
+from ..core.constraint_registry import ConstraintRegistry
+from ..core.constraint_types import (
+    ConstraintViolation,
+)
 from ..cp_sat.model_builder import CPSATModelBuilder
 from ..cp_sat.solver_manager import CPSATSolverManager
 from ..genetic_algorithm.chromosome import VariableSelectorChromosome

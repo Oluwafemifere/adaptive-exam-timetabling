@@ -21,7 +21,7 @@ from itertools import combinations
 from networkx.algorithms import community
 
 # Import data retrieval services
-from app.services.data_retrieval import (
+from ...services.data_retrieval import (
     AcademicData,
     SchedulingData,
     InfrastructureData,

@@ -7,10 +7,10 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 
-from app.models.jobs import TimetableJob
-from app.models.users import User
-from app.schemas.jobs import TimetableJobCreate as JobCreate
-from app.core.exceptions import JobNotFoundError, JobAccessDeniedError
+from ..models.jobs import TimetableJob
+from ..models.users import User
+from ..schemas.jobs import TimetableJobCreate as JobCreate
+from ..core.exceptions import JobNotFoundError, JobAccessDeniedError
 
 logger = logging.getLogger(__name__)
 

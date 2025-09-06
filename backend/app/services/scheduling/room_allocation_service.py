@@ -9,7 +9,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.data_retrieval import (
+from ...services.data_retrieval import (
     SchedulingData,
     InfrastructureData,
     ConstraintData,

@@ -11,7 +11,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.jobs import (
+from ...models.jobs import (
     TimetableJob,
     TimetableVersion,
 )

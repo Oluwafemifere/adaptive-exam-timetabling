@@ -11,7 +11,7 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.academic import (
+from ...models.academic import (
     AcademicSession,
     Department,
     Faculty,

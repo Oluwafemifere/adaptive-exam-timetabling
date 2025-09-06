@@ -11,7 +11,7 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy import case
-from app.models.infrastructure import (
+from ...models.infrastructure import (
     Building,
     RoomType,
     Room,

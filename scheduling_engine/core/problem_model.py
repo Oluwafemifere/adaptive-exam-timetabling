@@ -8,7 +8,7 @@ for constraint loading and configuration management.
 """
 
 from __future__ import annotations
-from typing import Dict, List, Set, Optional, Any, TYPE_CHECKING, Tuple
+from typing import Dict, List, Set, Optional, Any, TYPE_CHECKING, Tuple, Union
 from uuid import UUID, uuid4
 from dataclasses import dataclass, field
 from datetime import datetime, time, date
@@ -31,13 +31,12 @@ if TYPE_CHECKING:
         PreparedDataset,
     )
     from .constraint_registry import BaseConstraint, ConstraintRegistry
-    from .constraint_registry import (
-        ConstraintDefinition,
-        ConstraintType,
-        ConstraintCategory,
-        ConstraintViolation,
-        ConstraintSeverity,
-    )
+from .constraint_types import (
+    ConstraintType,
+)
+
+
+from .constraint_registry import ConstraintRegistry
 
 
 # Runtime imports with fallback
@@ -58,7 +57,6 @@ try:
     BACKEND_AVAILABLE = True
 except ImportError:
     BACKEND_AVAILABLE = False
-
 
 logger = logging.getLogger(__name__)
 
@@ -532,9 +530,17 @@ class ExamSchedulingProblem:
             self.active_constraints.append(constraint)
             logger.info(f"Added constraint: {constraint.name}")
 
-    def remove_constraint(self, constraint_id: str) -> bool:
+    def remove_constraint(self, constraint_id: Union[UUID, str]) -> bool:
         """Remove constraint from active set"""
+        # Convert to UUID if string provided
+        if isinstance(constraint_id, str):
+            try:
+                constraint_id = UUID(constraint_id)
+            except ValueError:
+                return False
+
         for i, constraint in enumerate(self.active_constraints):
+            # Compare both as UUID objects
             if constraint.constraint_id == constraint_id:
                 removed = self.active_constraints.pop(i)
                 logger.info(f"Removed constraint: {removed.name}")

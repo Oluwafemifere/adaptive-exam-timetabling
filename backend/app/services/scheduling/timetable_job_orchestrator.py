@@ -14,21 +14,21 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
 # Retrieval services and helpers
-from app.services.data_retrieval import (
+from ..data_retrieval import (
     JobData,
     ConstraintData,
     AuditData,
 )
-from app.services.job import JobService
-from app.services.scheduling.data_preparation_service import DataPreparationService
-from app.services.scheduling.room_allocation_service import RoomAllocationService
-from app.services.scheduling.invigilator_assignment_service import (
+from ..job import JobService
+from ..scheduling.data_preparation_service import DataPreparationService
+from ..scheduling.room_allocation_service import RoomAllocationService
+from ..scheduling.invigilator_assignment_service import (
     InvigilatorAssignmentService,
 )
 
 # Models
-from app.models.jobs import TimetableJob, TimetableVersion
-from app.models.audit_logs import AuditLog
+from ...models.jobs import TimetableJob, TimetableVersion
+from ...models.audit_logs import AuditLog
 
 logger = logging.getLogger(__name__)
 
