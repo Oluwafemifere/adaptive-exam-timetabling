@@ -50,16 +50,20 @@ class EnhancedBaseConstraint(BaseConstraint):
         weight: float = 1.0,
         parameters: Optional[Dict[str, Any]] = None,
         database_config: Optional[Dict[str, Any]] = None,
-        **kwargs,
+        **kwargs,  # Add this to capture any extra arguments
     ):
+        # Remove constraint_id from kwargs if present to avoid duplication
+        kwargs.pop("constraint_id", None)
+
         super().__init__(
             constraint_id=constraint_id,
             name=name,
             constraint_type=constraint_type,
             category=category,
             weight=weight,
-            parameters=parameters or {},
-            database_config=database_config or {},
+            parameters=parameters,
+            database_config=database_config,
+            **kwargs,  # Pass remaining kwargs to parent
         )
 
         # Enhanced state tracking

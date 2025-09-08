@@ -536,7 +536,7 @@ class CPSATSolverManager:
         # Build the model
         model_builder = CPSATModelBuilder(self.config)
         model = model_builder.build_model(problem)
-        variables = model_builder.get_variables()
+        variables = model_builder.get_variables
 
         # Create a variable selector function from the ordering
         def variable_selector():

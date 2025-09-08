@@ -4,6 +4,7 @@
 Updated database.py to handle schema-aware connections properly
 """
 
+import asyncio
 import os
 import logging
 from typing import Optional, AsyncGenerator, Dict, Any
@@ -34,6 +35,7 @@ class DatabaseManager:
         self.engine: Optional[AsyncEngine] = None
         self.AsyncSessionLocal: Optional[async_sessionmaker] = None
         self._is_initialized = False
+        self._loop = None
 
     async def initialize(
         self,
@@ -44,11 +46,15 @@ class DatabaseManager:
         pool_recycle: int = 3600,
         echo: bool = False,
         schema: str = "exam_system",
+        max_retries: int = 3,
+        retry_delay: int = 1,
     ) -> None:
         """
         Initialize async engine and async session factory with schema support.
+        Retries on failure.
         """
-        if self._is_initialized:
+        current_loop = asyncio.get_running_loop()
+        if self._is_initialized and self._loop == current_loop:
             logger.warning("Database already initialized")
             return
 
@@ -66,38 +72,53 @@ class DatabaseManager:
         if db_url.startswith("postgresql://") and "+asyncpg" not in db_url:
             db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-        try:
-            # Create async engine with schema support
-            self.engine = create_async_engine(
-                db_url,
-                echo=echo,
-                pool_size=pool_size,
-                max_overflow=max_overflow,
-                pool_timeout=pool_timeout,
-                pool_recycle=pool_recycle,
-                pool_pre_ping=True,
-                connect_args={"server_settings": {"search_path": f"{schema},public"}},
-            )
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                # Create async engine with schema support
+                self.engine = create_async_engine(
+                    db_url,
+                    echo=echo,
+                    pool_size=pool_size,
+                    max_overflow=max_overflow,
+                    pool_timeout=pool_timeout,
+                    pool_recycle=pool_recycle,
+                    pool_pre_ping=True,
+                    connect_args={
+                        "server_settings": {"search_path": f"{schema},public"}
+                    },
+                    future=True,
+                )
 
-            # Async session factory with schema awareness
-            self.AsyncSessionLocal = async_sessionmaker(
-                self.engine, expire_on_commit=False, class_=AsyncSession
-            )
+                # Async session factory with schema awareness
+                self.AsyncSessionLocal = async_sessionmaker(
+                    bind=self.engine, expire_on_commit=False, class_=AsyncSession
+                )
 
-            # Setup event listeners
-            self._setup_event_listeners()
+                # Setup event listeners
+                self._setup_event_listeners()
 
-            # Test connection
-            await self._test_connection(schema)
+                # Test connection
+                await self._test_connection(schema)
 
-            self._is_initialized = True
-            logger.info(
-                f"Async database initialized successfully with schema: {schema}"
-            )
+                self._is_initialized = True
+                self._loop = current_loop
+                logger.info(
+                    f"Async database initialized successfully with schema: {schema}"
+                )
+                return
+            except Exception as e:
+                last_error = e
+                logger.error(
+                    f"Database initialization attempt {attempt + 1}/{max_retries} failed: {e}"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (attempt + 1))
 
-        except Exception as e:
-            logger.error(f"Failed to initialize async database: {e}")
-            raise
+        # If all retries failed
+        raise RuntimeError(
+            f"Failed to initialize async database after {max_retries} attempts"
+        ) from last_error
 
     def _setup_event_listeners(self) -> None:
         """Attach listeners to underlying sync engine for connection-level events."""
@@ -221,12 +242,10 @@ class DatabaseManager:
 
         try:
             async with engine.begin() as conn:
-                # Set search path
-                await conn.execute(text(f"SET search_path TO {schema}, public"))
-
+                # Disable foreign key constraints
+                await conn.execute(text(f"SET CONSTRAINTS ALL DEFERRED"))
                 # Drop tables
                 await conn.run_sync(Base.metadata.drop_all)
-
             logger.info(f"All tables dropped successfully from schema: {schema}")
         except Exception as e:
             logger.error(f"Failed to drop tables: {e}")

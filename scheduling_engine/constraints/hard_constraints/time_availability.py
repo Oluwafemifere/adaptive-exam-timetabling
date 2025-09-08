@@ -70,9 +70,10 @@ class TimeAvailabilityViolation:
 
 
 class TimeAvailabilityConstraint(EnhancedBaseConstraint):
-    _is_initialized: bool = False
-
     def __init__(self, **kwargs):
+        # Extract parameters that should not be passed to super
+        custom_params = kwargs.pop("parameters", {})
+
         super().__init__(
             constraint_id="TIME_AVAILABILITY",
             name="Time Availability",
@@ -89,6 +90,7 @@ class TimeAvailabilityConstraint(EnhancedBaseConstraint):
                 "latest_exam_time": "18:00",
                 "blocked_dates": [],
                 "unavailable_penalty": 75000,
+                **custom_params,
             },
             **kwargs,
         )

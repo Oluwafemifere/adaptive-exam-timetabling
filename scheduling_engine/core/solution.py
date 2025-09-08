@@ -27,6 +27,7 @@ except ImportError:
 
 from ..config import get_logger
 from .problem_model import ExamSchedulingProblem
+from scheduling_engine.core.constraint_types import ConstraintSeverity
 
 logger = get_logger("core.solution")
 
@@ -112,7 +113,7 @@ class ConflictReport:
 
     conflict_id: UUID
     conflict_type: str
-    severity: str  # "high", "medium", "low"
+    severity: ConstraintSeverity  # "high", "medium", "low"
     affected_exams: List[UUID]
     affected_students: List[UUID] = field(default_factory=list)
     affected_resources: List[UUID] = field(default_factory=list)
@@ -492,7 +493,7 @@ class TimetableSolution:
                         conflict = ConflictReport(
                             conflict_id=uuid4(),
                             conflict_type="student_conflict",
-                            severity="high",
+                            severity=ConstraintSeverity.HIGH,
                             affected_exams=[assignment1.exam_id, assignment2.exam_id],
                             affected_students=list(conflicted_students),
                             description=f"{len(conflicted_students)} students have conflicting exams "
@@ -535,7 +536,7 @@ class TimetableSolution:
                 conflict = ConflictReport(
                     conflict_id=uuid4(),
                     conflict_type="room_conflict",
-                    severity="high",
+                    severity=ConstraintSeverity.HIGH,
                     affected_exams=[a.exam_id for a in assignments],
                     affected_resources=[room_id],
                     description=f"Room {room_code} double-booked for {len(assignments)} exams",
@@ -596,7 +597,7 @@ class TimetableSolution:
                                 conflict = ConflictReport(
                                     conflict_id=uuid4(),
                                     conflict_type="precedence_conflict",
-                                    severity="high",
+                                    severity=ConstraintSeverity.HIGH,
                                     affected_exams=[assignment.exam_id, prereq_exam_id],
                                     description=f"Prerequisite exam {prereq_exam.course_code} "
                                     f"scheduled after {exam.course_code}",
@@ -648,7 +649,7 @@ class TimetableSolution:
                     conflict = ConflictReport(
                         conflict_id=uuid4(),
                         conflict_type="faculty_overload",
-                        severity="medium",
+                        severity=ConstraintSeverity.MEDIUM,
                         affected_exams=[a.exam_id for a in concurrent_assignments],
                         description=f"Faculty {faculty.name} has {len(concurrent_assignments)} "
                         f"concurrent exams (limit: {faculty.max_concurrent_exams})",

@@ -60,20 +60,40 @@ class RoomCapacityConstraint(EnhancedBaseConstraint):
     """
 
     def __init__(self, **kwargs):
+        # Extract parameters with defaults
+        constraint_id = kwargs.pop("constraint_id", "ROOM_CAPACITY")
+        name = kwargs.pop("name", "Room Capacity Limits")
+        constraint_type = kwargs.pop("constraint_type", ConstraintType.HARD)
+        category = kwargs.pop("category", ConstraintCategory.RESOURCE_CONSTRAINTS)
+        weight = kwargs.pop("weight", 1.0)
+
+        # Handle parameters separately
+        default_params = {
+            "use_exam_capacity": True,
+            "capacity_buffer_percent": 0,
+            "special_needs_extra_space": True,
+            "multi_room_support": True,
+            "room_type_matching": True,
+            "overflow_penalty_multiplier": 1000,
+        }
+
+        # Merge with any provided parameters
+        if "parameters" in kwargs:
+            default_params.update(kwargs.pop("parameters"))
+
+        # REMOVE constraint_id from kwargs to avoid duplicate passing
+        if "constraint_id" in kwargs:
+            kwargs.pop("constraint_id")
+
+        # Call parent with proper parameter order
         super().__init__(
-            constraint_id="ROOM_CAPACITY",
-            name="Room Capacity Limits",
-            constraint_type=ConstraintType.HARD,
-            category=ConstraintCategory.RESOURCE_CONSTRAINTS,
-            weight=1.0,
-            parameters={
-                "use_exam_capacity": True,
-                "capacity_buffer_percent": 0,
-                "special_needs_extra_space": True,
-                "multi_room_support": True,
-                "room_type_matching": True,
-                "overflow_penalty_multiplier": 1000,
-            },
+            constraint_id=constraint_id,  # pass as explicit argument
+            name=name,
+            constraint_type=constraint_type,
+            category=category,
+            weight=weight,
+            parameters=default_params,
+            # pass remaining kwargs without constraint_id
             **kwargs,
         )
 

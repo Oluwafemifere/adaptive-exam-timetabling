@@ -50,6 +50,7 @@ from .soft_constraints import (
 from ..core.constraint_registry import (
     ConstraintRegistry,
     BaseConstraint,
+    LegacyConstraintAdapter,
 )
 from ..core.constraint_types import (
     ConstraintType,
@@ -161,13 +162,18 @@ class ConstraintFactory:
     def __init__(self, db_session=None):
         self.registry = create_enhanced_constraint_registry(db_session)
         self.db_session = db_session
+        self._database_constraints = {}  # Add missing attribute
 
-    async def create_constraint_from_code(
+    def get_constraint_definition(self, constraint_code: str) -> Optional[Any]:
+        """Get constraint definition from registry"""
+        return self.registry.get_constraint_definition(constraint_code.upper())
+
+    async def create_constraint_instance(
         self,
         constraint_code: str,
         weight: Optional[float] = None,
         parameters: Optional[Dict[str, Any]] = None,
-        configuration_context: Optional[Dict[str, Any]] = None,
+        database_config: Optional[Dict[str, Any]] = None,
     ) -> Optional[BaseConstraint]:
         """
         Create constraint instance from database code with configuration support
@@ -182,19 +188,52 @@ class ConstraintFactory:
             Configured constraint instance or None
         """
         try:
-            # Load from database if available
-            if BACKEND_AVAILABLE and self.db_session:
-                await self.registry.load_database_constraints()
+            definition = self.get_constraint_definition(constraint_code.upper())
+            if not definition or not definition.constraint_class:
+                logger.error(f"No constraint definition found for: {constraint_code}")
+                return None
 
-            return await self.registry.create_constraint_instance(
-                constraint_code,
-                weight=weight,
-                parameters=parameters,
-                database_config=configuration_context,
-            )
+            # Ensure we have a valid class
+            cls = definition.constraint_class
+            if cls is None:
+                return None
 
+            config_context: Dict[str, Any] = {}
+            if database_config:
+                config_context.update(database_config)
+            db_conf = self._database_constraints.get(constraint_code.upper())
+            if isinstance(db_conf, dict):
+                config_context.update(db_conf)
+
+            final_weight = weight
+            if final_weight is None and database_config:
+                final_weight = database_config.get("weight")
+            if final_weight is None:
+                final_weight = definition.default_weight
+
+            # FIX: Use proper initialization without passing constraint_id twice
+            if isinstance(cls, type) and issubclass(cls, BaseConstraint):
+                constraint = cls(
+                    constraint_id=constraint_code,
+                    name=definition.name,
+                    constraint_type=definition.constraint_type,
+                    category=definition.category,
+                    weight=final_weight,
+                    parameters=parameters,
+                    database_config=config_context,
+                )
+            else:
+                legacy_instance = cls() if isinstance(cls, type) else cls
+                constraint = LegacyConstraintAdapter(
+                    legacy_constraint_instance=legacy_instance,
+                    constraint_code=constraint_code,
+                    database_config=config_context,
+                )
+
+            logger.debug(f"Created constraint instance: {constraint_code}")
+            return constraint
         except Exception as e:
-            logger.error(f"Error creating constraint from code {constraint_code}: {e}")
+            logger.error(f"Error creating constraint instance {constraint_code}: {e}")
             return None
 
     async def create_constraint_set_for_session(

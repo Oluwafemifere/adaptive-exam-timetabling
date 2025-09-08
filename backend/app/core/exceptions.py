@@ -93,7 +93,9 @@ class AppError(Exception):
         return self
 
     @classmethod
-    def from_exception(cls, exc: BaseException, message: Optional[str] = None) -> "AppError":
+    def from_exception(
+        cls, exc: BaseException, message: Optional[str] = None
+    ) -> "AppError":
         """Wrap a generic exception into an AppError preserving the cause."""
         return cls(message or str(exc), cause=exc)
 
@@ -147,7 +149,14 @@ class InfeasibleProblemError(SchedulingError):
         cause: Optional[BaseException] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__(message, phase=phase, solver=solver, details=details, cause=cause, context=context)
+        super().__init__(
+            message,
+            phase=phase,
+            solver=solver,
+            details=details,
+            cause=cause,
+            context=context,
+        )
         self.infeasible_sets = infeasible_sets or []
         self.suggestion = suggestion
         # Add compact diagnostics to context for logs and monitoring
@@ -156,10 +165,12 @@ class InfeasibleProblemError(SchedulingError):
 
     def to_dict(self) -> Dict[str, Any]:
         data = super().to_dict()
-        data["error"].update({
-            "infeasible_sets": self.infeasible_sets,
-            "suggestion": self.suggestion,
-        })
+        data["error"].update(
+            {
+                "infeasible_sets": self.infeasible_sets,
+                "suggestion": self.suggestion,
+            }
+        )
         return data
 
 
@@ -181,7 +192,9 @@ class JobNotFoundError(AppError):
         cause: Optional[BaseException] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> None:
-        msg = message or (f"Timetable job {job_id} not found" if job_id else "Job not found")
+        msg = message or (
+            f"Timetable job {job_id} not found" if job_id else "Job not found"
+        )
         super().__init__(msg, details=details, cause=cause, context=context)
         if job_id is not None:
             self.context.setdefault("job_id", str(job_id))
@@ -219,10 +232,48 @@ class JobAccessDeniedError(AppError):
             self.context.setdefault("required_roles", required_roles)
 
 
+class DataProcessingError(AppError):
+    """Raised during data processing, validation, or transformation operations.
+
+    This covers CSV processing, data mapping, integrity checks, and bulk operations.
+    """
+
+    code = "data_processing_error"
+    status_code = 422  # Unprocessable Entity
+
+    def __init__(
+        self,
+        message: str = "Data processing error occurred",
+        *,
+        phase: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        validation_errors: Optional[List[Dict[str, Any]]] = None,
+        details: Optional[Any] = None,
+        cause: Optional[BaseException] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message, details=details, cause=cause, context=context)
+        if phase:
+            self.context.setdefault("phase", phase)
+        if entity_type:
+            self.context.setdefault("entity_type", entity_type)
+        self.validation_errors = validation_errors or []
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data["error"].update(
+            {
+                "validation_errors": self.validation_errors,
+            }
+        )
+        return data
+
+
 __all__ = [
     "AppError",
     "SchedulingError",
     "InfeasibleProblemError",
     "JobNotFoundError",
     "JobAccessDeniedError",
+    "DataProcessingError",
 ]

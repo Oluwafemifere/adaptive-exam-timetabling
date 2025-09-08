@@ -137,10 +137,7 @@ class CPSATModelBuilder:
         """Calculate time horizon for the scheduling problem"""
         assert self.problem is not None
 
-        if not self.problem.time_slots:
-            return 24 * 60  # Default 24 hours in minutes
-
-        # Calculate based on exam period duration
+        # Calculate based on exam period duration if available
         if self.problem.exam_period_start and self.problem.exam_period_end:
             period_days = (
                 self.problem.exam_period_end - self.problem.exam_period_start

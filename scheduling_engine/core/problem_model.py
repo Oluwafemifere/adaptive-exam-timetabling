@@ -37,7 +37,7 @@ from .constraint_types import (
 
 
 from .constraint_registry import ConstraintRegistry
-
+from backend.app.models.scheduling import StaffUnavailability
 
 # Runtime imports with fallback
 try:
@@ -458,6 +458,8 @@ class ExamSchedulingProblem:
         self.staff: Dict[UUID, Staff] = {}
         self.course_registrations: Dict[UUID, CourseRegistration] = {}
 
+        self.exam_student_assignments: Dict[UUID, Set[UUID]] = {}
+
         # Enhanced constraint management with database integration
         self.constraint_registry: ConstraintRegistry = ConstraintRegistry(db_session)
         self.active_constraints: List[BaseConstraint] = []
@@ -489,7 +491,9 @@ class ExamSchedulingProblem:
 
             if target_config_id:
                 # Load constraints for specific configuration
-                await self.constraint_registry.load_from_database(target_config_id)
+                await self.constraint_registry.load_from_database(
+                    configuration_id=configuration_id
+                )
                 constraints = await self.constraint_registry.get_active_constraints_for_configuration(
                     target_config_id
                 )
@@ -632,7 +636,7 @@ class ExamSchedulingProblem:
         for reg_data in getattr(dataset, "course_registrations", []):
             registration = CourseRegistration.from_backend_data(reg_data)
             self.course_registrations[registration.id] = registration
-            self.add_student_registration(
+            self._add_student_course_mapping(
                 registration.student_id, registration.course_id
             )
 
@@ -651,17 +655,33 @@ class ExamSchedulingProblem:
                 self._department_exams[exam.department_id] = set()
             self._department_exams[exam.department_id].add(exam.id)
 
-    def add_student_registration(self, student_id: UUID, course_id: UUID) -> None:
-        """Add student-course registration with indexing"""
-        # Update student-course mapping
-        if student_id not in self._student_course_map:
-            self._student_course_map[student_id] = set()
-        self._student_course_map[student_id].add(course_id)
+    def add_room(self, room: Room) -> None:
+        """Add a room to the problem"""
+        self.rooms[room.id] = room
 
-        # Update course-student mapping
-        if course_id not in self._course_student_map:
-            self._course_student_map[course_id] = set()
-        self._course_student_map[course_id].add(student_id)
+    def add_time_slot(self, time_slot: TimeSlot) -> None:
+        """Add a time slot to the problem"""
+        self.time_slots[time_slot.id] = time_slot
+
+    def add_student(self, student: Student) -> None:
+        """Add a student to the problem"""
+        self.students[student.id] = student
+
+    def add_staff(self, staff: Staff) -> None:
+        """Add a staff member to the problem"""
+        self.staff[staff.id] = staff
+
+    def add_staff_unavailability(self, unavailability: StaffUnavailability) -> None:
+        """Add staff unavailability to the problem"""
+        self._staff_unavailability[unavailability.staff_id].append(unavailability)
+
+    def add_student_registration(self, registration: CourseRegistration) -> None:
+        """Add a student course registration to the problem"""
+        self.course_registrations[registration.id] = registration
+        # Use helper method for mapping
+        self._add_student_course_mapping(
+            registration.student_id, registration.course_id
+        )
 
     def get_students_for_exam(self, exam_id: UUID) -> Set[UUID]:
         """Get set of student IDs registered for an exam"""
@@ -703,6 +723,16 @@ class ExamSchedulingProblem:
 
         return min(total_students / effective_capacity, 1.0)
 
+    def _add_student_course_mapping(self, student_id: UUID, course_id: UUID) -> None:
+        """Helper method to add student-course mapping"""
+        if student_id not in self._student_course_map:
+            self._student_course_map[student_id] = set()
+        self._student_course_map[student_id].add(course_id)
+
+        if course_id not in self._course_student_map:
+            self._course_student_map[course_id] = set()
+        self._course_student_map[course_id].add(student_id)
+
     def get_problem_complexity_score(self) -> float:
         """Calculate problem complexity score"""
         # Base complexity from number of entities
@@ -741,7 +771,7 @@ class ExamSchedulingProblem:
 
         # Rebuild from registrations
         for registration in self.course_registrations.values():
-            self.add_student_registration(
+            self._add_student_course_mapping(
                 registration.student_id, registration.course_id
             )
 
@@ -965,9 +995,7 @@ class ExamSchedulingProblem:
         for reg_data in data.get("course_registrations", []):
             registration = CourseRegistration.from_backend_data(reg_data)
             problem.course_registrations[registration.id] = registration
-            problem.add_student_registration(
-                registration.student_id, registration.course_id
-            )
+            problem.add_student_registration(registration)
 
         problem._build_indices()
         return problem

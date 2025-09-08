@@ -51,20 +51,40 @@ class NoStudentConflictConstraint(EnhancedBaseConstraint):
     - Conflict detection methods
     """
 
+    # Change the __init__ method to avoid parameter conflicts
     def __init__(self, **kwargs):
+        # Extract parameters with defaults
+        constraint_id = kwargs.pop("constraint_id", "NO_STUDENT_CONFLICT")
+        name = kwargs.pop("name", "No Student Conflicts")
+        constraint_type = kwargs.pop("constraint_type", ConstraintType.HARD)
+        category = kwargs.pop("category", ConstraintCategory.STUDENT_CONSTRAINTS)
+        weight = kwargs.pop("weight", 1.0)
+
+        # Handle parameters separately
+        default_params = {
+            "check_cross_registration": True,
+            "include_electives": True,
+            "include_carryover": True,
+            "conflict_detection_method": "comprehensive",
+            "penalty_multiplier": 100000,
+        }
+
+        # Merge with any provided parameters
+        if "parameters" in kwargs:
+            default_params.update(kwargs.pop("parameters"))
+
+        # REMOVE constraint_id from kwargs to avoid duplicate passing
+        if "constraint_id" in kwargs:
+            kwargs.pop("constraint_id")
+
+        # Call parent with proper parameter order - REMOVE constraint_id from kwargs
         super().__init__(
-            constraint_id="NO_STUDENT_CONFLICT",
-            name="No Student Conflicts",
-            constraint_type=ConstraintType.HARD,
-            category=ConstraintCategory.STUDENT_CONSTRAINTS,
-            weight=1.0,
-            parameters={
-                "check_cross_registration": True,
-                "include_electives": True,
-                "include_carryover": True,
-                "conflict_detection_method": "comprehensive",
-                "penalty_multiplier": 100000,
-            },
+            constraint_id=constraint_id,
+            name=name,
+            constraint_type=constraint_type,
+            category=category,
+            weight=weight,
+            parameters=default_params,
             **kwargs,
         )
 

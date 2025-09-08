@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import logging
 import json
-
+import math
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
@@ -46,6 +46,11 @@ def serialize_for_json(obj: Any) -> Any:
         return str(obj)
     elif isinstance(obj, datetime):
         return obj.isoformat()
+    elif isinstance(obj, float):
+        # Handle special float values
+        if math.isinf(obj) or math.isnan(obj):
+            return None
+        return obj
     elif hasattr(obj, "__dict__"):
         return {k: serialize_for_json(v) for k, v in obj.__dict__.items()}
     elif isinstance(obj, list):
