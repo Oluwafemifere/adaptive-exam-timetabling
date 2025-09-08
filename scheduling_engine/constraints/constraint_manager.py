@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import time
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.services.data_retrieval.constraint_data import ConstraintData
+from backend.app.services.data_retrieval.constraint_data import ConstraintData
 
 BACKEND_AVAILABLE = True
 SQLAlchemyAsyncSession = AsyncSession
@@ -310,9 +310,13 @@ class ConstraintManager:
                         category=constraint_info["category"],
                     )
                     constraints.append(constraint)
+                    logger.debug(
+                        f"Successfully created hard constraint: {constraint_code}"
+                    )
                 except Exception as e:
                     logger.error(
-                        f"Error creating default hard constraint {constraint_code}: {e}"
+                        f"Error creating default hard constraint {constraint_code}: {e}",
+                        exc_info=True,  # ADDED: Include stack trace
                     )
 
         # Important soft constraints with balanced weights
@@ -332,9 +336,13 @@ class ConstraintManager:
                         weight=weight,
                     )
                     constraints.append(constraint)
+                    logger.debug(
+                        f"Successfully created soft constraint: {constraint_code}"
+                    )
                 except Exception as e:
                     logger.error(
-                        f"Error creating default soft constraint {constraint_code}: {e}"
+                        f"Error creating default soft constraint {constraint_code}: {e}",
+                        exc_info=True,  # ADDED: Include stack trace
                     )
 
         logger.info(

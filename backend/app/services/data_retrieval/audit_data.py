@@ -316,6 +316,46 @@ class AuditData:
             for log in logs
         ]
 
+    async def log_activity(
+        self,
+        user_id: UUID,
+        action: str,
+        entity_type: str,
+        entity_id: Optional[UUID] = None,
+        old_values: Optional[Dict] = None,
+        new_values: Optional[Dict] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        session_id: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Dict:
+        """Log an activity to the audit log"""
+        audit_log = AuditLog(
+            user_id=user_id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            old_values=old_values,
+            new_values=new_values,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            session_id=session_id,
+            notes=notes,
+            created_at=ddatetime.utcnow(),
+        )
+
+        self.session.add(audit_log)
+        await self.session.flush()
+
+        return {
+            "id": audit_log.id,
+            "user_id": str(audit_log.user_id),
+            "action": audit_log.action,
+            "entity_type": audit_log.entity_type,
+            "entity_id": str(audit_log.entity_id) if audit_log.entity_id else None,
+            "created_at": audit_log.created_at.isoformat(),
+        }
+
     async def get_user_activity_summary(self, user_id: UUID) -> Dict:
         """Get activity summary for a specific user"""
         # Total actions

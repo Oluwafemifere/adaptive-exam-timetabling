@@ -1,3 +1,4 @@
+# backend\app\models\scheduling.py
 import uuid
 from typing import List, Optional, TYPE_CHECKING
 from sqlalchemy import (
@@ -46,7 +47,10 @@ class Exam(Base):
     )
     status: Mapped[str] = mapped_column(String, default="pending", nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
+    is_practical: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    requires_projector: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     # Use string references to avoid circular imports
     course: Mapped["Course"] = relationship("Course", back_populates="exams")
     session: Mapped["AcademicSession"] = relationship(
@@ -58,6 +62,41 @@ class Exam(Base):
     )
     invigilators: Mapped[List["ExamInvigilator"]] = relationship(
         "ExamInvigilator", back_populates="exam"
+    )
+    exam_departments: Mapped[List["ExamDepartment"]] = relationship(
+        "ExamDepartment",
+        back_populates="exam",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    departments: Mapped[List["Department"]] = relationship(
+        "Department",
+        secondary="exam_departments",
+        back_populates="exams",
+        viewonly=True,
+    )
+
+
+class ExamDepartment(Base, TimestampMixin):
+    __tablename__ = "exam_departments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    exam_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("exams.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    department_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("departments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    exam: Mapped["Exam"] = relationship("Exam", back_populates="exam_departments")
+    department: Mapped["Department"] = relationship(
+        "Department", back_populates="exam_departments"
     )
 
 

@@ -58,12 +58,19 @@ class ExamDistributionConstraint(EnhancedBaseConstraint):
     """
 
     def __init__(self, **kwargs):
+        # Extract parameters that might conflict
+        constraint_id = kwargs.pop("constraint_id", "EXAM_DISTRIBUTION")
+        name = kwargs.pop("name", "Exam Distribution")
+        constraint_type = kwargs.pop("constraint_type", ConstraintType.SOFT)
+        category = kwargs.pop("category", ConstraintCategory.TEMPORAL_CONSTRAINTS)
+        weight = kwargs.pop("weight", 0.7)
+
         super().__init__(
-            constraint_id="EXAM_DISTRIBUTION",
-            name="Exam Distribution",
-            constraint_type=ConstraintType.SOFT,
-            category=ConstraintCategory.TEMPORAL_CONSTRAINTS,
-            weight=0.7,
+            constraint_id=constraint_id,
+            name=name,
+            constraint_type=constraint_type,
+            category=category,
+            weight=weight,
             parameters={
                 "minimum_gap_hours": 24,
                 "preferred_gap_hours": 48,

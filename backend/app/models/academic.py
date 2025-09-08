@@ -9,6 +9,7 @@ from .base import Base, TimestampMixin
 from sqlalchemy import Date, UniqueConstraint
 from datetime import date
 from sqlalchemy import ARRAY
+from .scheduling import ExamDepartment
 
 # Remove direct imports that cause circular dependencies
 # Use TYPE_CHECKING for type hints only
@@ -70,6 +71,15 @@ class Department(Base, TimestampMixin):
     staff: Mapped[List["Staff"]] = relationship("Staff", back_populates="department")
     courses: Mapped[List["Course"]] = relationship(
         "Course", back_populates="department"
+    )
+    exam_departments: Mapped[List["ExamDepartment"]] = relationship(
+        "ExamDepartment", back_populates="department", cascade="all, delete-orphan"
+    )
+    exams: Mapped[List["Exam"]] = relationship(
+        "Exam",
+        secondary="exam_departments",
+        back_populates="departments",
+        viewonly=True,
     )
 
 

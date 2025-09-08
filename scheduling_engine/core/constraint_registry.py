@@ -66,11 +66,11 @@ class BaseConstraint(ABC):
         parameters: Optional[Dict[str, Any]] = None,
         database_config: Optional[Dict[str, Any]] = None,
     ):
-        self.id = (
-            UUID(str(constraint_id))
-            if isinstance(constraint_id, str)
-            else constraint_id
-        )
+        try:
+            self.id = UUID(str(constraint_id))
+        except ValueError:
+            # Generate a UUID from the string's hash if it's not a valid UUID
+            self.id = UUID(int=hash(constraint_id) & ((1 << 128) - 1))
         self.constraint_id = str(constraint_id)
         self.name = name
         self.constraint_type = constraint_type
@@ -182,19 +182,35 @@ class LegacyConstraintAdapter(BaseConstraint):
         constraint_code: str,
         database_config: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__(
-            constraint_id=constraint_code,
-            name=getattr(legacy_constraint_instance, "name", constraint_code),
-            constraint_type=getattr(
-                legacy_constraint_instance, "constraint_type", ConstraintType.SOFT
-            ),
-            category=getattr(
-                legacy_constraint_instance,
-                "category",
-                ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
-            ),
-            database_config=database_config,
-        )
+        try:
+            super().__init__(
+                constraint_id=constraint_code,
+                name=getattr(legacy_constraint_instance, "name", constraint_code),
+                constraint_type=getattr(
+                    legacy_constraint_instance, "constraint_type", ConstraintType.SOFT
+                ),
+                category=getattr(
+                    legacy_constraint_instance,
+                    "category",
+                    ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
+                ),
+                database_config=database_config,
+            )
+        except ValueError:
+            super().__init__(
+                constraint_id=UUID(int=hash(constraint_code) & ((1 << 128) - 1)),
+                name=getattr(legacy_constraint_instance, "name", constraint_code),
+                constraint_type=getattr(
+                    legacy_constraint_instance, "constraint_type", ConstraintType.SOFT
+                ),
+                category=getattr(
+                    legacy_constraint_instance,
+                    "category",
+                    ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
+                ),
+                database_config=database_config,
+            )
+
         self.legacy_constraint = legacy_constraint_instance
 
     def _initialize_implementation(
@@ -410,10 +426,22 @@ class ConstraintRegistry:
     ) -> Optional[BaseConstraint]:
         try:
             definition = self.get_constraint_definition(constraint_code.upper())
-            if not definition or not definition.constraint_class:
+            if not definition:
                 logger.error(f"No constraint definition found for: {constraint_code}")
                 return None
 
+            # Get the constraint class safely
+            cls = definition.constraint_class
+            if cls is None:
+                # Try to get class from registry if not set in definition
+                cls = self._get_constraint_class_for_code(constraint_code)
+                if cls is None:
+                    logger.error(
+                        f"No constraint class available for: {constraint_code}"
+                    )
+                    return None
+
+            # Rest of the method remains the same...
             config_context: Dict[str, Any] = {}
             if database_config:
                 config_context.update(database_config)
@@ -421,13 +449,8 @@ class ConstraintRegistry:
             if isinstance(db_conf, dict):
                 config_context.update(db_conf)
 
-            final_weight = weight
-            if final_weight is None and database_config:
-                final_weight = database_config.get("weight")
-            if final_weight is None:
-                final_weight = definition.default_weight
+            final_weight = weight or definition.default_weight
 
-            cls = definition.constraint_class
             if isinstance(cls, type) and issubclass(cls, BaseConstraint):
                 constraint = cls(
                     constraint_id=constraint_code,
@@ -435,11 +458,12 @@ class ConstraintRegistry:
                     constraint_type=definition.constraint_type,
                     category=definition.category,
                     weight=final_weight,
-                    parameters=parameters,
+                    parameters=parameters or definition.parameters,
                     database_config=config_context,
                 )
             else:
-                legacy_instance = cls() if isinstance(cls, type) else cls
+                # Handle legacy constraints
+                legacy_instance = cls() if callable(cls) else cls
                 constraint = LegacyConstraintAdapter(
                     legacy_constraint_instance=legacy_instance,
                     constraint_code=constraint_code,
@@ -448,8 +472,12 @@ class ConstraintRegistry:
 
             logger.debug(f"Created constraint instance: {constraint_code}")
             return constraint
+
         except Exception as e:
             logger.error(f"Error creating constraint instance {constraint_code}: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
             return None
 
     def _register_constraint_definition(self, definition: ConstraintDefinition) -> None:

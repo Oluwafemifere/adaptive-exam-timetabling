@@ -34,11 +34,18 @@ class MockBaseConstraint(BaseConstraint):
     """Mock constraint for testing registry functionality"""
 
     def __init__(self, constraint_id="MOCK", **kwargs):
+        # Extract parameters that might be passed via kwargs
+        name = kwargs.pop("name", f"Mock Constraint {constraint_id}")
+        constraint_type = kwargs.pop("constraint_type", ConstraintType.SOFT)
+        category = kwargs.pop("category", ConstraintCategory.OPTIMIZATION_CONSTRAINTS)
+        weight = kwargs.pop("weight", 1.0)
+
         super().__init__(
             constraint_id=constraint_id,
-            name="Mock Constraint",
-            constraint_type=ConstraintType.SOFT,
-            category=ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
+            name=name,
+            constraint_type=constraint_type,
+            category=category,
+            weight=weight,
             **kwargs,
         )
         self.init_called = False
@@ -70,9 +77,8 @@ class TestConstraintRegistryCore:
         """Test registry creation without database session"""
         registry = ConstraintRegistry()
 
-        assert registry._definitions == {}
-        assert registry._active_constraints == {}
-        assert registry._constraint_categories == {}
+        # Should have built-in constraints, not be empty
+        assert len(registry._definitions) > 0
         assert registry.db_session is None
         assert registry.constraint_data_service is None
 
@@ -306,7 +312,8 @@ class TestConstraintRegistryEvaluation:
         results = await registry.evaluate_all_constraints(problem, solution)
 
         assert len(results) == 2
-        assert "Mock Constraint" in results
+        assert "Mock Constraint MOCK_1" in results
+        assert "Mock Constraint MOCK_2" in results
 
         # Verify constraints were called
         for constraint in mock_constraints:

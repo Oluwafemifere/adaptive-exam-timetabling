@@ -29,13 +29,7 @@ class QualityScore:
     constraint_satisfaction_score: float = 0.0
     resource_utilization_score: float = 0.0
     student_satisfaction_score: float = 0.0
-    overall_score: float = (
-        feasibility_score
-        + objective_value_score
-        + constraint_satisfaction_score
-        + resource_utilization_score
-        + student_satisfaction_score
-    )
+
     # Penalty components
     hard_constraint_penalty: float = 0.0
     soft_constraint_penalty: float = 0.0
@@ -483,12 +477,19 @@ class SolutionMetrics:
     ) -> Dict[str, float]:
         """Calculate convergence metrics from fitness history"""
         if len(fitness_history) < 2:
-            return {"convergence_rate": 0.0, "stability": 0.0, "improvement_rate": 0.0}
+            return {
+                "convergence_rate": 0.0,
+                "stability": 0.0,
+                "improvement_rate": 0.0,
+                "generations_evaluated": len(fitness_history),
+            }
 
         # Calculate improvement rate
         initial_fitness = fitness_history[0]
         final_fitness = fitness_history[-1]
-        improvement_rate = (final_fitness - initial_fitness) / max(initial_fitness, 1.0)
+        # Use actual initial value unless it's zero; avoid division by zero by using 1.0
+        denom = initial_fitness if initial_fitness != 0.0 else 1.0
+        improvement_rate = (final_fitness - initial_fitness) / denom
 
         # Calculate convergence rate (how quickly fitness improves)
         convergence_rate = 0.0
