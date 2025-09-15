@@ -1,13 +1,15 @@
 # app/models/infrastructure.py
 import uuid
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 from sqlalchemy import String, Boolean, Integer, ForeignKey, ARRAY, Text, Index
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from .base import Base, TimestampMixin
-from .scheduling import Exam
+
+if TYPE_CHECKING:
+    from .scheduling import Exam
 
 
 class Building(Base, TimestampMixin):
@@ -60,11 +62,30 @@ class Room(Base, TimestampMixin):
         ARRAY(String), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # NEW FIELDS
+    overbookable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    max_inv_per_room: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
+    adjacency_pairs: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     building: Mapped["Building"] = relationship(back_populates="rooms")
     room_type: Mapped["RoomType"] = relationship(back_populates="rooms")
     exam_rooms: Mapped[List["ExamRoom"]] = relationship(back_populates="room")
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    allowed_exams: Mapped[List["ExamAllowedRoom"]] = relationship(back_populates="room")
+
+
+class ExamAllowedRoom(Base):
+    __tablename__ = "exam_allowed_rooms"
+
+    exam_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("exams.id"), primary_key=True
+    )
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("rooms.id"), primary_key=True
+    )
+
+    exam: Mapped["Exam"] = relationship(back_populates="allowed_rooms")
+    room: Mapped["Room"] = relationship(back_populates="allowed_exams")
 
 
 class ExamRoom(Base):

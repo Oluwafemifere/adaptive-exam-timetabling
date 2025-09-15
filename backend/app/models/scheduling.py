@@ -15,13 +15,15 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy.ext.associationproxy import association_proxy
+
 
 from .base import Base, TimestampMixin
 
 # Use TYPE_CHECKING to avoid circular imports
 if TYPE_CHECKING:
     from .academic import AcademicSession, Course, Department
-    from .infrastructure import ExamRoom, Room
+    from .infrastructure import ExamRoom, Room, ExamAllowedRoom
 
 
 class Exam(Base):
@@ -51,6 +53,7 @@ class Exam(Base):
     requires_projector: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    is_common: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Use string references to avoid circular imports
     course: Mapped["Course"] = relationship("Course", back_populates="exams")
     session: Mapped["AcademicSession"] = relationship(
@@ -69,11 +72,10 @@ class Exam(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    departments: Mapped[List["Department"]] = relationship(
-        "Department",
-        secondary="exam_departments",
-        back_populates="exams",
-        viewonly=True,
+    departments = association_proxy("exam_departments", "department")
+    allowed_rooms: Mapped[List["ExamAllowedRoom"]] = relationship(back_populates="exam")
+    timetable_assignments: Mapped[List["TimetableAssignment"]] = relationship(
+        back_populates="exam"
     )
 
 
@@ -166,6 +168,10 @@ class ExamInvigilator(Base, TimestampMixin):
     room_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("rooms.id"), nullable=False
     )
+    # NEW FIELD
+    time_slot_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("time_slots.id"), nullable=True
+    )
     assigned_at: Mapped[DateTime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -175,9 +181,8 @@ class ExamInvigilator(Base, TimestampMixin):
 
     exam: Mapped["Exam"] = relationship("Exam", back_populates="invigilators")
     staff: Mapped["Staff"] = relationship("Staff", back_populates="invigilations")
-    room: Mapped["Room"] = relationship(
-        "Room"
-    )  # Simple relationship without back_populates for now
+    room: Mapped["Room"] = relationship("Room")
+    time_slot: Mapped["TimeSlot"] = relationship("TimeSlot")
 
 
 class StaffUnavailability(Base):
@@ -205,3 +210,27 @@ class StaffUnavailability(Base):
     time_slot: Mapped["TimeSlot"] = relationship(
         "TimeSlot", back_populates="staff_unavailability"
     )
+
+
+class TimetableAssignment(Base):
+    __tablename__ = "timetable_assignments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    exam_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("exams.id"), nullable=False
+    )
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("rooms.id"), nullable=False
+    )
+    day: Mapped[Date] = mapped_column(Date, nullable=False)
+    time_slot_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("time_slots.id"), nullable=False
+    )
+    student_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    exam: Mapped["Exam"] = relationship(back_populates="timetable_assignments")
+    room: Mapped["Room"] = relationship()
+    time_slot: Mapped["TimeSlot"] = relationship()

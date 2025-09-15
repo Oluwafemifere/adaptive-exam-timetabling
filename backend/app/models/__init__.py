@@ -23,15 +23,23 @@ from .academic import (
     CourseRegistration,
 )
 
-from .infrastructure import Building, RoomType, Room, ExamRoom
 
 from .jobs import TimetableJob, TimetableVersion
 
-from .scheduling import Exam, TimeSlot, Staff, ExamInvigilator, StaffUnavailability
 
-from .file_uploads import FileUploadSession
+from .file_uploads import FileUploadSession, UploadedFile
 from .audit_logs import AuditLog
 from .timetable_edits import TimetableEdit
+from .infrastructure import Building, RoomType, Room, ExamRoom, ExamAllowedRoom
+from .scheduling import (
+    Exam,
+    TimeSlot,
+    Staff,
+    ExamInvigilator,
+    StaffUnavailability,
+    TimetableAssignment,
+    ExamDepartment,
+)
 
 __all__ = [
     "Base",
@@ -66,4 +74,8 @@ __all__ = [
     "FileUploadSession",
     "AuditLog",
     "TimetableEdit",
+    "ExamAllowedRoom",
+    "TimetableAssignment",
+    "ExamDepartment",
+    "UploadedFile",
 ]

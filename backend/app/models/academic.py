@@ -9,12 +9,12 @@ from .base import Base, TimestampMixin
 from sqlalchemy import Date, UniqueConstraint
 from datetime import date
 from sqlalchemy import ARRAY
-from .scheduling import ExamDepartment
+from sqlalchemy.ext.associationproxy import association_proxy
 
 # Remove direct imports that cause circular dependencies
 # Use TYPE_CHECKING for type hints only
 if TYPE_CHECKING:
-    from .scheduling import Exam, StaffUnavailability, Staff
+    from .scheduling import Exam, StaffUnavailability, Staff, ExamDepartment
     from .jobs import TimetableJob
     from .file_uploads import FileUploadSession
 
@@ -75,12 +75,7 @@ class Department(Base, TimestampMixin):
     exam_departments: Mapped[List["ExamDepartment"]] = relationship(
         "ExamDepartment", back_populates="department", cascade="all, delete-orphan"
     )
-    exams: Mapped[List["Exam"]] = relationship(
-        "Exam",
-        secondary="exam_departments",
-        back_populates="departments",
-        viewonly=True,
-    )
+    exams = association_proxy("exam_departments", "exam")
 
 
 class Faculty(Base, TimestampMixin):

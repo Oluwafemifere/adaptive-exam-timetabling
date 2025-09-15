@@ -113,7 +113,7 @@ class SystemConfiguration(Base, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
+    solver_parameters: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Use string references
     constraints: Mapped[List["ConfigurationConstraint"]] = relationship(
         back_populates="configuration"

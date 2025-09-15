@@ -17,14 +17,13 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
 )
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.exc import SQLAlchemyError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Base model
 Base = declarative_base()
 
 
@@ -203,6 +202,11 @@ class DatabaseManager:
                 await session.commit()
             except Exception as e:
                 logger.error(f"Transaction error: {e}")
+                logger.error(f"Transaction error details: {e}")
+                logger.error(f"Error type: {type(e).__name__}")
+                import traceback
+
+                logger.error(f"Transaction traceback: {traceback.format_exc()}")
                 await session.rollback()
                 raise
 

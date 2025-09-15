@@ -14,14 +14,14 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import NullPool
 from sqlalchemy.exc import IntegrityError
 
-from app.main import app
-from app.database import get_db
-from app.models import Base
-from app.config import get_settings
+from ..main import app
+from ..database import get_db
+from ..models import Base
+from ..config import get_settings
 
 # Import all models to ensure proper table creation
-from app.models.users import User, UserRole, SystemConfiguration
-from app.models.academic import (
+from ..models.users import User, UserRole, SystemConfiguration
+from ..models.academic import (
     AcademicSession,
     Faculty,
     Department,
@@ -30,17 +30,17 @@ from app.models.academic import (
     Student,
     CourseRegistration,
 )
-from app.models.infrastructure import Building, Room, RoomType, ExamRoom
-from app.models.constraints import (
+from ..models.infrastructure import Building, Room, RoomType, ExamRoom
+from ..models.constraints import (
     ConstraintCategory,
     ConstraintRule,
     ConfigurationConstraint,
 )
-from app.models.scheduling import Exam, TimeSlot, Staff, StaffUnavailability
-from app.models.jobs import TimetableJob, TimetableVersion
-from app.models.timetable_edits import TimetableEdit
-from app.models.audit_logs import AuditLog
-from app.models.file_uploads import FileUploadSession, UploadedFile
+from ..models.scheduling import Exam, TimeSlot, Staff, StaffUnavailability
+from ..models.jobs import TimetableJob, TimetableVersion
+from ..models.timetable_edits import TimetableEdit
+from ..models.audit_logs import AuditLog
+from ..models.file_uploads import FileUploadSession, UploadedFile
 
 # Load settings from config.py (which reads .env)
 settings = get_settings()

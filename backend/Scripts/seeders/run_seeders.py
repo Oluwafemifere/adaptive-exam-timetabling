@@ -19,8 +19,8 @@ from typing import Optional
 BACKEND_DIR = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 
-from .fake_seed import ComprehensiveFakeSeeder
-from .seed_data import EnhancedDatabaseSeeder
+from fake_seed import ComprehensiveFakeSeeder
+from seed_data import EnhancedDatabaseSeeder
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ Usage Examples:
    python scripts/seeders/run_seeders.py --mode full
 
 5. Full setup with fake data:
-   python scripts/seeders/run_seeders.py --mode full --use-fake-data --drop-existing
+   python Scripts/seeders/run_seeders.py --mode full --use-fake-data --drop-existing
 
 Environment Variables:
 - DATABASE_URL: Database connection string
@@ -140,23 +140,24 @@ async def main():
     parser.add_argument(
         "--drop-existing", action="store_true", help="Drop existing data before seeding"
     )
-
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Use parallel execution (fake mode only)",
+    )
     parser.add_argument(
         "--use-fake-data",
         action="store_true",
         help="Use fake data instead of structured data (for full mode)",
     )
-
     parser.add_argument(
         "--no-sample-data",
         action="store_true",
         help="Skip sample data seeding (for structured mode)",
     )
-
     parser.add_argument(
         "--csv-file", help="CSV file path for import (required for csv mode)"
     )
-
     parser.add_argument(
         "--entity-type",
         choices=[
@@ -168,7 +169,6 @@ async def main():
         ],
         help="Entity type for CSV import (required for csv mode)",
     )
-
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
@@ -176,7 +176,7 @@ async def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Handle help mode
+    # Handle help mode early
     if args.mode == "help":
         print_usage_examples()
         return
@@ -192,11 +192,16 @@ async def main():
         runner = UnifiedSeederRunner(args.database_url)
 
         if args.mode == "fake":
-            await runner.run_fake_seeding(drop_existing=args.drop_existing)
+            if args.parallel:
+                # Direct access to fake seeder for parallel run
+                await runner.fake_seeder.run_parallel(drop_existing=args.drop_existing)
+            else:
+                await runner.run_fake_seeding(drop_existing=args.drop_existing)
 
         elif args.mode == "structured":
             await runner.run_structured_seeding(
-                drop_existing=args.drop_existing, sample_data=not args.no_sample_data
+                drop_existing=args.drop_existing,
+                sample_data=not args.no_sample_data,
             )
 
         elif args.mode == "csv":

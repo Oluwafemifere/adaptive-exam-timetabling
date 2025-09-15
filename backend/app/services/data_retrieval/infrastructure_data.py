@@ -11,11 +11,13 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy import case
+
 from ...models.infrastructure import (
     Building,
     RoomType,
     Room,
     ExamRoom,
+    ExamAllowedRoom,
 )
 
 
@@ -33,6 +35,7 @@ class InfrastructureData:
             .options(selectinload(Building.rooms))
             .order_by(Building.name)
         )
+
         result = await self.session.execute(stmt)
         buildings = result.scalars().all()
 
@@ -76,6 +79,7 @@ class InfrastructureData:
             .where(Building.is_active)
             .order_by(Building.name)
         )
+
         result = await self.session.execute(stmt)
         buildings = result.scalars().all()
 
@@ -99,6 +103,7 @@ class InfrastructureData:
             .options(selectinload(Building.rooms).selectinload(Room.room_type))
             .where(Building.id == building_id)
         )
+
         result = await self.session.execute(stmt)
         building = result.scalar_one_or_none()
 
@@ -122,6 +127,9 @@ class InfrastructureData:
                     "has_projector": room.has_projector,
                     "has_ac": room.has_ac,
                     "has_computers": room.has_computers,
+                    "overbookable": room.overbookable,
+                    "max_inv_per_room": room.max_inv_per_room,
+                    "adjacency_pairs": room.adjacency_pairs,
                     "is_active": room.is_active,
                 }
                 for room in building.rooms
@@ -146,6 +154,7 @@ class InfrastructureData:
             .options(selectinload(RoomType.rooms))
             .order_by(RoomType.name)
         )
+
         result = await self.session.execute(stmt)
         room_types = result.scalars().all()
 
@@ -184,6 +193,7 @@ class InfrastructureData:
             .options(selectinload(Room.building), selectinload(Room.room_type))
             .order_by(Room.code)
         )
+
         result = await self.session.execute(stmt)
         rooms = result.scalars().all()
 
@@ -204,6 +214,9 @@ class InfrastructureData:
                 "has_ac": room.has_ac,
                 "has_computers": room.has_computers,
                 "accessibility_features": room.accessibility_features or [],
+                "overbookable": room.overbookable,
+                "max_inv_per_room": room.max_inv_per_room,
+                "adjacency_pairs": room.adjacency_pairs,
                 "is_active": room.is_active,
                 "notes": room.notes,
                 "created_at": (
@@ -228,6 +241,7 @@ class InfrastructureData:
             .where(Room.is_active)
             .order_by(Room.code)
         )
+
         result = await self.session.execute(stmt)
         rooms = result.scalars().all()
 
@@ -245,6 +259,9 @@ class InfrastructureData:
                 "has_ac": room.has_ac,
                 "has_computers": room.has_computers,
                 "accessibility_features": room.accessibility_features or [],
+                "overbookable": room.overbookable,
+                "max_inv_per_room": room.max_inv_per_room,
+                "adjacency_pairs": room.adjacency_pairs,
             }
             for room in rooms
         ]
@@ -257,6 +274,7 @@ class InfrastructureData:
             .where(Room.building_id == building_id)
             .order_by(Room.code)
         )
+
         result = await self.session.execute(stmt)
         rooms = result.scalars().all()
 
@@ -273,6 +291,9 @@ class InfrastructureData:
                 "has_ac": room.has_ac,
                 "has_computers": room.has_computers,
                 "accessibility_features": room.accessibility_features or [],
+                "overbookable": room.overbookable,
+                "max_inv_per_room": room.max_inv_per_room,
+                "adjacency_pairs": room.adjacency_pairs,
                 "is_active": room.is_active,
                 "notes": room.notes,
             }
@@ -287,6 +308,7 @@ class InfrastructureData:
             .where(Room.room_type_id == room_type_id)
             .order_by(Room.code)
         )
+
         result = await self.session.execute(stmt)
         rooms = result.scalars().all()
 
@@ -302,6 +324,8 @@ class InfrastructureData:
                 "has_projector": room.has_projector,
                 "has_ac": room.has_ac,
                 "has_computers": room.has_computers,
+                "overbookable": room.overbookable,
+                "max_inv_per_room": room.max_inv_per_room,
                 "is_active": room.is_active,
             }
             for room in rooms
@@ -315,9 +339,11 @@ class InfrastructureData:
                 selectinload(Room.building),
                 selectinload(Room.room_type),
                 selectinload(Room.exam_rooms),
+                selectinload(Room.allowed_exams),
             )
             .where(Room.id == room_id)
         )
+
         result = await self.session.execute(stmt)
         room = result.scalar_one_or_none()
 
@@ -340,9 +366,13 @@ class InfrastructureData:
             "has_ac": room.has_ac,
             "has_computers": room.has_computers,
             "accessibility_features": room.accessibility_features or [],
+            "overbookable": room.overbookable,
+            "max_inv_per_room": room.max_inv_per_room,
+            "adjacency_pairs": room.adjacency_pairs,
             "is_active": room.is_active,
             "notes": room.notes,
             "exam_assignment_count": len(room.exam_rooms),
+            "allowed_exam_count": len(room.allowed_exams),
             "created_at": (
                 cast(ddatetime, room.created_at).isoformat()
                 if room.created_at
@@ -363,6 +393,7 @@ class InfrastructureData:
         has_computers: Optional[bool] = None,
         min_capacity: Optional[int] = None,
         building_id: Optional[UUID] = None,
+        overbookable: Optional[bool] = None,
     ) -> List[Dict]:
         """Get rooms with specific features"""
         stmt = (
@@ -381,8 +412,11 @@ class InfrastructureData:
             stmt = stmt.where(Room.exam_capacity >= min_capacity)
         if building_id is not None:
             stmt = stmt.where(Room.building_id == building_id)
+        if overbookable is not None:
+            stmt = stmt.where(Room.overbookable == overbookable)
 
         stmt = stmt.order_by(Room.capacity.desc())
+
         result = await self.session.execute(stmt)
         rooms = result.scalars().all()
 
@@ -399,6 +433,9 @@ class InfrastructureData:
                 "has_ac": room.has_ac,
                 "has_computers": room.has_computers,
                 "accessibility_features": room.accessibility_features or [],
+                "overbookable": room.overbookable,
+                "max_inv_per_room": room.max_inv_per_room,
+                "adjacency_pairs": room.adjacency_pairs,
             }
             for room in rooms
         ]
@@ -406,7 +443,6 @@ class InfrastructureData:
     async def search_rooms(self, search_term: str) -> List[Dict]:
         """Search rooms by code or name"""
         search_pattern = f"%{search_term}%"
-
         stmt = (
             select(Room)
             .options(selectinload(Room.building), selectinload(Room.room_type))
@@ -420,6 +456,7 @@ class InfrastructureData:
             )
             .order_by(Room.code)
         )
+
         result = await self.session.execute(stmt)
         rooms = result.scalars().all()
 
@@ -432,6 +469,8 @@ class InfrastructureData:
                 "room_type_name": room.room_type.name if room.room_type else None,
                 "capacity": room.capacity,
                 "exam_capacity": room.exam_capacity or room.capacity,
+                "overbookable": room.overbookable,
+                "max_inv_per_room": room.max_inv_per_room,
             }
             for room in rooms
         ]
@@ -473,6 +512,44 @@ class InfrastructureData:
             for assignment in assignments
         ]
 
+    # Exam Allowed Rooms
+    async def get_exam_allowed_rooms(
+        self, exam_id: Optional[UUID] = None, room_id: Optional[UUID] = None
+    ) -> List[Dict]:
+        """Get exam allowed room assignments with filters"""
+        stmt = select(ExamAllowedRoom).options(
+            selectinload(ExamAllowedRoom.exam),
+            selectinload(ExamAllowedRoom.room).selectinload(Room.building),
+        )
+
+        if exam_id is not None:
+            stmt = stmt.where(ExamAllowedRoom.exam_id == exam_id)
+        if room_id is not None:
+            stmt = stmt.where(ExamAllowedRoom.room_id == room_id)
+
+        result = await self.session.execute(stmt)
+        assignments = result.scalars().all()
+
+        return [
+            {
+                "exam_id": str(assignment.exam_id),
+                "room_id": str(assignment.room_id),
+                "room_code": assignment.room.code if assignment.room else None,
+                "room_name": assignment.room.name if assignment.room else None,
+                "building_name": (
+                    assignment.room.building.name
+                    if assignment.room and assignment.room.building
+                    else None
+                ),
+                "exam_code": (
+                    assignment.exam.course.code
+                    if assignment.exam and assignment.exam.course
+                    else None
+                ),
+            }
+            for assignment in assignments
+        ]
+
     # Statistics and utilization
     async def get_building_statistics(self) -> List[Dict]:
         stmt = (
@@ -494,11 +571,18 @@ class InfrastructureData:
                         else_=0,
                     )
                 ).label("total_exam_capacity"),
+                func.count(
+                    func.nullif(Room.overbookable & Room.is_active, False)
+                ).label("overbookable_rooms"),
+                func.avg(
+                    case((Room.is_active, Room.max_inv_per_room), else_=None)
+                ).label("avg_max_inv_per_room"),
             )
             .outerjoin(Room, Room.building_id == Building.id)
             .group_by(Building.id, Building.name, Building.code)
             .order_by(Building.name)
         )
+
         result = await self.session.execute(stmt)
         stats = result.all()
 
@@ -511,6 +595,8 @@ class InfrastructureData:
                 "active_rooms": stat.active_rooms or 0,
                 "total_capacity": int(stat.total_capacity or 0),
                 "total_exam_capacity": int(stat.total_exam_capacity or 0),
+                "overbookable_rooms": stat.overbookable_rooms or 0,
+                "avg_max_inv_per_room": float(stat.avg_max_inv_per_room or 0),
             }
             for stat in stats
         ]
@@ -528,11 +614,15 @@ class InfrastructureData:
                 func.sum(case((Room.is_active, Room.capacity), else_=0)).label(
                     "total_capacity"
                 ),
+                func.count(
+                    func.nullif(Room.overbookable & Room.is_active, False)
+                ).label("overbookable_count"),
             )
             .outerjoin(Room, Room.room_type_id == RoomType.id)
             .group_by(RoomType.id, RoomType.name)
             .order_by(RoomType.name)
         )
+
         result = await self.session.execute(stmt)
         stats = result.all()
 
@@ -544,6 +634,7 @@ class InfrastructureData:
                 "active_rooms": stat.active_rooms or 0,
                 "average_capacity": float(stat.avg_capacity or 0),
                 "total_capacity": int(stat.total_capacity or 0),
+                "overbookable_count": stat.overbookable_count or 0,
             }
             for stat in stats
         ]
@@ -562,6 +653,7 @@ class InfrastructureData:
                 )
             ).label("total_exam_capacity"),
         )
+
         total_result = await self.session.execute(total_stmt)
         totals = total_result.first()
 
@@ -575,7 +667,11 @@ class InfrastructureData:
             func.count(func.nullif(Room.has_computers & Room.is_active, False)).label(
                 "with_computers"
             ),
+            func.count(func.nullif(Room.overbookable & Room.is_active, False)).label(
+                "overbookable"
+            ),
         )
+
         features_result = await self.session.execute(features_stmt)
         features = features_result.first()
 
@@ -587,6 +683,7 @@ class InfrastructureData:
         with_projector = features.with_projector if features else 0
         with_ac = features.with_ac if features else 0
         with_computers = features.with_computers if features else 0
+        overbookable = features.overbookable if features else 0
 
         return {
             "total_rooms": total_rooms,
@@ -597,4 +694,5 @@ class InfrastructureData:
             "rooms_with_projector": with_projector,
             "rooms_with_ac": with_ac,
             "rooms_with_computers": with_computers,
+            "overbookable_rooms": overbookable,
         }

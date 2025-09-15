@@ -23,7 +23,6 @@ from .core import (
     SolutionMetrics,
 )
 
-from .hybrid import HybridCoordinator
 
 __version__ = "1.0.0"
 __author__ = "Baze University Exam Scheduling System"
@@ -41,8 +40,6 @@ __all__ = [
     "TimetableSolution",
     "ConstraintRegistry",
     "SolutionMetrics",
-    # Main interface
-    "HybridCoordinator",
 ]
 
 # Initialize package-level logger

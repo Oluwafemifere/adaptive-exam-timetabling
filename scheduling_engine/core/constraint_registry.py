@@ -1,940 +1,353 @@
 # scheduling_engine/core/constraint_registry.py
 
 """
-Enhanced Constraint Registry for Exam Scheduling with Database Integration
+FIXED Constraint Registry - Enhanced Logging and Proper Category Activation
 
-Manages all constraint types, their definitions, and validation logic.
-Enhanced to support database-driven constraint configuration and dynamic loading.
+Key Fixes:
+- Load definitions exactly once into GLOBAL_CONSTRAINT_DEFINITIONS
+- Share category‐to‐IDs mapping in GLOBAL_CATEGORY_CONSTRAINTS
+- Simplify __init__ to reuse globals
 """
 
-from __future__ import annotations
-from typing import Any, Dict, List, Optional, Type, Union, TYPE_CHECKING
-from uuid import UUID
-from dataclasses import dataclass, field
-from abc import ABC, abstractmethod
-from enum import Enum
-from datetime import datetime
 import logging
+from typing import Dict, List, Set, Optional, Any, TYPE_CHECKING
+from .constraint_types import ConstraintDefinition, ConstraintType, ConstraintCategory
 
-# Only import real types for type checkers. Use aliases to avoid name collisions.
 if TYPE_CHECKING:
-    from app.services.data_retrieval import ConstraintData as _ConstraintDataType  # type: ignore
-    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSessionType  # type: ignore
     from .problem_model import ExamSchedulingProblem
-    from .solution import TimetableSolution
 
-# Runtime-safe placeholders. Use distinct runtime names to avoid redefinition issues.
-RuntimeConstraintData: Optional[Any] = None
-RuntimeAsyncSession: Optional[Any] = None
-BACKEND_AVAILABLE = False
-
-try:
-    from app.services.data_retrieval import ConstraintData as _ConstraintDataRuntime  # type: ignore
-    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSessionRuntime  # type: ignore
-
-    RuntimeConstraintData = _ConstraintDataRuntime
-    RuntimeAsyncSession = _AsyncSessionRuntime
-    BACKEND_AVAILABLE = True
-except Exception:
-    # Leave runtime placeholders as None when optional dependencies are absent.
-    RuntimeConstraintData = None
-    RuntimeAsyncSession = None
-
-# Local project imports
-from ..config import get_logger  # type: ignore
-
-from .constraint_types import (
-    ConstraintType,
-    ConstraintCategory,
-    ConstraintViolation,
-    ConstraintSeverity,
-    ConstraintDefinition,
-)
-
-logger = get_logger("core.constraint_registry")
+logger = logging.getLogger(__name__)
 
 
-class BaseConstraint(ABC):
-    def __init__(
-        self,
-        constraint_id: Union[str, UUID],
-        name: str,
-        constraint_type: ConstraintType,
-        category: ConstraintCategory,
-        weight: float = 1.0,
-        is_active: bool = True,
-        parameters: Optional[Dict[str, Any]] = None,
-        database_config: Optional[Dict[str, Any]] = None,
-    ):
-        try:
-            self.id = UUID(str(constraint_id))
-        except ValueError:
-            # Generate a UUID from the string's hash if it's not a valid UUID
-            self.id = UUID(int=hash(constraint_id) & ((1 << 128) - 1))
-        self.constraint_id = str(constraint_id)
-        self.name = name
-        self.constraint_type = constraint_type
-        self.category = category
-        self.weight = weight
-        self.is_active = is_active
-        self.parameters = parameters or {}
+def _load_all_definitions() -> (
+    tuple[Dict[str, ConstraintDefinition], Dict[str, List[str]]]
+):
+    """Collect all constraint definitions and category mappings once."""
+    definitions: Dict[str, ConstraintDefinition] = {}
+    category_map: Dict[str, List[str]] = {}
 
-        self.database_config = database_config or {}
-        self.database_rule_id = self.database_config.get("rule_id")
-        self.configuration_id = self.database_config.get("configuration_id")
-
-        self._initialized = False
-
-    def initialize(
-        self,
-        problem: ExamSchedulingProblem,
-        parameters: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if self._initialized:
-            return
-        try:
-            merged_parameters: Dict[str, Any] = {}
-            merged_parameters.update(self.parameters)
-            if isinstance(self.database_config.get("custom_parameters"), dict):
-                merged_parameters.update(self.database_config["custom_parameters"])
-            if parameters:
-                merged_parameters.update(parameters)
-
-            self._initialize_implementation(problem, merged_parameters)
-            self._initialized = True
-            logger.debug(f"Initialized constraint {self.name}")
-        except Exception as e:
-            logger.error(f"Error initializing constraint {self.name}: {e}")
-            raise
-
-    @abstractmethod
-    def _initialize_implementation(
-        self,
-        problem: ExamSchedulingProblem,
-        parameters: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        raise NotImplementedError
-
-    def evaluate(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> List[ConstraintViolation]:
-        if not self._initialized:
-            self.initialize(problem)
-        try:
-            violations = self._evaluate_implementation(problem, solution)
-            for violation in violations:
-                violation.constraint_code = self.constraint_id
-                violation.database_rule_id = self.database_rule_id
-                if self.configuration_id:
-                    violation.violation_metadata["configuration_id"] = str(
-                        self.configuration_id
-                    )
-            return violations
-        except Exception as e:
-            logger.error(f"Error evaluating constraint {self.name}: {e}")
-            return []
-
-    @abstractmethod
-    def _evaluate_implementation(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> List[ConstraintViolation]:
-        raise NotImplementedError
-
-    def get_penalty(self, violation: ConstraintViolation) -> float:
-        base_penalty = violation.penalty
-        weight_multiplier = self.weight
-        db_weight = self.database_config.get("weight")
-        if db_weight is not None:
-            try:
-                weight_multiplier = float(db_weight)
-            except Exception:
-                logger.debug(
-                    "Invalid weight in database_config, using constraint weight"
-                )
-        return base_penalty * weight_multiplier
-
-    def is_satisfied(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> bool:
-        violations = self.evaluate(problem, solution)
-        return len(violations) == 0
-
-    def get_definition(self) -> ConstraintDefinition:
-        return ConstraintDefinition(
-            constraint_id=self.constraint_id,
-            name=self.name,
-            description=f"Constraint: {self.name}",
-            constraint_type=self.constraint_type,
-            category=self.category,
-            parameters=self.parameters,
-            constraint_class=type(self),
-            database_rule_id=self.database_rule_id,
-            is_database_loaded=bool(self.database_rule_id),
-            default_weight=self.weight,
-            is_configurable=True,
-        )
-
-
-class LegacyConstraintAdapter(BaseConstraint):
-    def __init__(
-        self,
-        legacy_constraint_instance: Any,
-        constraint_code: str,
-        database_config: Optional[Dict[str, Any]] = None,
-    ):
-        try:
-            super().__init__(
-                constraint_id=constraint_code,
-                name=getattr(legacy_constraint_instance, "name", constraint_code),
-                constraint_type=getattr(
-                    legacy_constraint_instance, "constraint_type", ConstraintType.SOFT
-                ),
-                category=getattr(
-                    legacy_constraint_instance,
-                    "category",
-                    ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
-                ),
-                database_config=database_config,
+    def register_group(cat_key: str, items: List[tuple], cat_enum: ConstraintCategory):
+        ids = []
+        for cid, name, desc in items:
+            definition = ConstraintDefinition(
+                constraint_id=cid,
+                name=name,
+                description=desc,
+                constraint_type=ConstraintType.HARD,
+                category=cat_enum,
+                parameters={"category": cat_key, "required": (cat_key == "CORE")},
             )
-        except ValueError:
-            super().__init__(
-                constraint_id=UUID(int=hash(constraint_code) & ((1 << 128) - 1)),
-                name=getattr(legacy_constraint_instance, "name", constraint_code),
-                constraint_type=getattr(
-                    legacy_constraint_instance, "constraint_type", ConstraintType.SOFT
-                ),
-                category=getattr(
-                    legacy_constraint_instance,
-                    "category",
-                    ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
-                ),
-                database_config=database_config,
-            )
+            definitions[cid] = definition
+            ids.append(cid)
+        category_map[cat_key] = ids
 
-        self.legacy_constraint = legacy_constraint_instance
+    # CORE C1–C3
+    register_group(
+        "CORE",
+        [
+            (
+                "StartUniquenessConstraint",
+                "C1: Start Uniqueness",
+                "Ensures each exam starts exactly once",
+            ),
+            (
+                "OccupancyDefinitionConstraint",
+                "C2: Occupancy Definition",
+                "Links occupancy to start variables",
+            ),
+            (
+                "RoomAssignmentBasicConstraint",
+                "C3: Room Assignment Basic",
+                "Enforces room sum equals occupancy",
+            ),
+        ],
+        ConstraintCategory.RESOURCE_CONSTRAINTS,
+    )
 
-    def _initialize_implementation(
-        self,
-        problem: ExamSchedulingProblem,
-        parameters: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if hasattr(self.legacy_constraint, "initialize"):
-            try:
-                self.legacy_constraint.initialize(problem, parameters or {})
-            except TypeError:
-                # fallback for legacy signatures
-                self.legacy_constraint.initialize(problem)
+    # MULTI_EXAM_CAPACITY C4–C5
+    register_group(
+        "MULTI_EXAM_CAPACITY",
+        [
+            (
+                "MultiExamRoomCapacityConstraint",
+                "C4: Multi-Exam Room Capacity",
+                "Total enrollment ≤ effective capacity",
+            ),
+            (
+                "NoStudentConflictsSameRoomConstraint",
+                "C5: No Student Conflicts Same Room",
+                "Prevents students in same room at same time",
+            ),
+        ],
+        ConstraintCategory.RESOURCE_CONSTRAINTS,
+    )
 
-    def _evaluate_implementation(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> List[ConstraintViolation]:
-        if hasattr(self.legacy_constraint, "evaluate"):
-            try:
-                return self.legacy_constraint.evaluate(problem, solution)
-            except TypeError:
-                return self.legacy_constraint.evaluate(problem)
-        return []
+    # STUDENT_CONFLICT C7–C9
+    register_group(
+        "STUDENT_CONFLICT",
+        [
+            (
+                "NoStudentTemporalOverlapConstraint",
+                "C7: No Temporal Overlap",
+                "Prevents simultaneous exams",
+            ),
+            (
+                "MinimumGapBetweenExamsConstraint",
+                "C8: Minimum Gap",
+                "Enforces gap between exams",
+            ),
+            (
+                "MaxExamsPerDayPerStudentConstraint",
+                "C9: Max Exams Per Day",
+                "Limits exams per day",
+            ),
+        ],
+        ConstraintCategory.STUDENT_CONSTRAINTS,
+    )
+
+    # INVIGILATOR C10–C13
+    register_group(
+        "INVIGILATOR",
+        [
+            (
+                "MinimumInvigilatorsAssignmentConstraint",
+                "C10: Minimum Invigilators",
+                "Min invigilators per exam-room",
+            ),
+            (
+                "InvigilatorSingleAssignmentConstraint",
+                "C11: Single Assignment",
+                "AtMostOne per invigilator/time",
+            ),
+            (
+                "InvigilatorAvailabilityConstraint",
+                "C12: Availability",
+                "Invigilator responsibility + assignments ≤1",
+            ),
+            (
+                "BackToBackProhibitionConstraint",
+                "C13: Back-to-Back Prohibition",
+                "No consecutive responsibilities",
+            ),
+        ],
+        ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+    )
+
+    logger.info(f"Loaded {len(definitions)} constraint definitions")
+    return definitions, category_map
+
+
+# Initialize globals once
+GLOBAL_CONSTRAINT_DEFINITIONS, GLOBAL_CATEGORY_CONSTRAINTS = _load_all_definitions()
 
 
 class ConstraintRegistry:
-    def __init__(self, db_session: Optional[Any] = None):
-        self._definitions: Dict[str, ConstraintDefinition] = {}
-        self._active_constraints: Dict[UUID, BaseConstraint] = {}
-        self._constraint_categories: Dict[ConstraintCategory, List[str]] = {}
-        self._database_constraints: Dict[str, Dict[str, Any]] = {}
+    """
+    FIXED Registry for constraint definitions with enhanced logging and validation.
+    """
 
-        # Database integration using runtime placeholders
-        self.db_session = db_session
-        self.constraint_data_service: Optional[Any] = None
-        if (
-            BACKEND_AVAILABLE
-            and db_session is not None
-            and RuntimeConstraintData is not None
-        ):
-            try:
-                # avoid assuming constructor signature
-                constructor = RuntimeConstraintData
-                try:
-                    self.constraint_data_service = constructor(db_session)
-                except TypeError:
-                    self.constraint_data_service = constructor()
-            except Exception as e:
-                logger.error(f"Failed to initialize ConstraintData service: {e}")
-                self.constraint_data_service = None
-
-        self._register_builtin_constraints()
-        logger.info("Enhanced ConstraintRegistry initialized")
-
-    async def load_database_constraints(self) -> None:
-        if not BACKEND_AVAILABLE or not self.constraint_data_service:
-            logger.warning("Database constraint loading not available")
-            return
-        try:
-            get_active = getattr(
-                self.constraint_data_service, "get_active_constraint_rules", None
-            )
-            if not get_active:
-                logger.warning(
-                    "ConstraintData service missing 'get_active_constraint_rules'"
-                )
-                return
-            db_constraints = await get_active()
-            logger.info(f"Loading {len(db_constraints)} constraint rules from database")
-            for db_constraint in db_constraints:
-                await self._register_database_constraint(db_constraint)
-            logger.info(
-                f"Successfully loaded {len(self._database_constraints)} database constraints"
-            )
-        except Exception as e:
-            logger.error(f"Error loading database constraints: {e}")
-
-    async def _register_database_constraint(
-        self, db_constraint: Dict[str, Any]
-    ) -> None:
-        try:
-            constraint_code = (db_constraint.get("code") or "").upper()
-            if not constraint_code:
-                logger.warning("Database constraint missing code, skipping")
-                return
-
-            self._database_constraints[constraint_code] = db_constraint
-
-            db_id = db_constraint.get("id")
-            database_rule_id: Optional[UUID] = None
-            if db_id:
-                try:
-                    database_rule_id = UUID(db_id)
-                except Exception:
-                    database_rule_id = None
-
-            definition = ConstraintDefinition(
-                constraint_id=constraint_code,
-                name=db_constraint.get("name", constraint_code),
-                description=db_constraint.get("description", ""),
-                constraint_type=self._map_constraint_type(
-                    db_constraint.get("constraint_type", "soft")
-                ),
-                category=self._map_constraint_category(constraint_code),
-                parameters=db_constraint.get("constraint_definition", {}) or {},
-                database_rule_id=database_rule_id,
-                is_database_loaded=True,
-                default_weight=float(db_constraint.get("default_weight", 1.0)),
-                is_configurable=bool(db_constraint.get("is_configurable", True)),
-            )
-
-            definition.constraint_class = self._get_constraint_class_for_code(
-                constraint_code
-            )
-            self._register_constraint_definition(definition)
-            logger.debug(f"Registered database constraint: {constraint_code}")
-        except Exception as e:
-            logger.error(f"Error registering database constraint: {e}")
-
-    def _get_constraint_class_for_code(
-        self, constraint_code: str
-    ) -> Optional[Type[BaseConstraint]]:
-        try:
-            from ..constraints.hard_constraints import HARD_CONSTRAINT_REGISTRY  # type: ignore
-            from ..constraints.soft_constraints import SOFT_CONSTRAINT_REGISTRY  # type: ignore
-
-            cls = HARD_CONSTRAINT_REGISTRY.get(constraint_code)
-            if cls:
-                return cls
-            cls = SOFT_CONSTRAINT_REGISTRY.get(constraint_code)
-            if cls:
-                return cls
-            return None
-        except ImportError:
-            logger.warning(f"Could not import constraint modules for {constraint_code}")
-            return None
-
-    def _map_constraint_type(self, db_type: Optional[str]) -> ConstraintType:
-        mapping = {
-            "hard": ConstraintType.HARD,
-            "soft": ConstraintType.SOFT,
-            "HARD": ConstraintType.HARD,
-            "SOFT": ConstraintType.SOFT,
-        }
-        return mapping.get(db_type or "", ConstraintType.SOFT)
-
-    def _map_constraint_category(self, constraint_code: str) -> ConstraintCategory:
-        category_mapping = {
-            "NO_STUDENT_CONFLICT": ConstraintCategory.STUDENT_CONSTRAINTS,
-            "ROOM_CAPACITY": ConstraintCategory.RESOURCE_CONSTRAINTS,
-            "TIME_AVAILABILITY": ConstraintCategory.TEMPORAL_CONSTRAINTS,
-            "CARRYOVER_PRIORITY": ConstraintCategory.ACADEMIC_POLICIES,
-            "EXAM_DISTRIBUTION": ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
-            "ROOM_UTILIZATION": ConstraintCategory.RESOURCE_CONSTRAINTS,
-            "INVIGILATOR_BALANCE": ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
-            "STUDENT_TRAVEL": ConstraintCategory.CONVENIENCE_CONSTRAINTS,
-        }
-        return category_mapping.get(
-            constraint_code.upper(), ConstraintCategory.OPTIMIZATION_CONSTRAINTS
+    def __init__(self):
+        # Copy the preloaded definitions and categories
+        self._definitions: Dict[str, ConstraintDefinition] = (
+            GLOBAL_CONSTRAINT_DEFINITIONS.copy()
         )
+        self._active_constraints: Set[str] = set()
+        self._category_constraints: Dict[str, List[str]] = GLOBAL_CATEGORY_CONSTRAINTS
 
-    async def create_constraint_set_from_configuration(
-        self, configuration_id: UUID
-    ) -> List[BaseConstraint]:
-        if not BACKEND_AVAILABLE or not self.constraint_data_service:
-            logger.warning("Database configuration loading not available")
-            return self.create_default_constraint_set()
-        try:
-            get_config = getattr(
-                self.constraint_data_service, "get_configuration_constraints", None
-            )
-            if not get_config:
-                logger.warning(
-                    "ConstraintData service missing 'get_configuration_constraints'"
-                )
-                return self.create_default_constraint_set()
-            config_constraints = await get_config(configuration_id)
-            constraints: List[BaseConstraint] = []
-            for config_constraint in config_constraints:
-                if not config_constraint.get("is_enabled", True):
-                    continue
-                constraint_code = (
-                    config_constraint.get("constraint_code") or ""
-                ).upper()
-                if not constraint_code:
-                    logger.warning("Configuration constraint missing code, skipping")
-                    continue
-                constraint = await self.create_constraint_instance(
-                    constraint_code,
-                    weight=config_constraint.get("weight"),
-                    database_config=config_constraint,
-                )
-                if constraint:
-                    constraints.append(constraint)
-                else:
-                    logger.warning(
-                        f"Could not create constraint instance for {constraint_code}"
-                    )
-            logger.info(
-                f"Created {len(constraints)} constraints from configuration {configuration_id}"
-            )
-            return constraints
-        except Exception as e:
-            logger.error(f"Error creating constraint set from configuration: {e}")
-            return self.create_default_constraint_set()
-
-    async def create_constraint_instance(
-        self,
-        constraint_code: str,
-        weight: Optional[float] = None,
-        parameters: Optional[Dict[str, Any]] = None,
-        database_config: Optional[Dict[str, Any]] = None,
-    ) -> Optional[BaseConstraint]:
-        try:
-            definition = self.get_constraint_definition(constraint_code.upper())
-            if not definition:
-                logger.error(f"No constraint definition found for: {constraint_code}")
-                return None
-
-            # Get the constraint class safely
-            cls = definition.constraint_class
-            if cls is None:
-                # Try to get class from registry if not set in definition
-                cls = self._get_constraint_class_for_code(constraint_code)
-                if cls is None:
-                    logger.error(
-                        f"No constraint class available for: {constraint_code}"
-                    )
-                    return None
-
-            # Rest of the method remains the same...
-            config_context: Dict[str, Any] = {}
-            if database_config:
-                config_context.update(database_config)
-            db_conf = self._database_constraints.get(constraint_code.upper())
-            if isinstance(db_conf, dict):
-                config_context.update(db_conf)
-
-            final_weight = weight or definition.default_weight
-
-            if isinstance(cls, type) and issubclass(cls, BaseConstraint):
-                constraint = cls(
-                    constraint_id=constraint_code,
-                    name=definition.name,
-                    constraint_type=definition.constraint_type,
-                    category=definition.category,
-                    weight=final_weight,
-                    parameters=parameters or definition.parameters,
-                    database_config=config_context,
-                )
-            else:
-                # Handle legacy constraints
-                legacy_instance = cls() if callable(cls) else cls
-                constraint = LegacyConstraintAdapter(
-                    legacy_constraint_instance=legacy_instance,
-                    constraint_code=constraint_code,
-                    database_config=config_context,
-                )
-
-            logger.debug(f"Created constraint instance: {constraint_code}")
-            return constraint
-
-        except Exception as e:
-            logger.error(f"Error creating constraint instance {constraint_code}: {e}")
-            import traceback
-
-            logger.error(traceback.format_exc())
-            return None
-
-    def _register_constraint_definition(self, definition: ConstraintDefinition) -> None:
+    def register_definition(self, definition: ConstraintDefinition):
+        """Register a constraint definition (not normally used)."""
         self._definitions[definition.constraint_id] = definition
-        if definition.category not in self._constraint_categories:
-            self._constraint_categories[definition.category] = []
-        if (
-            definition.constraint_id
-            not in self._constraint_categories[definition.category]
-        ):
-            self._constraint_categories[definition.category].append(
-                definition.constraint_id
-            )
+        logger.debug(f"Registered constraint definition: {definition.constraint_id}")
 
-    def get_constraint_definition(self, code: str) -> Optional[ConstraintDefinition]:
-        return self._definitions.get(code.upper())
-
-    def get_all_definitions(self) -> Dict[str, ConstraintDefinition]:
-        return self._definitions.copy()
-
-    def get_definitions_by_category(
-        self, category: ConstraintCategory
-    ) -> List[ConstraintDefinition]:
-        codes = self._constraint_categories.get(category, [])
-        return [self._definitions[c] for c in codes if c in self._definitions]
-
-    def get_definitions_by_type(
-        self, constraint_type: ConstraintType
-    ) -> List[ConstraintDefinition]:
-        return [
-            d
-            for d in self._definitions.values()
-            if d.constraint_type == constraint_type
-        ]
-
-    def add_active_constraint(self, constraint: BaseConstraint) -> None:
-        self._active_constraints[constraint.id] = constraint
-        logger.debug(f"Added active constraint: {constraint.name}")
-
-    def remove_active_constraint(self, constraint_id: UUID) -> bool:
-        if constraint_id in self._active_constraints:
-            constraint = self._active_constraints.pop(constraint_id)
-            logger.debug(f"Removed active constraint: {constraint.name}")
-            return True
-        return False
-
-    def get_active_constraints(
-        self, constraint_type: Optional[ConstraintType] = None
-    ) -> List[BaseConstraint]:
-        constraints = list(self._active_constraints.values())
-        if constraint_type:
-            constraints = [
-                c for c in constraints if c.constraint_type == constraint_type
-            ]
-        return [c for c in constraints if c.is_active]
-
-    async def evaluate_all_constraints(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> Dict[str, List[ConstraintViolation]]:
-        results: Dict[str, List[ConstraintViolation]] = {}
-        for constraint in self.get_active_constraints():
-            try:
-                violations = constraint.evaluate(problem, solution)
-                results[constraint.name] = violations
-                if violations:
-                    logger.debug(
-                        f"Constraint {constraint.name} has {len(violations)} violations"
-                    )
-            except Exception as e:
-                logger.error(f"Error evaluating constraint {constraint.name}: {e}")
-                results[constraint.name] = []
-        return results
-
-    async def calculate_total_penalty(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> float:
-        total_penalty = 0.0
-        violation_results = await self.evaluate_all_constraints(problem, solution)
-        for constraint_name, violations in violation_results.items():
-            constraint = next(
-                (
-                    c
-                    for c in self._active_constraints.values()
-                    if c.name == constraint_name
-                ),
-                None,
-            )
-            if not constraint:
-                continue
-            for violation in violations:
-                penalty = constraint.get_penalty(violation)
-                total_penalty += penalty
-        return total_penalty
-
-    def create_default_constraint_set(self) -> List[BaseConstraint]:
-        default_constraints: List[BaseConstraint] = []
-        hard_definitions = self.get_definitions_by_type(ConstraintType.HARD)
-        for definition in hard_definitions:
-            if not definition.constraint_class:
-                continue
-            try:
-                cls = definition.constraint_class
-                if isinstance(cls, type) and issubclass(cls, BaseConstraint):
-                    constraint = cls(
-                        constraint_id=definition.constraint_id,
-                        name=definition.name,
-                        constraint_type=definition.constraint_type,
-                        category=definition.category,
-                        weight=definition.default_weight,
-                    )
-                    default_constraints.append(constraint)
-                else:
-                    legacy_instance = cls() if isinstance(cls, type) else cls
-                    wrapped = LegacyConstraintAdapter(
-                        legacy_constraint_instance=legacy_instance,
-                        constraint_code=definition.constraint_id,
-                    )
-                    default_constraints.append(wrapped)
-            except Exception as e:
-                logger.error(
-                    f"Error creating default constraint {definition.constraint_id}: {e}"
-                )
-
-        important_soft_constraints = ["EXAM_DISTRIBUTION", "ROOM_UTILIZATION"]
-        for code in important_soft_constraints:
-            definition_opt = self.get_constraint_definition(code)
-            if not definition_opt or not definition_opt.constraint_class:
-                continue
-            try:
-                cls = definition_opt.constraint_class
-                if isinstance(cls, type) and issubclass(cls, BaseConstraint):
-                    constraint = cls(
-                        constraint_id=definition_opt.constraint_id,
-                        name=definition_opt.name,
-                        constraint_type=definition_opt.constraint_type,
-                        category=definition_opt.category,
-                        weight=definition_opt.default_weight,
-                    )
-                    default_constraints.append(constraint)
-                else:
-                    legacy_instance = cls() if isinstance(cls, type) else cls
-                    wrapped = LegacyConstraintAdapter(
-                        legacy_constraint_instance=legacy_instance,
-                        constraint_code=definition_opt.constraint_id,
-                    )
-                    default_constraints.append(wrapped)
-            except Exception as e:
-                logger.error(f"Error creating default soft constraint {code}: {e}")
-
-        logger.info(
-            f"Created default constraint set with {len(default_constraints)} constraints"
-        )
-        return default_constraints
-
-    async def validate_constraint_configuration(
-        self, config: Dict[str, Any]
-    ) -> Dict[str, List[str]]:
-        errors: List[str] = []
-        warnings: List[str] = []
-        for constraint_config in config.get("constraints", []):
-            code = (constraint_config.get("code") or "").upper()
-            if not code:
-                errors.append("Constraint configuration missing code")
-                continue
-            definition = self.get_constraint_definition(code)
-            if not definition:
-                errors.append(f"Unknown constraint code: {code}")
-                continue
-            if definition.is_configurable:
-                parameters = constraint_config.get("parameters", {})
-                validation_errors = self._validate_constraint_parameters(
-                    code, parameters, definition
-                )
-                errors.extend(validation_errors)
-            weight = constraint_config.get("weight")
-            if weight is not None and (
-                not isinstance(weight, (int, float)) or weight < 0
-            ):
-                errors.append(f"Invalid weight for constraint {code}: {weight}")
-        return {"errors": errors, "warnings": warnings}
-
-    def _validate_constraint_parameters(
-        self,
-        constraint_code: str,
-        parameters: Dict[str, Any],
-        definition: ConstraintDefinition,
-    ) -> List[str]:
-        errors: List[str] = []
-        param_schema = definition.parameters
-        for param_name, param_value in parameters.items():
-            if not param_schema:
-                continue
-            # extend validation as needed
-        return errors
-
-    def _register_builtin_constraints(self) -> None:
-        try:
-            from ..constraints.hard_constraints import (  # type: ignore
-                NoStudentConflictConstraint,
-                RoomCapacityConstraint,
-                TimeAvailabilityConstraint,
-                CarryoverPriorityConstraint,
-            )
-            from ..constraints.soft_constraints import (  # type: ignore
-                ExamDistributionConstraint,
-                RoomUtilizationConstraint,
-                InvigilatorBalanceConstraint,
-                StudentTravelConstraint,
-            )
-
-            hard_constraint_definitions = [
-                ConstraintDefinition(
-                    constraint_id="NO_STUDENT_CONFLICT",
-                    name="No Student Conflicts",
-                    description="Prevent students from having multiple exams at the same time",
-                    constraint_type=ConstraintType.HARD,
-                    category=ConstraintCategory.STUDENT_CONSTRAINTS,
-                    constraint_class=NoStudentConflictConstraint,
-                    default_weight=1.0,
-                    is_configurable=True,
-                ),
-                ConstraintDefinition(
-                    constraint_id="ROOM_CAPACITY",
-                    name="Room Capacity",
-                    description="Ensure room capacity is not exceeded",
-                    constraint_type=ConstraintType.HARD,
-                    category=ConstraintCategory.RESOURCE_CONSTRAINTS,
-                    constraint_class=RoomCapacityConstraint,
-                    default_weight=1.0,
-                    is_configurable=True,
-                    parameters={
-                        "capacity_buffer_percent": {
-                            "type": "float",
-                            "default": 0.0,
-                            "min": 0.0,
-                            "max": 50.0,
-                        }
-                    },
-                ),
-                ConstraintDefinition(
-                    constraint_id="TIME_AVAILABILITY",
-                    name="Time Availability",
-                    description="Ensure exams are scheduled in available time slots",
-                    constraint_type=ConstraintType.HARD,
-                    category=ConstraintCategory.TEMPORAL_CONSTRAINTS,
-                    constraint_class=TimeAvailabilityConstraint,
-                    default_weight=1.0,
-                    is_configurable=True,
-                    parameters={
-                        "allow_weekend_exams": {"type": "bool", "default": False},
-                        "earliest_exam_time": {"type": "string", "default": "08:00"},
-                        "latest_exam_time": {"type": "string", "default": "18:00"},
-                    },
-                ),
-                ConstraintDefinition(
-                    constraint_id="CARRYOVER_PRIORITY",
-                    name="Carryover Priority",
-                    description="Give priority scheduling to carryover exams",
-                    constraint_type=ConstraintType.HARD,
-                    category=ConstraintCategory.ACADEMIC_POLICIES,
-                    constraint_class=CarryoverPriorityConstraint,
-                    default_weight=1.0,
-                    is_configurable=True,
-                    parameters={
-                        "priority_levels": {
-                            "type": "int",
-                            "default": 3,
-                            "min": 1,
-                            "max": 10,
-                        }
-                    },
-                ),
-            ]
-
-            soft_constraint_definitions = [
-                ConstraintDefinition(
-                    constraint_id="EXAM_DISTRIBUTION",
-                    name="Exam Distribution",
-                    description="Distribute exams evenly across time slots",
-                    constraint_type=ConstraintType.SOFT,
-                    category=ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
-                    constraint_class=ExamDistributionConstraint,
-                    default_weight=0.7,
-                    is_configurable=True,
-                    parameters={
-                        "minimum_gap_hours": {
-                            "type": "int",
-                            "default": 24,
-                            "min": 12,
-                            "max": 72,
-                        },
-                        "preferred_gap_hours": {
-                            "type": "int",
-                            "default": 48,
-                            "min": 24,
-                            "max": 120,
-                        },
-                    },
-                ),
-                ConstraintDefinition(
-                    constraint_id="ROOM_UTILIZATION",
-                    name="Room Utilization",
-                    description="Maximize room utilization efficiency",
-                    constraint_type=ConstraintType.SOFT,
-                    category=ConstraintCategory.RESOURCE_CONSTRAINTS,
-                    constraint_class=RoomUtilizationConstraint,
-                    default_weight=0.6,
-                    is_configurable=True,
-                    parameters={
-                        "target_utilization_rate": {
-                            "type": "float",
-                            "default": 0.85,
-                            "min": 0.5,
-                            "max": 1.0,
-                        }
-                    },
-                ),
-                ConstraintDefinition(
-                    constraint_id="INVIGILATOR_BALANCE",
-                    name="Invigilator Balance",
-                    description="Balance invigilator workload",
-                    constraint_type=ConstraintType.SOFT,
-                    category=ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
-                    constraint_class=InvigilatorBalanceConstraint,
-                    default_weight=0.5,
-                    is_configurable=True,
-                    parameters={
-                        "balance_method": {
-                            "type": "string",
-                            "default": "variance_minimization",
-                        }
-                    },
-                ),
-                ConstraintDefinition(
-                    constraint_id="STUDENT_TRAVEL",
-                    name="Minimize Student Travel",
-                    description="Minimize travel distance between consecutive exams for students",
-                    constraint_type=ConstraintType.SOFT,
-                    category=ConstraintCategory.CONVENIENCE_CONSTRAINTS,
-                    constraint_class=StudentTravelConstraint,
-                    default_weight=0.4,
-                    is_configurable=True,
-                    parameters={
-                        "max_reasonable_travel_time": {
-                            "type": "int",
-                            "default": 15,
-                            "min": 5,
-                            "max": 30,
-                        }
-                    },
-                ),
-            ]
-
-            for definition in hard_constraint_definitions + soft_constraint_definitions:
-                self._register_constraint_definition(definition)
-
-            logger.info(
-                f"Registered {len(hard_constraint_definitions)} hard and {len(soft_constraint_definitions)} soft constraint definitions"
-            )
-        except ImportError as e:
-            logger.error(f"Could not import constraint classes: {e}")
-
-    async def refresh_database_constraints(self) -> None:
-        if BACKEND_AVAILABLE and self.constraint_data_service:
-            logger.info("Refreshing constraint definitions from database")
-            old_db_constraints = [
-                code
-                for code, defn in list(self._definitions.items())
-                if defn.is_database_loaded
-            ]
-            for code in old_db_constraints:
-                del self._definitions[code]
-            await self.load_database_constraints()
+    def activate(self, constraint_id: str):
+        """Activate a constraint by its ID with detailed logging."""
+        if constraint_id in self._definitions:
+            self._active_constraints.add(constraint_id)
+            logger.info(f"✓ ACTIVATED constraint: {constraint_id}")
         else:
-            logger.warning("Database refresh not available")
+            logger.warning(f"✗ Cannot activate unknown constraint: {constraint_id}")
 
-    def get_constraint_satisfaction_rate(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> Dict[str, float]:
-        rates: Dict[str, float] = {}
-        for constraint in self.get_active_constraints():
+    def deactivate(self, constraint_id: str):
+        """Deactivate a constraint by its ID."""
+        if constraint_id in self._active_constraints:
+            self._active_constraints.remove(constraint_id)
+            logger.info(f"✗ DEACTIVATED constraint: {constraint_id}")
+
+    def get_active_constraints(self) -> Set[str]:
+        """Get set of active constraint IDs."""
+        return set(self._active_constraints)
+
+    def _activate_category(self, category: str):
+        """Activate all constraints in a category."""
+        if category not in self._category_constraints:
+            logger.error(f"❌ Unknown category: {category}")
+            return
+        for cid in self._category_constraints[category]:
+            self.activate(cid)
+        logger.info(f"✅ Category '{category}' activation complete")
+
+    def configure_minimal(self):
+        """CORE only."""
+        logger.info("🚀 Starting MINIMAL configuration...")
+        self._active_constraints.clear()
+        self._activate_category("CORE")
+        logger.info("✅ MINIMAL setup complete")
+
+    def configure_standard(self):
+        """CORE + MULTI_EXAM_CAPACITY."""
+        logger.info("🚀 Starting STANDARD configuration...")
+        self._active_constraints.clear()
+        self._activate_category("CORE")
+        self._activate_category("MULTI_EXAM_CAPACITY")
+        logger.info("✅ STANDARD setup complete")
+
+    def configure_with_student_conflicts(self):
+        """STANDARD + STUDENT_CONFLICT."""
+        logger.info("🚀 Starting STUDENT_CONFLICTS configuration...")
+        self.configure_standard()
+        self._activate_category("STUDENT_CONFLICT")
+        logger.info("✅ STUDENT_CONFLICTS setup complete")
+
+    def configure_complete(self):
+        """All constraints."""
+        logger.info("🚀 Starting COMPLETE configuration...")
+        self.configure_with_student_conflicts()
+        self._activate_category("INVIGILATOR")
+        logger.info("✅ COMPLETE setup complete")
+
+    def list_definitions(self) -> List[ConstraintDefinition]:
+        """List all registered constraint definitions."""
+        return list(self._definitions.values())
+
+    def get_active_constraint_classes(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Dynamically import and return active constraint classes and their categories.
+        """
+        import importlib
+
+        active = {}
+        module_map = {
+            "StartUniquenessConstraint": "scheduling_engine.constraints.hard_constraints.start_uniqueness",
+            "OccupancyDefinitionConstraint": "scheduling_engine.constraints.hard_constraints.occupancy_definition",
+            "RoomAssignmentBasicConstraint": "scheduling_engine.constraints.hard_constraints.room_assignment_basic",
+            "MultiExamRoomCapacityConstraint": "scheduling_engine.constraints.hard_constraints.multi_exam_room_capacity",
+            "NoStudentConflictsSameRoomConstraint": "scheduling_engine.constraints.hard_constraints.no_student_conflicts_same_room",
+            "NoStudentTemporalOverlapConstraint": "scheduling_engine.constraints.hard_constraints.no_student_temporal_overlap",
+            "MinimumGapBetweenExamsConstraint": "scheduling_engine.constraints.hard_constraints.minimum_gap_between_exams",
+            "MaxExamsPerDayPerStudentConstraint": "scheduling_engine.constraints.hard_constraints.max_exams_per_day_per_student",
+            "MinimumInvigilatorsAssignmentConstraint": "scheduling_engine.constraints.hard_constraints.minimum_invigilators_assignment",
+            "InvigilatorSingleAssignmentConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_single_assignment",
+            "InvigilatorAvailabilityConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_availability",
+            "BackToBackProhibitionConstraint": "scheduling_engine.constraints.hard_constraints.back_to_back_prohibition",
+        }
+        for cid in self._active_constraints:
+            definition = self._definitions[cid]
+            module_path = module_map.get(cid)
+            if not module_path:
+                logger.error(f"No module mapping for {cid}")
+                continue
             try:
-                violations = constraint.evaluate(problem, solution)
-                rates[constraint.name] = 1.0 if len(violations) == 0 else 0.0
+                mod = importlib.import_module(module_path)
+                cls = getattr(mod, cid)
+                # Fallback to Enum category if parameters["category"] is missing
+                cat_key = None
+                params = getattr(definition, "parameters", None)
+                if isinstance(params, dict):
+                    cat_key = params.get("category")
+                if (
+                    not cat_key
+                    and hasattr(definition, "category")
+                    and definition.category
+                ):
+                    # Map Enum to expected key
+                    cat_key = (
+                        definition.category.name
+                    )  # e.g., "CORE", "STUDENT_CONFLICT"
+                if not cat_key:
+                    cat_key = "UNKNOWN"
+                active[cid] = {"class": cls, "category": cat_key}
             except Exception as e:
-                logger.error(
-                    f"Error calculating satisfaction rate for {constraint.name}: {e}"
+                logger.error(f"Failed to load {cid}: {e}")
+        return active
+
+    def get_definition(self, constraint_id: str) -> Optional[ConstraintDefinition]:
+        """
+        Get a specific constraint definition by ID.
+        Added for completeness and consistency.
+        """
+        return self._definitions.get(constraint_id)
+
+    def get_configuration_summary(self) -> Dict[str, Any]:
+        """Get summary of current configuration with constraint mapping."""
+        active_constraints = self.get_active_constraints()
+
+        # Group by category
+        active_by_category = {}
+        constraint_mapping = {}
+
+        for constraint_id in active_constraints:
+            definition = self._definitions.get(constraint_id)
+            if definition:
+                category = definition.parameters.get("category", "UNKNOWN")
+                if category not in active_by_category:
+                    active_by_category[category] = []
+                active_by_category[category].append(constraint_id)
+
+                # Map to mathematical constraints
+                mapping = {
+                    "StartUniquenessConstraint": "C1",
+                    "OccupancyDefinitionConstraint": "C2",
+                    "RoomAssignmentBasicConstraint": "C3",
+                    "MultiExamRoomCapacityConstraint": "C4",
+                    "NoStudentConflictsSameRoomConstraint": "C5",
+                    "NoStudentTemporalOverlapConstraint": "C7",
+                    "MinimumGapBetweenExamsConstraint": "C8",
+                    "MaxExamsPerDayPerStudentConstraint": "C9",
+                    "MinimumInvigilatorsAssignmentConstraint": "C10",
+                    "InvigilatorSingleAssignmentConstraint": "C11",
+                    "InvigilatorAvailabilityConstraint": "C12",
+                    "BackToBackProhibitionConstraint": "C13",
+                }
+
+                constraint_mapping[constraint_id] = mapping.get(
+                    constraint_id, "Unknown"
                 )
-                rates[constraint.name] = 0.0
-        return rates
 
-    # NEW METHODS ADDED FOR PROBLEM MODEL INTEGRATION
-    async def load_from_database(self, configuration_id: Optional[UUID] = None) -> None:
-        """Load constraint definitions from database"""
-        await self.load_database_constraints()
-        logger.info("Loaded constraint definitions from database")
-
-    async def get_active_constraints_for_configuration(
-        self, configuration_id: UUID
-    ) -> List[BaseConstraint]:
-        """Get active constraints for a specific configuration"""
-        return await self.create_constraint_set_from_configuration(configuration_id)
-
-    async def validate_constraint_configuration_by_id(
-        self, configuration_id: UUID
-    ) -> Dict[str, Any]:
-        """Validate constraint configuration by ID"""
-        if not BACKEND_AVAILABLE or not self.constraint_data_service:
-            return {
-                "valid": False,
-                "errors": ["Database not available"],
-                "warnings": [],
-            }
-
-        try:
-            # Get configuration from database
-            get_config = getattr(
-                self.constraint_data_service, "get_configuration_by_id", None
-            )
-            if not get_config:
-                return {
-                    "valid": False,
-                    "errors": ["Method not available"],
-                    "warnings": [],
-                }
-
-            config = await get_config(configuration_id)
-            if not config:
-                return {
-                    "valid": False,
-                    "errors": ["Configuration not found"],
-                    "warnings": [],
-                }
-
-            # Validate the configuration
-            result = await self.validate_constraint_configuration(config)
-            return {
-                "valid": len(result["errors"]) == 0,
-                "errors": result["errors"],
-                "warnings": result["warnings"],
-            }
-        except Exception as e:
-            logger.error(f"Error validating configuration: {e}")
-            return {"valid": False, "errors": [str(e)], "warnings": []}
-
-    def get_constraint_statistics(self) -> Dict[str, Any]:
-        """Get statistics about registered constraints"""
         return {
-            "total_definitions": len(self._definitions),
-            "database_constraints": len(self._database_constraints),
-            "active_constraints": len(self._active_constraints),
-            "categories": {
-                category.value: len(definitions)
-                for category, definitions in self._constraint_categories.items()
-            },
+            "total_registered": len(self._definitions),
+            "total_active": len(active_constraints),
+            "active_categories": list(active_by_category.keys()),
+            "active_by_category": active_by_category,
+            "constraint_mapping": constraint_mapping,
+            "available_categories": list(self._category_constraints.keys()),
+            "note": "C6 (Allowed Rooms) handled as domain restriction during variable creation",
         }
 
-    async def refresh_from_database(self) -> None:
-        """Refresh constraint definitions from database"""
-        await self.refresh_database_constraints()
+
+def create_optimized_constraint_system(
+    configuration: str = "standard",
+) -> ConstraintRegistry:
+    """Factory function to create a configured constraint system."""
+    registry = ConstraintRegistry()
+
+    if configuration == "minimal":
+        registry.configure_minimal()
+    elif configuration == "standard":
+        registry.configure_standard()
+    elif configuration == "with_conflicts":
+        registry.configure_with_student_conflicts()
+    elif configuration == "complete":
+        registry.configure_complete()
+        registry._activate_category("STUDENT_CONFLICT")
+    else:
+        raise ValueError(
+            f"Unknown configuration: {configuration}. "
+            f"Valid options: minimal, standard, with_conflicts, complete"
+        )
+
+    logger.info(
+        f"Created optimized constraint system with '{configuration}' configuration - "
+        f"12 constraint definitions (C6 handled as domain restriction)"
+    )
+
+    return registry
