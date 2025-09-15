@@ -1,9 +1,11 @@
 # backend/app/services/data_retrieval/scheduling_data.py
+
 """
 Service for retrieving scheduling data from the database and preparing it
 for the scheduling engine
 """
-from typing import List, Dict, cast
+
+from typing import List, Dict, cast, Optional
 from uuid import UUID
 from datetime import date as ddate, time as dtime, datetime as ddatetime
 from sqlalchemy import select, func, and_
@@ -21,6 +23,10 @@ from ...models import (
     Student,
     CourseRegistration,
     Programme,
+    ExamInvigilator,
+    TimetableAssignment,
+    ExamDepartment,
+    Department,
 )
 
 
@@ -40,6 +46,7 @@ class SchedulingData:
         staff = await self._get_available_staff()
         staff_unavailability = await self._get_staff_unavailability(session_id)
         course_registrations = await self._get_course_registrations(session_id)
+        timetable_assignments = await self._get_timetable_assignments(session_id)
 
         return {
             "session_id": str(session_id),
@@ -49,6 +56,7 @@ class SchedulingData:
             "staff": staff,
             "staff_unavailability": staff_unavailability,
             "course_registrations": course_registrations,
+            "timetable_assignments": timetable_assignments,
             "metadata": {
                 "total_exams": len(exams),
                 "total_rooms": len(rooms),
@@ -56,6 +64,7 @@ class SchedulingData:
                 "total_students": len(
                     set(reg["student_id"] for reg in course_registrations)
                 ),
+                "total_assignments": len(timetable_assignments),
             },
         }
 
@@ -66,6 +75,11 @@ class SchedulingData:
             .options(
                 selectinload(Exam.course).selectinload(Course.department),
                 selectinload(Exam.exam_rooms).selectinload(ExamRoom.room),
+                selectinload(Exam.exam_departments).selectinload(
+                    ExamDepartment.department
+                ),
+                selectinload(Exam.invigilators),
+                selectinload(Exam.timetable_assignments),
             )
             .where(
                 and_(
@@ -89,6 +103,41 @@ class SchedulingData:
                 for er in exam.exam_rooms
             ]
 
+            department_assignments = [
+                {
+                    "department_id": str(ed.department_id),
+                    "department_name": ed.department.name if ed.department else None,
+                }
+                for ed in exam.exam_departments
+            ]
+
+            invigilator_assignments = [
+                {
+                    "staff_id": str(inv.staff_id),
+                    "room_id": str(inv.room_id),
+                    "time_slot_id": str(inv.time_slot_id) if inv.time_slot_id else None,
+                    "is_chief_invigilator": inv.is_chief_invigilator,
+                    "assigned_at": (
+                        cast(ddatetime, inv.assigned_at).isoformat()
+                        if inv.assigned_at
+                        else None
+                    ),
+                }
+                for inv in exam.invigilators
+            ]
+
+            timetable_assignments = [
+                {
+                    "assignment_id": str(ta.id),
+                    "room_id": str(ta.room_id),
+                    "day": cast(ddate, ta.day).isoformat() if ta.day else None,
+                    "time_slot_id": str(ta.time_slot_id),
+                    "student_count": ta.student_count,
+                    "is_confirmed": ta.is_confirmed,
+                }
+                for ta in exam.timetable_assignments
+            ]
+
             exam_data = {
                 "id": str(exam.id),
                 "course_id": str(exam.course_id),
@@ -107,11 +156,18 @@ class SchedulingData:
                 "requires_special_arrangements": exam.requires_special_arrangements,
                 "status": exam.status,
                 "notes": exam.notes,
+                "is_practical": exam.is_practical,
+                "requires_projector": exam.requires_projector,
+                "is_common": exam.is_common,
                 "room_assignments": room_assignments,
+                "department_assignments": department_assignments,
+                "invigilator_assignments": invigilator_assignments,
+                "timetable_assignments": timetable_assignments,
                 "course_level": exam.course.course_level,
-                "is_practical": exam.course.is_practical,
+                "course_is_practical": exam.course.is_practical,
                 "morning_only": exam.course.morning_only,
             }
+
             exam_list.append(exam_data)
 
         return exam_list
@@ -178,6 +234,9 @@ class SchedulingData:
                 "has_ac": room.has_ac,
                 "has_computers": room.has_computers,
                 "accessibility_features": room.accessibility_features or [],
+                "overbookable": room.overbookable,
+                "max_inv_per_room": room.max_inv_per_room,
+                "adjacency_pairs": room.adjacency_pairs,
                 "is_active": room.is_active,
                 "notes": room.notes,
             }
@@ -206,6 +265,7 @@ class SchedulingData:
                 "can_invigilate": s.can_invigilate,
                 "max_daily_sessions": s.max_daily_sessions,
                 "max_consecutive_sessions": s.max_consecutive_sessions,
+                "user_id": str(s.user_id) if s.user_id else None,
                 "is_active": s.is_active,
             }
             for s in staff
@@ -281,6 +341,46 @@ class SchedulingData:
             for reg in registrations
         ]
 
+    async def _get_timetable_assignments(self, session_id: UUID) -> List[Dict]:
+        """Get all timetable assignments for the session"""
+        stmt = (
+            select(TimetableAssignment)
+            .options(
+                selectinload(TimetableAssignment.exam),
+                selectinload(TimetableAssignment.room),
+                selectinload(TimetableAssignment.time_slot),
+            )
+            .join(Exam, TimetableAssignment.exam_id == Exam.id)
+            .where(Exam.session_id == session_id)
+        )
+
+        result = await self.session.execute(stmt)
+        assignments = result.scalars().all()
+
+        return [
+            {
+                "id": str(assignment.id),
+                "exam_id": str(assignment.exam_id),
+                "room_id": str(assignment.room_id),
+                "day": (
+                    cast(ddate, assignment.day).isoformat() if assignment.day else None
+                ),
+                "time_slot_id": str(assignment.time_slot_id),
+                "student_count": assignment.student_count,
+                "is_confirmed": assignment.is_confirmed,
+                "exam_code": (
+                    assignment.exam.course.code
+                    if assignment.exam and assignment.exam.course
+                    else None
+                ),
+                "room_code": assignment.room.code if assignment.room else None,
+                "time_slot_name": (
+                    assignment.time_slot.name if assignment.time_slot else None
+                ),
+            }
+            for assignment in assignments
+        ]
+
     async def get_courses_with_registrations(self, session_id: UUID) -> List[Dict]:
         """Get courses with their registration counts for a session"""
         stmt = (
@@ -349,4 +449,139 @@ class SchedulingData:
                 "is_active": student.is_active,
             }
             for student in students
+        ]
+
+    # Exam Invigilators methods
+    async def get_exam_invigilators(
+        self, exam_id: Optional[UUID] = None, staff_id: Optional[UUID] = None
+    ) -> List[Dict]:
+        """Get exam invigilator assignments with filters"""
+        stmt = select(ExamInvigilator).options(
+            selectinload(ExamInvigilator.exam),
+            selectinload(ExamInvigilator.staff),
+            selectinload(ExamInvigilator.room),
+            selectinload(ExamInvigilator.time_slot),
+        )
+
+        if exam_id is not None:
+            stmt = stmt.where(ExamInvigilator.exam_id == exam_id)
+        if staff_id is not None:
+            stmt = stmt.where(ExamInvigilator.staff_id == staff_id)
+
+        result = await self.session.execute(stmt)
+        invigilators = result.scalars().all()
+
+        return [
+            {
+                "id": str(inv.id),
+                "exam_id": str(inv.exam_id),
+                "staff_id": str(inv.staff_id),
+                "room_id": str(inv.room_id),
+                "time_slot_id": str(inv.time_slot_id) if inv.time_slot_id else None,
+                "staff_number": inv.staff.staff_number if inv.staff else None,
+                "room_code": inv.room.code if inv.room else None,
+                "time_slot_name": inv.time_slot.name if inv.time_slot else None,
+                "is_chief_invigilator": inv.is_chief_invigilator,
+                "assigned_at": (
+                    cast(ddatetime, inv.assigned_at).isoformat()
+                    if inv.assigned_at
+                    else None
+                ),
+            }
+            for inv in invigilators
+        ]
+
+    # Timetable Assignments methods
+    async def get_timetable_assignments_by_filters(
+        self,
+        exam_id: Optional[UUID] = None,
+        room_id: Optional[UUID] = None,
+        time_slot_id: Optional[UUID] = None,
+        day: Optional[ddate] = None,
+        is_confirmed: Optional[bool] = None,
+    ) -> List[Dict]:
+        """Get timetable assignments with various filters"""
+        stmt = select(TimetableAssignment).options(
+            selectinload(TimetableAssignment.exam),
+            selectinload(TimetableAssignment.room),
+            selectinload(TimetableAssignment.time_slot),
+        )
+
+        if exam_id is not None:
+            stmt = stmt.where(TimetableAssignment.exam_id == exam_id)
+        if room_id is not None:
+            stmt = stmt.where(TimetableAssignment.room_id == room_id)
+        if time_slot_id is not None:
+            stmt = stmt.where(TimetableAssignment.time_slot_id == time_slot_id)
+        if day is not None:
+            stmt = stmt.where(TimetableAssignment.day == day)
+        if is_confirmed is not None:
+            stmt = stmt.where(TimetableAssignment.is_confirmed == is_confirmed)
+
+        result = await self.session.execute(stmt)
+        assignments = result.scalars().all()
+
+        return [
+            {
+                "id": str(assignment.id),
+                "exam_id": str(assignment.exam_id),
+                "room_id": str(assignment.room_id),
+                "day": (
+                    cast(ddate, assignment.day).isoformat() if assignment.day else None
+                ),
+                "time_slot_id": str(assignment.time_slot_id),
+                "student_count": assignment.student_count,
+                "is_confirmed": assignment.is_confirmed,
+                "exam_code": (
+                    assignment.exam.course.code
+                    if assignment.exam and assignment.exam.course
+                    else None
+                ),
+                "room_code": assignment.room.code if assignment.room else None,
+                "time_slot_name": (
+                    assignment.time_slot.name if assignment.time_slot else None
+                ),
+            }
+            for assignment in assignments
+        ]
+
+    # Exam Department methods
+    async def get_exam_departments(
+        self, exam_id: Optional[UUID] = None, department_id: Optional[UUID] = None
+    ) -> List[Dict]:
+        """Get exam department associations with filters"""
+        stmt = select(ExamDepartment).options(
+            selectinload(ExamDepartment.exam),
+            selectinload(ExamDepartment.department),
+        )
+
+        if exam_id is not None:
+            stmt = stmt.where(ExamDepartment.exam_id == exam_id)
+        if department_id is not None:
+            stmt = stmt.where(ExamDepartment.department_id == department_id)
+
+        result = await self.session.execute(stmt)
+        exam_departments = result.scalars().all()
+
+        return [
+            {
+                "id": str(ed.id),
+                "exam_id": str(ed.exam_id),
+                "department_id": str(ed.department_id),
+                "department_name": ed.department.name if ed.department else None,
+                "exam_code": (
+                    ed.exam.course.code if ed.exam and ed.exam.course else None
+                ),
+                "created_at": (
+                    cast(ddatetime, ed.created_at).isoformat()
+                    if ed.created_at
+                    else None
+                ),
+                "updated_at": (
+                    cast(ddatetime, ed.updated_at).isoformat()
+                    if ed.updated_at
+                    else None
+                ),
+            }
+            for ed in exam_departments
         ]

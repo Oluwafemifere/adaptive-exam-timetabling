@@ -173,7 +173,7 @@ class FacultyPartitioningService:
             # Build academic structure
             self.academic_structure = {
                 "session_id": session_id,
-                "faculties": {},
+                "faculties": {UUID(faculty["id"]): faculty for faculty in faculties},
                 "departments": {},
                 "courses_by_faculty": defaultdict(list),
                 "courses_by_department": defaultdict(list),
@@ -1365,10 +1365,15 @@ class FacultyPartitioningService:
             errors = []
             warnings = []
 
-            # Check partition coverage
-            all_faculties = set(self.academic_structure["faculties"].keys())
-            covered_faculties = set()
+            # Check partition coverage - only consider faculties with exams
+            all_faculties = set()
+            for faculty_id, faculty_info in self.academic_structure[
+                "faculties"
+            ].items():
+                if faculty_info.get("exam_count", 0) > 0:
+                    all_faculties.add(faculty_id)
 
+            covered_faculties = set()
             for group in result.partition_groups:
                 for node in group.partitions:
                     if node.node_type == "faculty":
@@ -1403,13 +1408,24 @@ class FacultyPartitioningService:
                         f"Partition '{group.name}' exceeds maximum size ({total_exams})"
                     )
 
+            # Calculate coverage percentage (capped at 100%)
+            if all_faculties:
+                if len(covered_faculties) > len(all_faculties):
+                    warnings.append(
+                        f"Covered faculties ({len(covered_faculties)}) exceeds faculties with exams ({len(all_faculties)})"
+                    )
+                coverage_percentage = len(covered_faculties) / len(all_faculties) * 100
+                coverage_percentage = min(coverage_percentage, 100.0)
+            else:
+                coverage_percentage = (
+                    100.0  # No faculties with exams means 100% coverage by default
+                )
+
             return {
                 "valid": len(errors) == 0,
                 "errors": errors,
                 "warnings": warnings,
-                "coverage_percentage": len(covered_faculties)
-                / max(len(all_faculties), 1)
-                * 100,
+                "coverage_percentage": coverage_percentage,
             }
 
         except Exception as e:

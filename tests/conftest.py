@@ -1,5 +1,6 @@
 # tests/conftest.py
 import asyncio
+import logging
 import pytest
 from backend.app.tasks.celery_app import celery_app
 import pytest_asyncio
@@ -17,6 +18,12 @@ def event_loop_policy():
 
 # Apply eager mode only for non-integration tests
 def pytest_configure(config):
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        filename="all_logs.log",
+        filemode="w",
+    )
     if not config.getoption("-m") or "integration" not in config.getoption("-m"):
         celery_app.conf.update(task_always_eager=True, task_eager_propagates=True)
 

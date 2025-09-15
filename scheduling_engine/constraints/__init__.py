@@ -1,421 +1,122 @@
 # scheduling_engine/constraints/__init__.py
 
-"""
-Enhanced Constraints Module with Database Integration
-
-This module contains all constraint implementations for the exam scheduling system,
-organized into hard constraints (mandatory) and soft constraints (optimization objectives).
-Enhanced with database integration for dynamic constraint management.
-
-The constraints are used by both CP-SAT and GA components to:
-1. Validate solution feasibility (hard constraints)
-2. Calculate optimization objectives (soft constraints)
-3. Guide search strategies and variable selection
-4. Provide solution quality metrics
-5. Support database-driven configuration and parameter management
-
-Enhanced Architecture:
-- Hard constraints must be satisfied for feasible solutions
-- Soft constraints contribute to objective function for optimization
-- Constraints can be loaded from database dynamically
-- Database configurations override default parameters
-- Constraint sets can be defined via database configurations
-- Each constraint supports pluggable parameter modification
-"""
-
-from typing import Dict, List, Any, Optional, Type
-from uuid import UUID
-import logging
-
-# Enhanced imports with database integration
-from . import hard_constraints
-from . import soft_constraints
-
-# Import specific constraint classes for convenience
-from .hard_constraints import (
-    NoStudentConflictConstraint,
-    RoomCapacityConstraint,
-    TimeAvailabilityConstraint,
-    CarryoverPriorityConstraint,
+# Import all hard constraints
+from .hard_constraints.back_to_back_prohibition import BackToBackProhibitionConstraint
+from .hard_constraints.invigilator_availability import InvigilatorAvailabilityConstraint
+from .hard_constraints.invigilator_single_assignment import (
+    InvigilatorSingleAssignmentConstraint,
+)
+from .hard_constraints.max_exams_per_day_per_student import (
+    MaxExamsPerDayPerStudentConstraint,
+)
+from .hard_constraints.minimum_gap_between_exams import MinimumGapBetweenExamsConstraint
+from .hard_constraints.minimum_invigilators_assignment import (
+    MinimumInvigilatorsAssignmentConstraint,
+)
+from .hard_constraints.multi_exam_room_capacity import MultiExamRoomCapacityConstraint
+from .hard_constraints.no_student_conflicts_same_room import (
+    NoStudentConflictsSameRoomConstraint,
+)
+from .hard_constraints.no_student_temporal_overlap import (
+    NoStudentTemporalOverlapConstraint,
 )
 
-from .soft_constraints import (
-    ExamDistributionConstraint,
-    RoomUtilizationConstraint,
-    InvigilatorBalanceConstraint,
-    StudentTravelConstraint,
-)
-
-# Import enhanced constraint registry
-from ..core.constraint_registry import (
-    ConstraintRegistry,
-    BaseConstraint,
-    LegacyConstraintAdapter,
-)
+# Register with the global registry so CPSATModelBuilder sees them
+from .constraint_manager import CPSATConstraintManager
+from ..core.constraint_registry import ConstraintRegistry
 from ..core.constraint_types import (
-    ConstraintType,
     ConstraintDefinition,
+    ConstraintType,
+    ConstraintCategory,
 )
 
-try:
-    # Check if backend is available by trying to import a module
-    import app.services.data_retrieval
 
-    BACKEND_AVAILABLE = True
-except ImportError:
-    BACKEND_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
-
-# Export all constraint classes
-__all__ = [
-    # Modules
-    "hard_constraints",
-    "soft_constraints",
-    # Hard constraints
-    "NoStudentConflictConstraint",
-    "RoomCapacityConstraint",
-    "TimeAvailabilityConstraint",
-    "CarryoverPriorityConstraint",
-    # Soft constraints
-    "ExamDistributionConstraint",
-    "RoomUtilizationConstraint",
-    "InvigilatorBalanceConstraint",
-    "StudentTravelConstraint",
-    # Enhanced registry components
-    "ConstraintRegistry",
-    "BaseConstraint",
-    "ConstraintDefinition",
-    "create_enhanced_constraint_registry",
-    "load_constraint_set_from_database",
-    "get_constraint_factory",
-]
-
-
-# Enhanced constraint registry combining built-in and database constraints
-def create_enhanced_constraint_registry(db_session=None) -> ConstraintRegistry:
-    """
-    Create enhanced constraint registry with optional database integration
-
-    Args:
-        db_session: Optional database session for dynamic constraint loading
-
-    Returns:
-        Enhanced ConstraintRegistry instance
-    """
-    registry = ConstraintRegistry(db_session=db_session)
-    return registry
-
-
-async def load_constraint_set_from_database(
-    configuration_id: UUID, db_session, fallback_to_defaults: bool = True
-) -> List[BaseConstraint]:
-    """
-    Load constraint set from database configuration with fallback
-
-    Args:
-        configuration_id: Database configuration ID
-        db_session: Database session
-        fallback_to_defaults: Whether to fallback to defaults if loading fails
-
-    Returns:
-        List of configured constraint instances
-    """
-    try:
-        registry = create_enhanced_constraint_registry(db_session)
-
-        # Load database constraints first
-        if BACKEND_AVAILABLE:
-            await registry.load_database_constraints()
-
-        # Create constraint set from configuration
-        constraints = await registry.create_constraint_set_from_configuration(
-            configuration_id
-        )
-
-        if not constraints and fallback_to_defaults:
-            logger.warning(
-                f"No constraints loaded from configuration {configuration_id}, using defaults"
-            )
-            constraints = registry.create_default_constraint_set()
-
-        logger.info(
-            f"Loaded {len(constraints)} constraints from configuration {configuration_id}"
-        )
-        return constraints
-
-    except Exception as e:
-        logger.error(f"Error loading constraint set from database: {e}")
-
-        if fallback_to_defaults:
-            registry = create_enhanced_constraint_registry()
-            return registry.create_default_constraint_set()
-        else:
-            raise
-
-
-class ConstraintFactory:
-    """
-    Factory class for creating pluggable constraints with database support
-    """
-
-    def __init__(self, db_session=None):
-        self.registry = create_enhanced_constraint_registry(db_session)
-        self.db_session = db_session
-        self._database_constraints = {}  # Add missing attribute
-
-    def get_constraint_definition(self, constraint_code: str) -> Optional[Any]:
-        """Get constraint definition from registry"""
-        return self.registry.get_constraint_definition(constraint_code.upper())
-
-    async def create_constraint_instance(
-        self,
-        constraint_code: str,
-        weight: Optional[float] = None,
-        parameters: Optional[Dict[str, Any]] = None,
-        database_config: Optional[Dict[str, Any]] = None,
-    ) -> Optional[BaseConstraint]:
-        """
-        Create constraint instance from database code with configuration support
-
-        Args:
-            constraint_code: Database constraint rule code
-            weight: Optional custom weight
-            parameters: Optional parameter overrides
-            configuration_context: Database configuration context
-
-        Returns:
-            Configured constraint instance or None
-        """
-        try:
-            definition = self.get_constraint_definition(constraint_code.upper())
-            if not definition or not definition.constraint_class:
-                logger.error(f"No constraint definition found for: {constraint_code}")
-                return None
-
-            # Ensure we have a valid class
-            cls = definition.constraint_class
-            if cls is None:
-                return None
-
-            config_context: Dict[str, Any] = {}
-            if database_config:
-                config_context.update(database_config)
-            db_conf = self._database_constraints.get(constraint_code.upper())
-            if isinstance(db_conf, dict):
-                config_context.update(db_conf)
-
-            final_weight = weight
-            if final_weight is None and database_config:
-                final_weight = database_config.get("weight")
-            if final_weight is None:
-                final_weight = definition.default_weight
-
-            # FIX: Use proper initialization without passing constraint_id twice
-            if isinstance(cls, type) and issubclass(cls, BaseConstraint):
-                constraint = cls(
-                    constraint_id=constraint_code,
-                    name=definition.name,
-                    constraint_type=definition.constraint_type,
-                    category=definition.category,
-                    weight=final_weight,
-                    parameters=parameters,
-                    database_config=config_context,
-                )
-            else:
-                legacy_instance = cls() if isinstance(cls, type) else cls
-                constraint = LegacyConstraintAdapter(
-                    legacy_constraint_instance=legacy_instance,
-                    constraint_code=constraint_code,
-                    database_config=config_context,
-                )
-
-            logger.debug(f"Created constraint instance: {constraint_code}")
-            return constraint
-        except Exception as e:
-            logger.error(f"Error creating constraint instance {constraint_code}: {e}")
-            return None
-
-    async def create_constraint_set_for_session(
-        self, session_id: UUID, configuration_id: Optional[UUID] = None
-    ) -> List[BaseConstraint]:
-        """
-        Create complete constraint set for a scheduling session
-
-        Args:
-            session_id: Academic session ID
-            configuration_id: Optional configuration ID for custom constraints
-
-        Returns:
-            Complete set of configured constraints
-        """
-        try:
-            if configuration_id:
-                # Use specific configuration
-                return await load_constraint_set_from_database(
-                    configuration_id, self.db_session
-                )
-            else:
-                # Use default constraint set
-                if BACKEND_AVAILABLE and self.db_session:
-                    await self.registry.load_database_constraints()
-
-                return self.registry.create_default_constraint_set()
-
-        except Exception as e:
-            logger.error(f"Error creating constraint set for session {session_id}: {e}")
-            # Always fallback to built-in defaults
-            return self.registry.create_default_constraint_set()
-
-    async def refresh_database_constraints(self) -> None:
-        """Refresh constraint definitions from database"""
-        if BACKEND_AVAILABLE and self.db_session:
-            await self.registry.refresh_database_constraints()
-
-    def get_available_constraints(self) -> Dict[str, ConstraintDefinition]:
-        """Get all available constraint definitions"""
-        return self.registry.get_all_definitions()
-
-    async def validate_constraint_configuration(
-        self, config: Dict[str, Any]
-    ) -> Dict[str, List[str]]:
-        """Validate constraint configuration against schemas"""
-        return await self.registry.validate_constraint_configuration(config)
-
-
-# Global factory instance for convenient access
-def get_constraint_factory(db_session=None) -> ConstraintFactory:
-    """Get constraint factory instance"""
-    return ConstraintFactory(db_session)
-
-
-# Enhanced legacy compatibility functions with database support
-def get_constraint_class(constraint_id: str) -> Optional[Type[BaseConstraint]]:
-    """
-    Legacy function: Get constraint class by identifier
-    Enhanced to search both local and database constraints
-    """
-    registry = create_enhanced_constraint_registry()
-    definition = registry.get_constraint_definition(constraint_id.upper())
-    return definition.constraint_class if definition else None
-
-
-def get_all_constraint_classes() -> Dict[str, Type[BaseConstraint]]:
-    """
-    Legacy function: Get all available constraint classes
-    Enhanced to include database-loaded constraints
-    """
-    registry = create_enhanced_constraint_registry()
-    return {
-        code: defn.constraint_class
-        for code, defn in registry.get_all_definitions().items()
-        if defn.constraint_class is not None
-    }
-
-
-def get_hard_constraint_classes() -> Dict[str, Type[BaseConstraint]]:
-    """Legacy function: Get only hard constraint classes"""
-    registry = create_enhanced_constraint_registry()
-    return {
-        defn.constraint_id: defn.constraint_class
-        for defn in registry.get_definitions_by_type(ConstraintType.HARD)
-        if defn.constraint_class is not None
-    }
-
-
-def get_soft_constraint_classes() -> Dict[str, Type[BaseConstraint]]:
-    """Legacy function: Get only soft constraint classes"""
-    registry = create_enhanced_constraint_registry()
-    return {
-        defn.constraint_id: defn.constraint_class
-        for defn in registry.get_definitions_by_type(ConstraintType.SOFT)
-        if defn.constraint_class is not None
-    }
-
-
-async def create_constraint_instance(
-    constraint_id: str, db_session=None, **kwargs
-) -> Optional[BaseConstraint]:
-    """
-    Enhanced legacy function: Create instance of constraint by identifier with database support
-    """
-    registry = create_enhanced_constraint_registry(db_session)
-
-    if BACKEND_AVAILABLE and db_session:
-        await registry.load_database_constraints()
-
-    return await registry.create_constraint_instance(constraint_id, **kwargs)
-
-
-async def validate_constraint_set(
-    constraint_ids: List[str], db_session=None
-) -> Dict[str, Any]:
-    """
-    Enhanced constraint set validation with database support
-    """
-    registry = create_enhanced_constraint_registry(db_session)
-
-    if BACKEND_AVAILABLE and db_session:
-        await registry.load_database_constraints()
-
-    # Initialize validation result with proper typing
-    validation_result: Dict[str, Any] = {
-        "valid": True,
-        "errors": [],
-        "warnings": [],
-        "missing_essential": [],
-        "incompatible_pairs": [],
-        "hard_constraints": [],
-        "soft_constraints": [],
-        "database_constraints": [],
-    }
-
-    # Enhanced validation with database constraint support
-    for constraint_id in constraint_ids:
-        definition = registry.get_constraint_definition(constraint_id.upper())
-
-        if not definition:
-            validation_result["errors"].append(f"Unknown constraint: {constraint_id}")
-            validation_result["valid"] = False
-        else:
-            # Categorize constraint
-            if definition.constraint_type == ConstraintType.HARD:
-                validation_result["hard_constraints"].append(constraint_id)
-            else:
-                validation_result["soft_constraints"].append(constraint_id)
-
-            # Track database-loaded constraints
-            if definition.database_rule_id:
-                validation_result["database_constraints"].append(constraint_id)
-
-    # Check for essential hard constraints
-    essential_constraints = ["NO_STUDENT_CONFLICT", "ROOM_CAPACITY"]
-    for essential in essential_constraints:
-        if essential not in [c.upper() for c in constraint_ids]:
-            validation_result["missing_essential"].append(essential)
-            validation_result["warnings"].append(
-                f"Missing essential constraint: {essential}"
-            )
-
-    return validation_result
-
-
-# Enhanced compatibility with existing constraint registries
-ALL_CONSTRAINT_REGISTRY = {}
-
-
-def _initialize_legacy_registry():
-    """Initialize legacy registry for backward compatibility"""
-    global ALL_CONSTRAINT_REGISTRY
-
-    # Combine hard and soft constraint registries
-    ALL_CONSTRAINT_REGISTRY.update(hard_constraints.HARD_CONSTRAINT_REGISTRY)
-    ALL_CONSTRAINT_REGISTRY.update(soft_constraints.SOFT_CONSTRAINT_REGISTRY)
-
-    logger.info(
-        f"Initialized legacy constraint registry with {len(ALL_CONSTRAINT_REGISTRY)} constraints"
+# Helper function to create constraint definitions
+def create_constraint_definition(cls, constraint_type, category, description=None):
+    # Ensure 'parameters' carries the registry category key expected by core registry
+    cat_key = category.name if hasattr(category, "name") else str(category)
+    return ConstraintDefinition(
+        constraint_id=cls.__name__,
+        name=cls.__name__.replace("Constraint", "").replace("_", " ").title(),
+        description=description
+        or f"{cls.__name__.replace('Constraint', '')} constraint",
+        constraint_type=constraint_type,
+        category=category,
+        parameters={"category": cat_key, "required": (cat_key == "CORE")},
     )
 
 
-# Initialize on module load
-_initialize_legacy_registry()
+# Create a global registry instance that will be shared
+GLOBAL_CONSTRAINT_REGISTRY = ConstraintRegistry()
+
+# Hard constraints with appropriate categories
+hard_constraints = [
+    (
+        BackToBackProhibitionConstraint,
+        ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+        "Prevents invigilators from being responsible for exams in consecutive time slots",
+    ),
+    (
+        InvigilatorAvailabilityConstraint,
+        ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+        "Ensures invigilators cannot be responsible for an exam and simultaneously assigned to invigilate another exam",
+    ),
+    (
+        InvigilatorSingleAssignmentConstraint,
+        ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+        "Ensures each invigilator is assigned to at most one exam-room combination at any given time slot",
+    ),
+    (
+        MaxExamsPerDayPerStudentConstraint,
+        ConstraintCategory.STUDENT_CONSTRAINTS,
+        "Limits the number of exams a student can have in one day",
+    ),
+    (
+        MinimumGapBetweenExamsConstraint,
+        ConstraintCategory.TEMPORAL_CONSTRAINTS,
+        "Ensures minimum gap between exams for students",
+    ),
+    (
+        MinimumInvigilatorsAssignmentConstraint,
+        ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+        "Ensures minimum number of invigilators are assigned when an exam is scheduled in a room",
+    ),
+    (
+        MultiExamRoomCapacityConstraint,
+        ConstraintCategory.RESOURCE_CONSTRAINTS,
+        "Ensures total enrollment of exams assigned to a room doesn't exceed effective capacity",
+    ),
+    (
+        NoStudentConflictsSameRoomConstraint,
+        ConstraintCategory.STUDENT_CONSTRAINTS,
+        "Prevents student conflicts when multiple exams share the same room",
+    ),
+    (
+        NoStudentTemporalOverlapConstraint,
+        ConstraintCategory.STUDENT_CONSTRAINTS,
+        "Ensures no student has overlapping exams at the same time slot",
+    ),
+]
+
+# Register all hard constraints in the global registry
+for cls, category, description in hard_constraints:
+    definition = create_constraint_definition(
+        cls, ConstraintType.HARD, category, description
+    )
+    GLOBAL_CONSTRAINT_REGISTRY.register_definition(definition)
+
+
+def get_global_constraint_registry():
+    """Get the global constraint registry with all pre-registered constraints."""
+    return GLOBAL_CONSTRAINT_REGISTRY
+
+
+def initialize_problem_registry(problem_registry):
+    """
+    Initialize a problem's constraint registry with all global constraint definitions.
+    This should be called when creating a new ExamSchedulingProblem.
+    """
+    global_definitions = GLOBAL_CONSTRAINT_REGISTRY.list_definitions()
+    for definition in global_definitions:
+        problem_registry.register_definition(definition)
+    return len(global_definitions)

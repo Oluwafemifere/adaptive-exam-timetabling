@@ -7,7 +7,7 @@ Service for retrieving user and system data from the database
 from typing import Dict, List, Optional, cast
 from uuid import UUID
 from datetime import datetime as ddatetime
-from sqlalchemy import select, func, and_, or_, not_  # Added not_ import
+from sqlalchemy import select, func, and_, or_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,6 +19,7 @@ from ...models.users import (
     SystemConfiguration,
     SystemEvent,
 )
+from decimal import Decimal
 
 
 class UserData:
@@ -35,6 +36,7 @@ class UserData:
             .options(selectinload(User.roles).selectinload(UserRoleAssignment.role))
             .order_by(User.email)
         )
+
         result = await self.session.execute(stmt)
         users = result.scalars().all()
 
@@ -96,6 +98,7 @@ class UserData:
             .where(User.is_active)
             .order_by(User.email)
         )
+
         result = await self.session.execute(stmt)
         users = result.scalars().all()
 
@@ -127,6 +130,7 @@ class UserData:
             )
             .where(User.id == user_id)
         )
+
         result = await self.session.execute(stmt)
         user = result.scalar_one_or_none()
 
@@ -193,6 +197,7 @@ class UserData:
             .options(selectinload(User.roles).selectinload(UserRoleAssignment.role))
             .where(User.email == email)
         )
+
         result = await self.session.execute(stmt)
         user = result.scalar_one_or_none()
 
@@ -237,6 +242,7 @@ class UserData:
             .options(selectinload(UserRole.assignments))
             .order_by(UserRole.name)
         )
+
         result = await self.session.execute(stmt)
         roles = result.scalars().all()
 
@@ -270,6 +276,7 @@ class UserData:
             )
             .where(UserRole.id == role_id)
         )
+
         result = await self.session.execute(stmt)
         role = result.scalar_one_or_none()
 
@@ -334,6 +341,7 @@ class UserData:
             stmt = stmt.where(UserRoleAssignment.role_id == role_id)
 
         stmt = stmt.order_by(UserRoleAssignment.assigned_at.desc())
+
         result = await self.session.execute(stmt)
         assignments = result.scalars().all()
 
@@ -379,6 +387,7 @@ class UserData:
             stmt = stmt.where(UserNotification.is_read == is_read)
 
         stmt = stmt.order_by(UserNotification.created_at.desc())
+
         result = await self.session.execute(stmt)
         notifications = result.scalars().all()
 
@@ -440,6 +449,7 @@ class UserData:
             .options(selectinload(SystemConfiguration.constraints))
             .order_by(SystemConfiguration.created_at.desc())
         )
+
         result = await self.session.execute(stmt)
         configurations = result.scalars().all()
 
@@ -450,6 +460,7 @@ class UserData:
                 "description": config.description,
                 "created_by": str(config.created_by),
                 "is_default": config.is_default,
+                "solver_parameters": config.solver_parameters,
                 "constraint_count": len(config.constraints),
                 "created_at": (
                     cast(ddatetime, config.created_at).isoformat()
@@ -472,6 +483,7 @@ class UserData:
             .options(selectinload(SystemConfiguration.constraints))
             .where(SystemConfiguration.is_default)
         )
+
         result = await self.session.execute(stmt)
         config = result.scalar_one_or_none()
 
@@ -484,12 +496,13 @@ class UserData:
             "description": config.description,
             "created_by": str(config.created_by),
             "is_default": config.is_default,
+            "solver_parameters": config.solver_parameters,
             "constraints": [
                 {
                     "constraint_id": str(constraint.constraint_id),
                     "custom_parameters": constraint.custom_parameters,
                     "weight": (
-                        float(constraint.weight)  # type: ignore
+                        float(cast(Decimal, constraint.weight))
                         if constraint.weight is not None
                         else 0.0
                     ),
@@ -519,6 +532,7 @@ class UserData:
             )
             .where(SystemConfiguration.id == config_id)
         )
+
         result = await self.session.execute(stmt)
         config = result.scalar_one_or_none()
 
@@ -531,13 +545,14 @@ class UserData:
             "description": config.description,
             "created_by": str(config.created_by),
             "is_default": config.is_default,
+            "solver_parameters": config.solver_parameters,
             "constraints": [
                 {
                     "id": str(constraint.id),
                     "constraint_id": str(constraint.constraint_id),
                     "custom_parameters": constraint.custom_parameters,
                     "weight": (
-                        float(constraint.weight)  # type: ignore
+                        float(cast(Decimal, constraint.weight))
                         if constraint.weight is not None
                         else 0.0
                     ),
@@ -607,6 +622,7 @@ class UserData:
             .options(selectinload(SystemEvent.notifications))
             .where(SystemEvent.id == event_id)
         )
+
         result = await self.session.execute(stmt)
         event = result.scalar_one_or_none()
 
@@ -654,7 +670,6 @@ class UserData:
     async def search_users(self, search_term: str) -> List[Dict]:
         """Search users by email, first name, or last name"""
         search_pattern = f"%{search_term}%"
-
         stmt = (
             select(User)
             .where(
@@ -666,6 +681,7 @@ class UserData:
             )
             .order_by(User.email)
         )
+
         result = await self.session.execute(stmt)
         users = result.scalars().all()
 
@@ -690,6 +706,7 @@ class UserData:
             .where(UserRole.name == role_name)
             .order_by(User.email)
         )
+
         result = await self.session.execute(stmt)
         users = result.scalars().all()
 

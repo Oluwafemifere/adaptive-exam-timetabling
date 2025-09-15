@@ -326,28 +326,28 @@ __all__ = [
     "TestingSettings",
 ]
 
-if __name__ == "__main__":
-    # Test configuration loading
-    settings = get_settings()
+# if __name__ == "__main__":
+#     # Test configuration loading
+#     settings = get_settings()
 
-    print("=" * 50)
-    print("Environment Variables from .env:")
-    print("=" * 50)
+#     print("=" * 50)
+#     print("Environment Variables from .env:")
+#     print("=" * 50)
 
-    # Print all settings alphabetically
-    for field_name in sorted(settings.model_fields.keys()):
-        value = getattr(settings, field_name)
-        print(f"{field_name}: {value}")
+#     # Print all settings alphabetically
+#     for field_name in sorted(settings.model_fields.keys()):
+#         value = getattr(settings, field_name)
+#         print(f"{field_name}: {value}")
 
-    print("=" * 50)
+#     print("=" * 50)
 
-    # Validate settings
-    issues = validate_settings(settings)
-    if issues:
-        print("Validation Issues:")
-        for issue in issues:
-            print(f"⚠️  {issue}")
-    else:
-        print("✅ All settings are valid!")
+#     # Validate settings
+#     issues = validate_settings(settings)
+#     if issues:
+#         print("Validation Issues:")
+#         for issue in issues:
+#             print(f"⚠️  {issue}")
+#     else:
+#         print("✅ All settings are valid!")
 
-    print("=" * 50)
+#     print("=" * 50)

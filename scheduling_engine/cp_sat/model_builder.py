@@ -1,509 +1,493 @@
 # scheduling_engine/cp_sat/model_builder.py
 
 """
-CP-SAT Model Builder for exam scheduling.
-Creates constraint programming models from problem instances.
-Based on the research paper's CP formulation (constraints 2-5).
+FIXED Model Builder - Comprehensive Enhancement
+
+Key Fixes:
+- Enhanced error handling and validation
+- Better constraint registration and activation
+- Improved logging and debugging
+- Robust configuration management
+- Proper dependency resolution
 """
 
-from typing import Dict, List, Optional, Any, Tuple
-from uuid import UUID
 from ortools.sat.python import cp_model
+from typing import Dict, Any, List, Optional
+import logging
+import traceback
 
-from ..config import get_logger, CPSATConfig
-from ..core.problem_model import ExamSchedulingProblem, Exam, Room
-from ..core.solution import TimetableSolution
-
-logger = get_logger("cp_sat.model_builder")
+logger = logging.getLogger(__name__)
 
 
 class CPSATModelBuilder:
     """
-    Builds CP-SAT constraint models from exam scheduling problems.
-    Implements the RCJS formulation from the research paper.
+    FIXED model builder with comprehensive enhancements.
     """
 
-    def __init__(self, config: Optional[CPSATConfig] = None):
-        self.config = config or CPSATConfig()
-        self.model: Optional[cp_model.CpModel] = None
-        self.variables: Dict[str, cp_model.IntVar] = {}
-
-        # Problem instance
-        self.problem: Optional[ExamSchedulingProblem] = None
-
-        # Variable mappings
-        self.exam_start_vars: Dict[UUID, cp_model.IntVar] = {}
-        self.exam_end_vars: Dict[UUID, cp_model.IntVar] = {}
-        self.exam_room_vars: Dict[Tuple[UUID, UUID], cp_model.IntVar] = (
-            {}
-        )  # (exam_id, room_id)
-        self.exam_timeslot_vars: Dict[Tuple[UUID, UUID], cp_model.IntVar] = (
-            {}
-        )  # (exam_id, timeslot_id)
-
-        logger.debug("CPSATModelBuilder initialized")
-
-    def build_model(
-        self,
-        problem: ExamSchedulingProblem,
-        hint_solution: Optional[TimetableSolution] = None,
-    ) -> cp_model.CpModel:
-        """
-        Build complete CP-SAT model from problem instance.
-
-        Args:
-            problem: The exam scheduling problem instance
-            hint_solution: Optional hint solution to guide search
-
-        Returns:
-            Configured CP-SAT model ready for solving
-        """
-        logger.info(f"Building CP-SAT model for {len(problem.exams)} exams")
-
+    def __init__(self, problem):
+        """Initialize model builder with enhanced validation."""
         self.problem = problem
         self.model = cp_model.CpModel()
-        self.variables.clear()
-        self.exam_start_vars.clear()
-        self.exam_end_vars.clear()
-        self.exam_room_vars.clear()
-        self.exam_timeslot_vars.clear()
+        self._build_stats = {}
 
-        # Build model components
-        self._create_decision_variables()
-        self._add_basic_constraints()
-        self._add_resource_constraints()
-        self._add_precedence_constraints()
-        self._add_objective_function()
+        logger.info(
+            f"🏗️ Initialized CPSATModelBuilder for problem: {getattr(problem, 'id', 'unknown')}"
+        )
 
-        # Add solution hint if provided
-        if hint_solution and self.config.use_hint_from_previous:
-            self._add_solution_hint(hint_solution)
-
-        logger.info(f"CP-SAT model built with {len(self.variables)} variables")
-        return self.model
-
-    def _create_decision_variables(self) -> None:
-        """
-        Create decision variables for the CP-SAT model.
-        Based on research paper formulation: start times sj and end times ej.
-        """
-        assert self.model is not None
-        assert self.problem is not None
-
-        logger.debug("Creating decision variables")
-
-        # Calculate time horizon
-        max_time = self._calculate_time_horizon()
-
-        # Create start and end time variables for each exam
-        for exam_id, exam in self.problem.exams.items():
-            # Start time variable (sj in research paper)
-            start_var = self.model.NewIntVar(
-                0, max_time - exam.duration_minutes, f"start_exam_{exam.course_code}"
-            )
-            self.exam_start_vars[exam_id] = start_var
-            self.variables[f"start_{exam_id}"] = start_var
-
-            # End time variable (ej in research paper)
-            end_var = self.model.NewIntVar(
-                exam.duration_minutes, max_time, f"end_exam_{exam.course_code}"
-            )
-            self.exam_end_vars[exam_id] = end_var
-            self.variables[f"end_{exam_id}"] = end_var
-
-        # Create room assignment variables
-        for exam_id, exam in self.problem.exams.items():
-            for room_id, room in self.problem.rooms.items():
-                # Check if room is compatible with exam
-                if self._is_room_compatible(exam, room):
-                    var = self.model.NewBoolVar(
-                        f"exam_{exam.course_code}_room_{room.code}"
-                    )
-                    self.exam_room_vars[(exam_id, room_id)] = var
-                    self.variables[f"exam_{exam_id}_room_{room_id}"] = var
-
-        # Create time slot assignment variables
-        for exam_id, exam in self.problem.exams.items():
-            for timeslot_id, timeslot in self.problem.time_slots.items():
-                var = self.model.NewBoolVar(
-                    f"exam_{exam.course_code}_slot_{timeslot.name}"
+    def configure_standard(self):
+        """Configure for standard operation (recommended)."""
+        logger.info("⚙️ Configuring STANDARD setup...")
+        try:
+            if hasattr(self.problem, "constraint_registry"):
+                self.problem.constraint_registry.configure_standard()
+                active = self.problem.constraint_registry.get_active_constraints()
+                logger.info(
+                    f"✅ STANDARD configuration complete. Active: {sorted(active)}"
                 )
-                self.exam_timeslot_vars[(exam_id, timeslot_id)] = var
-                self.variables[f"exam_{exam_id}_slot_{timeslot_id}"] = var
+            else:
+                logger.warning(
+                    "⚠️ Problem has no constraint_registry - creating default configuration"
+                )
+                self._create_default_registry()
+        except Exception as e:
+            logger.error(f"❌ Failed to configure STANDARD setup: {e}")
+            raise
+        return self
 
-        logger.debug(f"Created {len(self.variables)} decision variables")
+    def configure_with_student_conflicts(self):
+        """Configure with student conflict prevention."""
+        logger.info("⚙️ Configuring STUDENT_CONFLICTS setup...")
+        try:
+            if hasattr(self.problem, "constraint_registry"):
+                self.problem.constraint_registry.configure_with_student_conflicts()
+                active = self.problem.constraint_registry.get_active_constraints()
+                logger.info(
+                    f"✅ STUDENT_CONFLICTS configuration complete. Active: {sorted(active)}"
+                )
+            else:
+                logger.warning(
+                    "⚠️ Problem has no constraint_registry - creating default configuration"
+                )
+                self._create_default_registry()
+                self.problem.constraint_registry.configure_with_student_conflicts()
+        except Exception as e:
+            logger.error(f"❌ Failed to configure STUDENT_CONFLICTS setup: {e}")
+            raise
+        return self
 
-    def _calculate_time_horizon(self) -> int:
-        """Calculate time horizon for the scheduling problem"""
-        assert self.problem is not None
+    def configure_complete(self):
+        """Configure complete system with all features."""
+        logger.info("⚙️ Configuring COMPLETE setup...")
+        try:
+            if hasattr(self.problem, "constraint_registry"):
+                self.problem.constraint_registry.configure_complete()
+                active = self.problem.constraint_registry.get_active_constraints()
+                logger.info(
+                    f"✅ COMPLETE configuration complete. Active: {sorted(active)}"
+                )
+            else:
+                logger.warning(
+                    "⚠️ Problem has no constraint_registry - creating default configuration"
+                )
+                self._create_default_registry()
+                self.problem.constraint_registry.configure_complete()
+        except Exception as e:
+            logger.error(f"❌ Failed to configure COMPLETE setup: {e}")
+            raise
+        return self
 
-        # Calculate based on exam period duration if available
-        if self.problem.exam_period_start and self.problem.exam_period_end:
-            period_days = (
-                self.problem.exam_period_end - self.problem.exam_period_start
-            ).days + 1
-            return period_days * 24 * 60  # Total minutes in exam period
-        else:
-            # Default to 7 days if dates not available
-            return 7 * 24 * 60
+    def _create_default_registry(self):
+        """Create default constraint registry if missing."""
+        try:
+            from scheduling_engine.core.constraint_registry import ConstraintRegistry
 
-    def _is_room_compatible(self, exam: Exam, room: Room) -> bool:
-        """Check if a room is compatible with an exam"""
-        # Check basic capacity
-        if room.get_effective_capacity(exam.exam_type) < exam.expected_students:
-            return False
+            self.problem.constraint_registry = ConstraintRegistry()
+            logger.info("✅ Created default constraint registry")
+        except ImportError as e:
+            logger.error(f"❌ Cannot create constraint registry: {e}")
+            raise
 
-        # Check room features for practical exams
-        if exam.is_practical and not room.has_computers:
-            return False
-
-        # Check if room is active
-        if not room.is_active:
-            return False
-
-        return True
-
-    def _add_basic_constraints(self) -> None:
+    def build(self):
         """
-        Add basic scheduling constraints.
-        Implements constraints 2-4 from research paper.
+        Build CP-SAT model with comprehensive error handling and validation.
         """
-        assert self.model is not None
-        assert self.problem is not None
+        logger.info("🚀 Starting ENHANCED CP-SAT model build process...")
 
-        logger.debug("Adding basic constraints")
+        try:
+            # Validate problem data
+            self._validate_problem_data()
 
-        # Constraint 2: Job starts after release time (∀j ∈J : sj ≥ rj)
-        for exam_id, exam in self.problem.exams.items():
-            if exam.release_time:
-                # Convert release time to minutes from start of exam period
-                release_minutes = self._datetime_to_minutes(exam.release_time)
-                self.model.Add(self.exam_start_vars[exam_id] >= release_minutes)
+            # Validate constraint configuration
+            validation = self.validate_configuration()
+            if not validation["valid"]:
+                raise RuntimeError(
+                    f"Configuration validation failed: {validation['errors']}"
+                )
 
-        # Constraint 3: End time = start time + processing time (∀j ∈J : ej = sj + pj)
-        for exam_id, exam in self.problem.exams.items():
-            self.model.Add(
-                self.exam_end_vars[exam_id]
-                == self.exam_start_vars[exam_id] + exam.duration_minutes
+            # Log warnings if any
+            for warning in validation.get("warnings", []):
+                logger.warning(f"⚠️ Configuration warning: {warning}")
+
+            # Create optimized shared variables
+            logger.info("🔧 Creating optimized variables with enhanced validation...")
+            shared_variables = self._create_shared_variables()
+
+            # Create and configure constraint manager
+            logger.info("🔧 Creating and configuring constraint manager...")
+            constraint_manager = self._create_constraint_manager()
+
+            # Build constraints
+            logger.info("🏗️ Building constraints using shared variables...")
+            build_stats = self._build_constraints(constraint_manager, shared_variables)
+
+            # Store build statistics
+            self._build_stats = build_stats
+
+            # Log successful build
+            self._log_build_success(build_stats)
+
+            return self.model, shared_variables
+
+        except Exception as e:
+            logger.error(f"❌ Model build FAILED: {e}")
+            logger.error(f"🐛 Traceback:\n{traceback.format_exc()}")
+            raise
+
+    def _validate_problem_data(self):
+        """Comprehensive problem data validation."""
+        logger.info("🔍 Validating problem data...")
+
+        required_attributes = ["exams", "time_slots", "rooms", "days"]
+        missing_attrs = []
+
+        for attr in required_attributes:
+            if not hasattr(self.problem, attr):
+                missing_attrs.append(attr)
+            elif not getattr(self.problem, attr):
+                missing_attrs.append(f"{attr} (empty)")
+
+        if missing_attrs:
+            raise ValueError(f"Problem missing essential data: {missing_attrs}")
+
+        # Log data sizes
+        logger.info(f"📊 Problem size validation:")
+        logger.info(f"  • Exams: {len(self.problem.exams)}")
+        logger.info(f"  • Time slots: {len(self.problem.time_slots)}")
+        logger.info(f"  • Rooms: {len(self.problem.rooms)}")
+        logger.info(f"  • Days: {len(self.problem.days)}")
+
+        # Validate minimum requirements
+        if len(self.problem.exams) == 0:
+            raise ValueError("No exams to schedule")
+        if len(self.problem.time_slots) == 0:
+            raise ValueError("No time slots available")
+        if len(self.problem.rooms) == 0:
+            raise ValueError("No rooms available")
+
+        logger.info("✅ Problem data validation passed")
+
+    def _create_shared_variables(self):
+        """Create shared variables with enhanced error handling."""
+        try:
+            from scheduling_engine.cp_sat.constraint_encoder import ConstraintEncoder
+
+            encoder = ConstraintEncoder(self.problem, self.model)
+            shared_variables = encoder.encode()
+
+            logger.info(f"✅ Shared variables created successfully:")
+            logger.info(f"  • x_vars: {len(shared_variables.x_vars)}")
+            logger.info(f"  • z_vars: {len(shared_variables.z_vars)}")
+            logger.info(f"  • y_vars: {len(shared_variables.y_vars)}")
+            logger.info(f"  • u_vars: {len(shared_variables.u_vars)}")
+
+            return shared_variables
+
+        except Exception as e:
+            logger.error(f"❌ Failed to create shared variables: {e}")
+            raise
+
+    def _create_constraint_manager(self):
+        """Create and configure constraint manager."""
+        try:
+            from scheduling_engine.constraints.constraint_manager import (
+                CPSATConstraintManager,
             )
 
-        # Each exam must be assigned to exactly one time slot
-        for exam_id in self.problem.exams.keys():
-            timeslot_assignments = [
-                self.exam_timeslot_vars[(exam_id, ts_id)]
-                for ts_id in self.problem.time_slots.keys()
-                if (exam_id, ts_id) in self.exam_timeslot_vars
-            ]
-            if timeslot_assignments:
-                self.model.Add(sum(timeslot_assignments) == 1)
+            constraint_manager = CPSATConstraintManager()
 
-        # Each exam must be assigned to at least one room
-        for exam_id, _ in self.problem.exams.items():
-            room_assignments = [
-                self.exam_room_vars[(exam_id, room_id)]
-                for room_id in self.problem.rooms.keys()
-                if (exam_id, room_id) in self.exam_room_vars
-            ]
-            if room_assignments:
-                self.model.Add(sum(room_assignments) >= 1)
+            # Get active constraint classes from registry
+            active_constraint_info = self._get_active_constraint_classes()
 
-        # Link time slot assignment to start time
-        for exam_id in self.problem.exams.keys():
-            for timeslot_id, timeslot in self.problem.time_slots.items():
-                if (exam_id, timeslot_id) in self.exam_timeslot_vars:
-                    timeslot_start_minutes = self._time_to_minutes(timeslot.start_time)
+            if not active_constraint_info:
+                raise RuntimeError("No constraint classes loaded from registry")
 
-                    # If exam is assigned to this time slot, start time must match
-                    self.model.Add(
-                        self.exam_start_vars[exam_id] == timeslot_start_minutes
-                    ).OnlyEnforceIf(self.exam_timeslot_vars[(exam_id, timeslot_id)])
+            # Register constraint classes with manager
+            self._register_constraints_with_manager(
+                constraint_manager, active_constraint_info
+            )
 
-        logger.debug("Basic constraints added")
+            # Enable categories
+            self._enable_constraint_categories(
+                constraint_manager, active_constraint_info
+            )
 
-    def _add_resource_constraints(self) -> None:
-        """
-        Add resource constraints (rooms, capacity).
-        Implements disjunctive constraints (constraint 4 from research paper).
-        """
-        assert self.model is not None
-        assert self.problem is not None
+            return constraint_manager
 
-        logger.debug("Adding resource constraints")
+        except Exception as e:
+            logger.error(f"❌ Failed to create constraint manager: {e}")
+            raise
 
-        # No room double-booking: ∀i,j ∈J : mi = mj ⇒ si > ej ∨ sj > ei
-        for room_id in self.problem.rooms.keys():
-            exams_using_room = [
-                exam_id
-                for exam_id in self.problem.exams.keys()
-                if (exam_id, room_id) in self.exam_room_vars
-            ]
+    def _get_active_constraint_classes(self):
+        """Get active constraint classes from registry."""
+        try:
+            if not hasattr(self.problem, "constraint_registry"):
+                raise RuntimeError("Problem has no constraint registry")
 
-            # Add disjunctive constraints for exams potentially using same room
-            for i, exam1_id in enumerate(exams_using_room):
-                for exam2_id in exams_using_room[i + 1 :]:
-                    # Create disjunctive constraint: if both use room, they can't overlap
-                    both_use_room = self.model.NewBoolVar(
-                        f"both_use_room_{room_id}_{i}"
-                    )
+            active_constraint_info = (
+                self.problem.constraint_registry.get_active_constraint_classes()
+            )
 
-                    # both_use_room iff both exams use this room
-                    self.model.Add(
-                        both_use_room
-                        == (
-                            self.exam_room_vars[(exam1_id, room_id)]
-                            + self.exam_room_vars[(exam2_id, room_id)]
-                            - 1
-                        )
-                    )
+            if not active_constraint_info:
+                raise RuntimeError("No active constraints found in registry")
 
-                    # If both use room, one must end before other starts
-                    exam1_ends_first = self.model.NewBoolVar(f"exam1_ends_first_{i}")
+            logger.info(f"📦 Loaded {len(active_constraint_info)} constraint classes:")
+            for constraint_id, info in active_constraint_info.items():
+                logger.info(f"  ✓ {constraint_id} (category: {info['category']})")
 
-                    self.model.Add(
-                        self.exam_end_vars[exam1_id] <= self.exam_start_vars[exam2_id]
-                    ).OnlyEnforceIf([both_use_room, exam1_ends_first])
+            return active_constraint_info
 
-                    self.model.Add(
-                        self.exam_end_vars[exam2_id] <= self.exam_start_vars[exam1_id]
-                    ).OnlyEnforceIf([both_use_room, exam1_ends_first.Not()])
+        except Exception as e:
+            logger.error(f"❌ Failed to get active constraint classes: {e}")
+            raise
 
-        # Room capacity constraints
-        self._add_room_capacity_constraints()
+    def _register_constraints_with_manager(
+        self, constraint_manager, active_constraint_info
+    ):
+        """Register constraint classes with the manager."""
+        logger.info("📝 Registering constraint classes with manager...")
 
-        logger.debug("Resource constraints added")
+        registration_success = 0
+        registration_failed = 0
 
-    def _add_room_capacity_constraints(self) -> None:
-        """Add room capacity constraints"""
-        assert self.model is not None
-        assert self.problem is not None
+        for constraint_id, info in active_constraint_info.items():
+            try:
+                constraint_class = info["class"]
+                category = info["category"]
+                constraint_manager.register_module(constraint_class, category)
+                registration_success += 1
+                logger.debug(f"  ✓ Registered {constraint_id} in category {category}")
+            except Exception as e:
+                logger.error(f"  ❌ Failed to register {constraint_id}: {e}")
+                registration_failed += 1
 
-        for room_id, room in self.problem.rooms.items():
-            # For each time slot, total students assigned to room cannot exceed capacity
-            for timeslot_id in self.problem.time_slots.keys():
-                students_in_room = []
+        logger.info(
+            f"📝 Registration complete: {registration_success} success, {registration_failed} failed"
+        )
 
-                for exam_id, exam in self.problem.exams.items():
-                    if (exam_id, room_id) in self.exam_room_vars and (
-                        exam_id,
-                        timeslot_id,
-                    ) in self.exam_timeslot_vars:
+        if registration_failed > 0:
+            raise RuntimeError(
+                f"Failed to register {registration_failed} constraint classes"
+            )
 
-                        # Indicator: exam is in this room and time slot
-                        exam_here = self.model.NewBoolVar(
-                            f"exam_{exam_id}_here_{room_id}_{timeslot_id}"
-                        )
+    def _enable_constraint_categories(self, constraint_manager, active_constraint_info):
+        """Enable constraint categories in the manager."""
+        active_categories = set(
+            info["category"] for info in active_constraint_info.values()
+        )
 
-                        # exam_here iff exam uses both this room and time slot
-                        self.model.AddBoolAnd(
-                            [
-                                self.exam_room_vars[(exam_id, room_id)],
-                                self.exam_timeslot_vars[(exam_id, timeslot_id)],
-                            ]
-                        ).OnlyEnforceIf(exam_here)
+        logger.info(
+            f"🔧 Enabling {len(active_categories)} constraint categories: {sorted(active_categories)}"
+        )
 
-                        self.model.AddBoolOr(
-                            [
-                                self.exam_room_vars[(exam_id, room_id)].Not(),
-                                self.exam_timeslot_vars[(exam_id, timeslot_id)].Not(),
-                            ]
-                        ).OnlyEnforceIf(exam_here.Not())
+        for category in active_categories:
+            try:
+                constraint_manager.enable_module_category(category)
+                logger.debug(f"  ✓ Enabled category: {category}")
+            except Exception as e:
+                logger.error(f"  ❌ Failed to enable category {category}: {e}")
+                raise
 
-                        # Add student count for this exam if it's scheduled here
-                        students_in_room.append(exam.expected_students * exam_here)
+    def _build_constraints(self, constraint_manager, shared_variables):
+        """Build constraints using the manager."""
+        try:
+            build_stats = constraint_manager.build_model(
+                self.model, self.problem, shared_variables
+            )
 
-                # Total students cannot exceed room capacity
-                if students_in_room:
-                    self.model.Add(
-                        sum(students_in_room) <= room.get_effective_capacity()
-                    )
+            if not build_stats["build_successful"]:
+                error_msg = build_stats.get("error", "Unknown error")
+                raise RuntimeError(f"Constraint build failed: {error_msg}")
 
-    def _add_precedence_constraints(self) -> None:
-        """
-        Add precedence constraints.
-        Implements constraint 5 from research paper: ∀(i,j) ∈P : sj > ei
-        """
-        assert self.model is not None
-        assert self.problem is not None
+            return build_stats
 
-        logger.debug("Adding precedence constraints")
+        except Exception as e:
+            logger.error(f"❌ Failed to build constraints: {e}")
+            raise
 
-        for exam_id, exam in self.problem.exams.items():
-            for prereq_exam_id in exam.prerequisite_exams:
-                if prereq_exam_id in self.exam_end_vars:
-                    # Prerequisite exam must end before this exam starts
-                    self.model.Add(
-                        self.exam_start_vars[exam_id]
-                        > self.exam_end_vars[prereq_exam_id]
-                    )
+    def _log_build_success(self, build_stats):
+        """Log successful build statistics."""
+        logger.info(f"🎉 Model build SUCCESS!")
+        logger.info(f"📊 Build statistics:")
+        logger.info(f"  • Total modules: {build_stats['total_modules']}")
+        logger.info(f"  • Total constraints: {build_stats['total_constraints']}")
+        logger.info(f"  • Dependency order: {build_stats['dependency_order']}")
 
-        logger.debug("Precedence constraints added")
-
-    def _add_objective_function(self) -> None:
-        """
-        Add objective function for optimization.
-        Based on Total Weighted Tardiness from research paper.
-        """
-        assert self.model is not None
-        assert self.problem is not None
-
-        logger.debug("Adding objective function")
-
-        tardiness_terms = []
-
-        for exam_id, exam in self.problem.exams.items():
-            if exam.due_date:
-                # Calculate due time in minutes
-                due_minutes = self._datetime_to_minutes(exam.due_date)
-
-                # Tardiness = max(0, completion_time - due_time)
-                tardiness_var = self.model.NewIntVar(
-                    0, 10000, f"tardiness_{exam.course_code}"
+        # Log module-specific statistics
+        module_stats = build_stats.get("module_statistics", {})
+        if module_stats:
+            logger.info("📋 Per-module constraint breakdown:")
+            for module_id, stats in module_stats.items():
+                constraint_count = stats.get("constraint_count", 0)
+                category = stats.get("category", "UNKNOWN")
+                logger.info(
+                    f"  • {module_id} ({category}): {constraint_count} constraints"
                 )
-                self.model.Add(
-                    tardiness_var >= self.exam_end_vars[exam_id] - due_minutes
-                )
-                self.model.Add(tardiness_var >= 0)
 
-                # Weighted tardiness
-                weighted_tardiness = tardiness_var * int(
-                    exam.weight * 100
-                )  # Scale for integer
-                tardiness_terms.append(weighted_tardiness)
+        # Log optimizations applied
+        optimizations = build_stats.get("optimizations_applied", [])
+        if optimizations:
+            logger.info("🚀 Applied optimizations:")
+            for opt in optimizations:
+                logger.info(f"  • {opt}")
 
-        # Minimize total weighted tardiness
-        if tardiness_terms:
-            self.model.Minimize(sum(tardiness_terms))
-        else:
-            # Default objective: minimize total completion time
-            completion_terms = list(self.exam_end_vars.values())
-            self.model.Minimize(sum(completion_terms))
-
-        logger.debug("Objective function added")
-
-    def _add_solution_hint(self, hint_solution: TimetableSolution) -> None:
-        """Add solution hint to guide CP-SAT search"""
-        assert self.model is not None
-        assert self.problem is not None
-
-        logger.debug("Adding solution hint")
-
-        for exam_id, assignment in hint_solution.assignments.items():
-            if not assignment.is_complete():
-                continue
-
-            # Hint start time - Add None check here
-            if (
-                exam_id in self.exam_start_vars
-                and assignment.assigned_date
-                and assignment.time_slot_id is not None
-            ):
-                timeslot = self.problem.time_slots.get(assignment.time_slot_id)
-                if timeslot:
-                    start_minutes = self._time_to_minutes(timeslot.start_time)
-                    self.model.AddHint(self.exam_start_vars[exam_id], start_minutes)
-
-            # Hint room assignments
-            for room_id in assignment.room_ids:
-                if (exam_id, room_id) in self.exam_room_vars:
-                    self.model.AddHint(self.exam_room_vars[(exam_id, room_id)], 1)
-
-            # Hint time slot assignment - Add None check here
-            if assignment.time_slot_id is not None:
-                if (exam_id, assignment.time_slot_id) in self.exam_timeslot_vars:
-                    self.model.AddHint(
-                        self.exam_timeslot_vars[(exam_id, assignment.time_slot_id)], 1
-                    )
-
-    def _datetime_to_minutes(self, dt: Any) -> int:
-        """Convert datetime to minutes from start of exam period"""
-        assert self.problem is not None
-
-        if hasattr(dt, "date"):
-            days_from_start = 0
-            if self.problem.exam_period_start:
-                days_from_start = (dt.date() - self.problem.exam_period_start).days
-        else:
-            days_from_start = 0
-
-        if hasattr(dt, "time"):
-            minutes_in_day = dt.time().hour * 60 + dt.time().minute
-        else:
-            minutes_in_day = 0
-
-        return days_from_start * 24 * 60 + minutes_in_day
-
-    def _time_to_minutes(self, t: Any) -> int:
-        """Convert time to minutes from midnight"""
-        if hasattr(t, "hour") and hasattr(t, "minute"):
-            return t.hour * 60 + t.minute
-        return 0
-
-    def get_model_statistics(self) -> Dict[str, Any]:
-        """Get statistics about the built model"""
-        if not self.model or not self.problem:
-            return {}
-
-        return {
-            "total_variables": len(self.variables),
-            "start_time_variables": len(self.exam_start_vars),
-            "end_time_variables": len(self.exam_end_vars),
-            "room_assignment_variables": len(self.exam_room_vars),
-            "timeslot_assignment_variables": len(self.exam_timeslot_vars),
-            "constraints": "Not available in OR-Tools",  # OR-Tools doesn't expose constraint count
-            "exams": len(self.problem.exams),
-            "rooms": len(self.problem.rooms),
-            "time_slots": len(self.problem.time_slots),
+    def validate_configuration(self) -> Dict[str, Any]:
+        """Validate current configuration with enhanced reporting."""
+        validation = {
+            "valid": True,
+            "warnings": [],
+            "errors": [],
+            "recommendations": [],
         }
 
-    def validate_model(self) -> Dict[str, List[str]]:
-        """Validate the built model for consistency"""
-        errors: List[str] = []
-        warnings: List[str] = []
+        try:
+            # Check if constraint registry exists
+            if not hasattr(self.problem, "constraint_registry"):
+                validation["errors"].append("Problem has no constraint registry")
+                validation["valid"] = False
+                return validation
 
-        if not self.model:
-            errors.append("No model has been built")
-            return {"errors": errors, "warnings": warnings}
-
-        # Check variable creation
-        if not self.exam_start_vars:
-            errors.append("No start time variables created")
-
-        if not self.exam_end_vars:
-            errors.append("No end time variables created")
-
-        if not self.exam_room_vars:
-            warnings.append("No room assignment variables created")
-
-        if not self.exam_timeslot_vars:
-            warnings.append("No time slot assignment variables created")
-
-        # Check problem data consistency
-        if self.problem:
-            unschedulable_exams = []
-            for exam_id, exam in self.problem.exams.items():
-                compatible_rooms = [
-                    room_id
-                    for room_id, room in self.problem.rooms.items()
-                    if self._is_room_compatible(exam, room)
-                ]
-                if not compatible_rooms:
-                    unschedulable_exams.append(exam.course_code)
-
-            if unschedulable_exams:
-                errors.extend(
-                    [
-                        f"Exam {code} has no compatible rooms"
-                        for code in unschedulable_exams
-                    ]
+            # Check if any constraints are active
+            active_constraints = (
+                self.problem.constraint_registry.get_active_constraints()
+            )
+            if not active_constraints:
+                validation["errors"].append(
+                    "No constraints activated - model will be incomplete"
                 )
+                validation["valid"] = False
 
-        return {"errors": errors, "warnings": warnings}
+            # Check for essential CORE constraints
+            core_constraints = [
+                "StartUniquenessConstraint",
+                "OccupancyDefinitionConstraint",
+                "RoomAssignmentBasicConstraint",
+            ]
 
-    def get_variables(self) -> Dict[str, cp_model.IntVar]:
-        """
-        Get all variables created during model building.
+            active_core = [c for c in core_constraints if c in active_constraints]
+            if len(active_core) < len(core_constraints):
+                missing = set(core_constraints) - set(active_core)
+                validation["errors"].append(
+                    f"Missing essential CORE constraints: {missing}"
+                )
+                validation["valid"] = False
 
-        Returns:
-            Dictionary mapping variable names to CP-SAT integer variables.
-        """
-        return self.variables
+            # Check for constraint class availability
+            try:
+                active_classes = (
+                    self.problem.constraint_registry.get_active_constraint_classes()
+                )
+                if len(active_classes) < len(active_constraints):
+                    validation["warnings"].append(
+                        f"Some constraint classes could not be loaded: "
+                        f"{len(active_classes)}/{len(active_constraints)} loaded"
+                    )
+            except Exception as e:
+                validation["errors"].append(f"Failed to load constraint classes: {e}")
+                validation["valid"] = False
+
+        except Exception as e:
+            validation["errors"].append(f"Configuration validation failed: {e}")
+            validation["valid"] = False
+
+        return validation
+
+    def get_build_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive build statistics."""
+        try:
+            registry_summary = (
+                self.problem.constraint_registry.get_configuration_summary()
+                if hasattr(self.problem, "constraint_registry")
+                else {}
+            )
+            validation = self.validate_configuration()
+
+            return {
+                "builder_type": "CPSATModelBuilder",
+                "constraint_registry": registry_summary,
+                "validation": validation,
+                "build_stats": self._build_stats,
+                "features": {
+                    "optimized_variables": True,
+                    "c6_domain_restriction": True,
+                    "shared_precomputed_data": True,
+                    "enhanced_error_handling": True,
+                    "comprehensive_logging": True,
+                    "mathematical_compliance": True,
+                },
+            }
+        except Exception as e:
+            logger.error(f"❌ Failed to get build statistics: {e}")
+            return {"error": str(e)}
+
+
+def create_optimized_model_builder(
+    problem, configuration: str = "standard"
+) -> CPSATModelBuilder:
+    """
+    Factory function to create configured model builder with enhanced validation.
+    """
+    logger.info(
+        f"🏭 Creating optimized model builder with '{configuration}' configuration..."
+    )
+
+    try:
+        builder = CPSATModelBuilder(problem)
+
+        # Configure based on requested configuration
+        if configuration == "minimal":
+            if hasattr(problem, "constraint_registry"):
+                problem.constraint_registry.configure_minimal()
+            else:
+                logger.warning("Problem has no constraint registry - using defaults")
+        elif configuration == "standard":
+            builder.configure_standard()
+        elif configuration == "with_conflicts":
+            builder.configure_with_student_conflicts()
+        elif configuration == "complete":
+            builder.configure_complete()
+        else:
+            raise ValueError(
+                f"Unknown configuration: {configuration}. "
+                f"Valid: minimal, standard, with_conflicts, complete"
+            )
+
+        # Validate configuration
+        validation = builder.validate_configuration()
+        if not validation["valid"]:
+            logger.error(f"❌ Configuration validation FAILED: {validation['errors']}")
+            raise RuntimeError(
+                f"Configuration validation failed: {validation['errors']}"
+            )
+
+        # Log warnings
+        for warning in validation.get("warnings", []):
+            logger.warning(f"⚠️ Configuration warning: {warning}")
+
+        logger.info(
+            f"✅ Created optimized model builder with '{configuration}' configuration"
+        )
+        return builder
+
+    except Exception as e:
+        logger.error(f"❌ Failed to create model builder: {e}")
+        raise
