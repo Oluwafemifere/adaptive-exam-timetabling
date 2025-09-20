@@ -1,28 +1,26 @@
 # scheduling_engine/constraints/__init__.py
 
 # Import all hard constraints
-from .hard_constraints.back_to_back_prohibition import BackToBackProhibitionConstraint
-from .hard_constraints.invigilator_availability import InvigilatorAvailabilityConstraint
-from .hard_constraints.invigilator_single_assignment import (
-    InvigilatorSingleAssignmentConstraint,
+
+from .hard_constraints.invigilator_single_presence import (
+    InvigilatorSinglePresenceConstraint,
 )
-from .hard_constraints.max_exams_per_day_per_student import (
-    MaxExamsPerDayPerStudentConstraint,
+from .hard_constraints.minimum_invigilators import MinimumInvigilatorsConstraint
+from .hard_constraints.occupancy_definition import OccupancyDefinitionConstraint
+from .hard_constraints.room_assignment_consistency import (
+    RoomAssignmentConsistencyConstraint,
 )
-from .hard_constraints.minimum_gap_between_exams import MinimumGapBetweenExamsConstraint
-from .hard_constraints.minimum_invigilators_assignment import (
-    MinimumInvigilatorsAssignmentConstraint,
+from .hard_constraints.room_capacity_hard import RoomCapacityHardConstraint
+from .hard_constraints.room_continuity import RoomContinuityConstraint
+from .hard_constraints.start_uniqueness import StartUniquenessConstraint
+from .hard_constraints.unified_student_conflict import UnifiedStudentConflictConstraint
+from .hard_constraints.max_exams_per_student_per_day import (
+    MaxExamsPerStudentPerDayConstraint,
 )
-from .hard_constraints.multi_exam_room_capacity import MultiExamRoomCapacityConstraint
-from .hard_constraints.no_student_conflicts_same_room import (
-    NoStudentConflictsSameRoomConstraint,
-)
-from .hard_constraints.no_student_temporal_overlap import (
-    NoStudentTemporalOverlapConstraint,
-)
+from .hard_constraints.minimum_gap import MinimumGapConstraint
+from .hard_constraints.start_feasibility import StartFeasibilityConstraint
 
 # Register with the global registry so CPSATModelBuilder sees them
-from .constraint_manager import CPSATConstraintManager
 from ..core.constraint_registry import ConstraintRegistry
 from ..core.constraint_types import (
     ConstraintDefinition,
@@ -31,77 +29,78 @@ from ..core.constraint_types import (
 )
 
 
-# Helper function to create constraint definitions
-def create_constraint_definition(cls, constraint_type, category, description=None):
-    # Ensure 'parameters' carries the registry category key expected by core registry
-    cat_key = category.name if hasattr(category, "name") else str(category)
-    return ConstraintDefinition(
-        constraint_id=cls.__name__,
-        name=cls.__name__.replace("Constraint", "").replace("_", " ").title(),
-        description=description
-        or f"{cls.__name__.replace('Constraint', '')} constraint",
-        constraint_type=constraint_type,
-        category=category,
-        parameters={"category": cat_key, "required": (cat_key == "CORE")},
-    )
-
-
 # Create a global registry instance that will be shared
 GLOBAL_CONSTRAINT_REGISTRY = ConstraintRegistry()
 
-# Hard constraints with appropriate categories
+# Hard constraints with appropriate categories - only using imported constraints
 hard_constraints = [
     (
-        BackToBackProhibitionConstraint,
+        InvigilatorSinglePresenceConstraint,
         ConstraintCategory.INVIGILATOR_CONSTRAINTS,
-        "Prevents invigilators from being responsible for exams in consecutive time slots",
+        "Ensures each invigilator is only present in one location at a time",
     ),
     (
-        InvigilatorAvailabilityConstraint,
-        ConstraintCategory.INVIGILATOR_CONSTRAINTS,
-        "Ensures invigilators cannot be responsible for an exam and simultaneously assigned to invigilate another exam",
-    ),
-    (
-        InvigilatorSingleAssignmentConstraint,
-        ConstraintCategory.INVIGILATOR_CONSTRAINTS,
-        "Ensures each invigilator is assigned to at most one exam-room combination at any given time slot",
-    ),
-    (
-        MaxExamsPerDayPerStudentConstraint,
-        ConstraintCategory.STUDENT_CONSTRAINTS,
-        "Limits the number of exams a student can have in one day",
-    ),
-    (
-        MinimumGapBetweenExamsConstraint,
-        ConstraintCategory.TEMPORAL_CONSTRAINTS,
-        "Ensures minimum gap between exams for students",
-    ),
-    (
-        MinimumInvigilatorsAssignmentConstraint,
+        MinimumInvigilatorsConstraint,
         ConstraintCategory.INVIGILATOR_CONSTRAINTS,
         "Ensures minimum number of invigilators are assigned when an exam is scheduled in a room",
     ),
     (
-        MultiExamRoomCapacityConstraint,
+        OccupancyDefinitionConstraint,
+        ConstraintCategory.CORE,
+        "Defines occupancy rules for rooms",
+    ),
+    (
+        RoomAssignmentConsistencyConstraint,
+        ConstraintCategory.CORE,
+        "Ensures room assignment constraints are met",
+    ),
+    (
+        RoomCapacityHardConstraint,
         ConstraintCategory.RESOURCE_CONSTRAINTS,
-        "Ensures total enrollment of exams assigned to a room doesn't exceed effective capacity",
+        "Ensures room capacity is not exceeded",
     ),
     (
-        NoStudentConflictsSameRoomConstraint,
-        ConstraintCategory.STUDENT_CONSTRAINTS,
-        "Prevents student conflicts when multiple exams share the same room",
+        RoomContinuityConstraint,
+        ConstraintCategory.RESOURCE_CONSTRAINTS,
+        "Ensures room continuity for exams",
     ),
     (
-        NoStudentTemporalOverlapConstraint,
+        StartUniquenessConstraint,
+        ConstraintCategory.CORE,
+        "Ensures each exam has a unique start time",
+    ),
+    (
+        UnifiedStudentConflictConstraint,
         ConstraintCategory.STUDENT_CONSTRAINTS,
         "Ensures no student has overlapping exams at the same time slot",
     ),
+    (
+        MaxExamsPerStudentPerDayConstraint,
+        ConstraintCategory.STUDENT_CONSTRAINTS,
+        "Limits maximum exams per student per day",
+    ),
+    (
+        MinimumGapConstraint,
+        ConstraintCategory.STUDENT_CONSTRAINTS,
+        "Ensures minimum gap between student exams",
+    ),
+    (
+        StartFeasibilityConstraint,
+        ConstraintCategory.CORE,
+        "Ensures exams start in feasible time slots",
+    ),
 ]
-
 # Register all hard constraints in the global registry
 for cls, category, description in hard_constraints:
-    definition = create_constraint_definition(
-        cls, ConstraintType.HARD, category, description
+    cat_key = category.name if hasattr(category, "name") else str(category)
+    definition = ConstraintDefinition(
+        constraint_id=cls.__name__,
+        name=cls.__name__.replace("Constraint", "").replace("_", " ").title(),
+        description=description
+        or f"{cls.__name__.replace('Constraint', '')} constraint",
+        constraint_type=ConstraintType.HARD,
+        category=category,
+        parameters={"category": cat_key, "required": (cat_key == "CORE")},
     )
     GLOBAL_CONSTRAINT_REGISTRY.register_definition(definition)
 

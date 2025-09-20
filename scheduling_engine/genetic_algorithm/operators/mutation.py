@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 import math
 
-from ...core.problem_model import ExamSchedulingProblem, Exam, Room, TimeSlot
+from ...core.problem_model import ExamSchedulingProblem, Exam, Room, Timeslot
 from ..chromosome import VariableSelectorChromosome, ExamPriorityGene
 
 logger = logging.getLogger(__name__)

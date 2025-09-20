@@ -5,17 +5,17 @@ Solves the CP-SAT model and returns the extracted solution.
 """
 
 import logging
+import sys
 from ortools.sat.python import cp_model
 from scheduling_engine.core.solution import TimetableSolution
-from scheduling_engine.cp_sat.model_builder import CPSATModelBuilder
 from scheduling_engine.cp_sat.solution_extractor import SolutionExtractor
 
 # Configure comprehensive logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,  # Changed to INFO to reduce verbose debug logs
     format="%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
     handlers=[
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stdout),
         logging.FileHandler("constraint_solver_test.log", mode="w"),
     ],
 )
@@ -31,13 +31,18 @@ class CPSATSolverManager:
         self.solver = cp_model.CpSolver()
 
     def solve(self):
+        from scheduling_engine.cp_sat.model_builder import CPSATModelBuilder
+
         # Build model and shared variables
         builder = CPSATModelBuilder(self.problem)
         self.model, self.shared_vars = builder.build()
+
+        # Configure solver parameters for detailed logging
         self.solver.parameters.enumerate_all_solutions = False
         self.solver.parameters.cp_model_probing_level = 2
         self.solver.parameters.linearization_level = 2
-        self.solver.parameters.max_time_in_seconds = 120
+        self.solver.parameters.max_time_in_seconds = 1800
+        self.solver.parameters.log_search_progress = True  # Enable solver logging
 
         # Add solution callback for better debugging
         class SolutionCallback(cp_model.CpSolverSolutionCallback):
@@ -50,12 +55,14 @@ class CPSATSolverManager:
                 logger.info(f"Found solution #{self.solution_count}")
 
         callback = SolutionCallback()
+
+        # Solve the model (single call with callback)
         status = self.solver.Solve(self.model, callback)
-        # Solve the model
-        status = self.solver.Solve(self.model)
+
         if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
             logger.error(f"No solution found. Status: {status}")
             return status, TimetableSolution(self.problem)
+
         # Add status interpretation
         status_name = "UNKNOWN"
         if status == cp_model.OPTIMAL:
@@ -73,6 +80,7 @@ class CPSATSolverManager:
         logger.info(f"Solution objective value: {self.solver.ObjectiveValue()}")
         logger.info(f"Conflicts: {self.solver.NumConflicts()}")
         logger.info(f"Branches: {self.solver.NumBranches()}")
+
         # Extract solution
         extractor = SolutionExtractor(self.problem, self.shared_vars, self.solver)
         solution = extractor.extract()

@@ -1,493 +1,566 @@
-# scheduling_engine/cp_sat/model_builder.py
+# FIXED MODEL BUILDER - Enhanced CP-SAT model building with Day data class support
 
-"""
-FIXED Model Builder - Comprehensive Enhancement
+# MODIFIED: Day data class implementation with validation
 
-Key Fixes:
-- Enhanced error handling and validation
-- Better constraint registration and activation
-- Improved logging and debugging
-- Robust configuration management
-- Proper dependency resolution
-"""
+# Critical Issues Fixed:
+# 1. Updated to work with Day data class and timeslots property
+# 2. Enhanced error message propagation with UUID keys
+# 3. Better validation using Day structure
+# 4. Added validate_problem_data_enhanced function
+# 5. Comprehensive logging with Day tracking
 
-from ortools.sat.python import cp_model
-from typing import Dict, Any, List, Optional
+from typing import Optional, Dict, Any, Tuple, List
+from uuid import UUID
 import logging
+import time
 import traceback
+from ortools.sat.python import cp_model
+from scheduling_engine.core.problem_model import ExamSchedulingProblem
+from .constraint_encoder import ConstraintEncoder, SharedVariables
+from .solver_manager import CPSATSolverManager
 
 logger = logging.getLogger(__name__)
 
 
-class CPSATModelBuilder:
-    """
-    FIXED model builder with comprehensive enhancements.
-    """
+def validate_problem_data_enhanced(problem):
+    """Enhanced problem data validation for Day data class architecture"""
+    if not problem.days:
+        raise ValueError("No days defined")
 
-    def __init__(self, problem):
-        """Initialize model builder with enhanced validation."""
+    for day_id, day in problem.days.items():
+        if len(day.timeslots) != 3:
+            raise ValueError(
+                f"Day {day_id} has {len(day.timeslots)} timeslots; expected 3"
+            )
+
+    total_timeslots = sum(len(d.timeslots) for d in problem.days.values())
+    if total_timeslots != len(problem.timeslots):
+        raise ValueError("Timeslot count mismatch between days and property")
+
+
+class CPSATModelBuilder:
+    """FIXED: Enhanced CP-SAT model builder with Day data class support"""
+
+    def __init__(self, problem: ExamSchedulingProblem):
         self.problem = problem
         self.model = cp_model.CpModel()
-        self._build_stats = {}
+        self.shared_variables: Optional[SharedVariables] = None
+        self.build_start_time = 0.0
+        self.build_duration = 0.0
 
         logger.info(
-            f"🏗️ Initialized CPSATModelBuilder for problem: {getattr(problem, 'id', 'unknown')}"
+            f"🏗️ Initialized Day-aware CPSATModelBuilder for problem: {problem.id}"
         )
 
-    def configure_standard(self):
-        """Configure for standard operation (recommended)."""
-        logger.info("⚙️ Configuring STANDARD setup...")
-        try:
-            if hasattr(self.problem, "constraint_registry"):
-                self.problem.constraint_registry.configure_standard()
-                active = self.problem.constraint_registry.get_active_constraints()
-                logger.info(
-                    f"✅ STANDARD configuration complete. Active: {sorted(active)}"
-                )
-            else:
-                logger.warning(
-                    "⚠️ Problem has no constraint_registry - creating default configuration"
-                )
-                self._create_default_registry()
-        except Exception as e:
-            logger.error(f"❌ Failed to configure STANDARD setup: {e}")
-            raise
-        return self
+    def configure(self, configuration: str) -> None:
+        """Configure the model builder with specific constraint sets"""
+        logger.info(f"🔧 Configuring model builder with: {configuration}")
 
-    def configure_with_student_conflicts(self):
-        """Configure with student conflict prevention."""
-        logger.info("⚙️ Configuring STUDENT_CONFLICTS setup...")
-        try:
-            if hasattr(self.problem, "constraint_registry"):
-                self.problem.constraint_registry.configure_with_student_conflicts()
-                active = self.problem.constraint_registry.get_active_constraints()
-                logger.info(
-                    f"✅ STUDENT_CONFLICTS configuration complete. Active: {sorted(active)}"
-                )
-            else:
-                logger.warning(
-                    "⚠️ Problem has no constraint_registry - creating default configuration"
-                )
-                self._create_default_registry()
-                self.problem.constraint_registry.configure_with_student_conflicts()
-        except Exception as e:
-            logger.error(f"❌ Failed to configure STUDENT_CONFLICTS setup: {e}")
-            raise
-        return self
+        if configuration == "COMPLETE":
+            self.problem.constraint_registry.configure_complete()
+        elif configuration == "MINIMAL":
+            self.problem.constraint_registry.configure_minimal()
+        elif configuration == "BASIC":
+            self.problem.constraint_registry.configure_basic()
+        elif configuration == "WITH_RESOURCES":
+            self.problem.constraint_registry.configure_with_resources()
+        else:
+            logger.warning(f"⚠️ Unknown configuration: {configuration}")
 
-    def configure_complete(self):
-        """Configure complete system with all features."""
-        logger.info("⚙️ Configuring COMPLETE setup...")
-        try:
-            if hasattr(self.problem, "constraint_registry"):
-                self.problem.constraint_registry.configure_complete()
-                active = self.problem.constraint_registry.get_active_constraints()
-                logger.info(
-                    f"✅ COMPLETE configuration complete. Active: {sorted(active)}"
-                )
-            else:
-                logger.warning(
-                    "⚠️ Problem has no constraint_registry - creating default configuration"
-                )
-                self._create_default_registry()
-                self.problem.constraint_registry.configure_complete()
-        except Exception as e:
-            logger.error(f"❌ Failed to configure COMPLETE setup: {e}")
-            raise
-        return self
-
-    def _create_default_registry(self):
-        """Create default constraint registry if missing."""
-        try:
-            from scheduling_engine.core.constraint_registry import ConstraintRegistry
-
-            self.problem.constraint_registry = ConstraintRegistry()
-            logger.info("✅ Created default constraint registry")
-        except ImportError as e:
-            logger.error(f"❌ Cannot create constraint registry: {e}")
-            raise
-
-    def build(self):
-        """
-        Build CP-SAT model with comprehensive error handling and validation.
-        """
-        logger.info("🚀 Starting ENHANCED CP-SAT model build process...")
+    def build(self) -> Tuple[cp_model.CpModel, SharedVariables]:
+        """FIXED: Enhanced build process with Day data class support"""
+        self.build_start_time = time.time()
 
         try:
-            # Validate problem data
-            self._validate_problem_data()
+            logger.info("🚀 Starting Day-aware CP-SAT model build process...")
 
-            # Validate constraint configuration
-            validation = self.validate_configuration()
-            if not validation["valid"]:
-                raise RuntimeError(
-                    f"Configuration validation failed: {validation['errors']}"
-                )
+            # STEP 1: Comprehensive pre-build validation
+            logger.info("🔍 Performing comprehensive pre-build validation...")
+            self._validate_problem_data_enhanced()
+            logger.info("✅ Pre-build validation complete")
 
-            # Log warnings if any
-            for warning in validation.get("warnings", []):
-                logger.warning(f"⚠️ Configuration warning: {warning}")
-
-            # Create optimized shared variables
-            logger.info("🔧 Creating optimized variables with enhanced validation...")
+            # STEP 2: Create optimized variables with UUID keys
+            logger.info("🔧 Creating optimized variables with UUID keys...")
             shared_variables = self._create_shared_variables()
+            logger.info("✅ Variable creation completed successfully")
 
-            # Create and configure constraint manager
-            logger.info("🔧 Creating and configuring constraint manager...")
-            constraint_manager = self._create_constraint_manager()
+            # STEP 3: Register and apply constraints
+            logger.info("🔗 Registering and applying constraints...")
+            self._register_constraints(shared_variables)
+            logger.info("✅ Constraint registration completed")
 
-            # Build constraints
-            logger.info("🏗️ Building constraints using shared variables...")
-            build_stats = self._build_constraints(constraint_manager, shared_variables)
+            # STEP 4: Final model validation
+            logger.info("🔍 Performing final model validation...")
+            self._validate_final_model()
+            logger.info("✅ Final model validation completed")
 
-            # Store build statistics
-            self._build_stats = build_stats
+            self.build_duration = time.time() - self.build_start_time
 
-            # Log successful build
-            self._log_build_success(build_stats)
+            logger.info(
+                f"✅ Day-aware model build SUCCESS after {self.build_duration:.2f}s"
+            )
 
+            self.shared_variables = shared_variables
             return self.model, shared_variables
 
         except Exception as e:
-            logger.error(f"❌ Model build FAILED: {e}")
-            logger.error(f"🐛 Traceback:\n{traceback.format_exc()}")
-            raise
-
-    def _validate_problem_data(self):
-        """Comprehensive problem data validation."""
-        logger.info("🔍 Validating problem data...")
-
-        required_attributes = ["exams", "time_slots", "rooms", "days"]
-        missing_attrs = []
-
-        for attr in required_attributes:
-            if not hasattr(self.problem, attr):
-                missing_attrs.append(attr)
-            elif not getattr(self.problem, attr):
-                missing_attrs.append(f"{attr} (empty)")
-
-        if missing_attrs:
-            raise ValueError(f"Problem missing essential data: {missing_attrs}")
-
-        # Log data sizes
-        logger.info(f"📊 Problem size validation:")
-        logger.info(f"  • Exams: {len(self.problem.exams)}")
-        logger.info(f"  • Time slots: {len(self.problem.time_slots)}")
-        logger.info(f"  • Rooms: {len(self.problem.rooms)}")
-        logger.info(f"  • Days: {len(self.problem.days)}")
-
-        # Validate minimum requirements
-        if len(self.problem.exams) == 0:
-            raise ValueError("No exams to schedule")
-        if len(self.problem.time_slots) == 0:
-            raise ValueError("No time slots available")
-        if len(self.problem.rooms) == 0:
-            raise ValueError("No rooms available")
-
-        logger.info("✅ Problem data validation passed")
-
-    def _create_shared_variables(self):
-        """Create shared variables with enhanced error handling."""
-        try:
-            from scheduling_engine.cp_sat.constraint_encoder import ConstraintEncoder
-
-            encoder = ConstraintEncoder(self.problem, self.model)
-            shared_variables = encoder.encode()
-
-            logger.info(f"✅ Shared variables created successfully:")
-            logger.info(f"  • x_vars: {len(shared_variables.x_vars)}")
-            logger.info(f"  • z_vars: {len(shared_variables.z_vars)}")
-            logger.info(f"  • y_vars: {len(shared_variables.y_vars)}")
-            logger.info(f"  • u_vars: {len(shared_variables.u_vars)}")
-
-            return shared_variables
-
-        except Exception as e:
-            logger.error(f"❌ Failed to create shared variables: {e}")
-            raise
-
-    def _create_constraint_manager(self):
-        """Create and configure constraint manager."""
-        try:
-            from scheduling_engine.constraints.constraint_manager import (
-                CPSATConstraintManager,
+            self.build_duration = time.time() - self.build_start_time
+            error_msg = (
+                f"Day-aware model building failed - cannot proceed with encoding"
             )
 
-            constraint_manager = CPSATConstraintManager()
+            logger.error(
+                f"❌ Day-aware model build FAILED after {self.build_duration:.2f}s: {error_msg}"
+            )
+            logger.error("🐛 Traceback:")
+            logger.error(traceback.format_exc())
 
-            # Get active constraint classes from registry
-            active_constraint_info = self._get_active_constraint_classes()
+            # Re-raise with more descriptive error for test framework
+            raise RuntimeError(f"Day-aware model building failed: {str(e)}") from e
 
-            if not active_constraint_info:
-                raise RuntimeError("No constraint classes loaded from registry")
+    def _validate_problem_data_enhanced(self) -> None:
+        """FIXED: Enhanced problem data validation with Day consistency checks"""
+        logger.info("🔍 Validating problem data with Day consistency checks...")
 
-            # Register constraint classes with manager
-            self._register_constraints_with_manager(
-                constraint_manager, active_constraint_info
+        # Use the global validation function
+        validate_problem_data_enhanced(self.problem)
+
+        # Basic entity validation
+        logger.info("📊 Problem size analysis:")
+        logger.info(f" • Exams: {len(self.problem.exams)}")
+        logger.info(f" • Time slots: {len(self.problem.timeslots)}")
+        logger.info(f" • Rooms: {len(self.problem.rooms)}")
+        logger.info(f" • Days: {len(self.problem.days)}")
+
+        # Validate basic entities exist
+        if not self.problem.exams:
+            raise ValueError("No exams defined - cannot build model")
+
+        if not self.problem.timeslots:
+            raise ValueError("No time slots defined - cannot build model")
+
+        if not self.problem.rooms:
+            raise ValueError("No rooms defined - cannot build model")
+
+        if not self.problem.days:
+            raise ValueError("No days defined - cannot build model")
+
+        # UUID consistency validation
+        self._validate_uuid_consistency()
+
+        # Student data validation with UUID consistency
+        student_registrations = 0
+        student_courses = getattr(self.problem, "_student_courses", {})
+        if student_courses:
+            student_registrations = sum(
+                len(courses) for courses in student_courses.values()
             )
 
-            # Enable categories
-            self._enable_constraint_categories(
-                constraint_manager, active_constraint_info
+        if student_registrations > 0:
+            logger.info(
+                f"✅ Student data validation passed: {student_registrations} registrations found"
+            )
+        else:
+            logger.warning(
+                "⚠️ Configuration warning: No student course data - student conflict constraints will be skipped"
             )
 
-            return constraint_manager
+        # Validate student-exam mappings
+        student_mappings = 0
+        for exam in self.problem.exams.values():
+            students = getattr(exam, "students", [])
+            student_mappings += len(students)
 
-        except Exception as e:
-            logger.error(f"❌ Failed to create constraint manager: {e}")
-            raise
+        if student_mappings == 0:
+            logger.warning(
+                "⚠️ No student-exam mappings found - limited conflicts possible!"
+            )
+        else:
+            logger.info(f"✅ Student-exam mappings validated: {student_mappings} total")
 
-    def _get_active_constraint_classes(self):
-        """Get active constraint classes from registry."""
-        try:
-            if not hasattr(self.problem, "constraint_registry"):
-                raise RuntimeError("Problem has no constraint registry")
+    def _perform_capacity_feasibility_check(self) -> None:
+        """CRITICAL: Check basic capacity feasibility before constraint creation"""
+        logger.info("🔍 Performing capacity feasibility check...")
 
-            active_constraint_info = (
+        total_exam_enrollment = sum(
+            getattr(exam, "expected_students", 0)
+            for exam in self.problem.exams.values()
+        )
+
+        total_room_capacity = 0
+        for room in self.problem.rooms.values():
+            total_room_capacity += getattr(
+                room, "exam_capacity", getattr(room, "capacity", 0)
+            )
+
+        total_timeslots = len(self.problem.timeslots)
+
+        # Calculate required vs available seat-time
+        required_seat_time = total_exam_enrollment * 3  # Assume 3-hour exams
+        available_seat_time = total_room_capacity * total_timeslots
+
+        utilization = (
+            required_seat_time / available_seat_time
+            if available_seat_time > 0
+            else float("inf")
+        )
+
+        logger.info(f"📊 Capacity Analysis:")
+        logger.info(f"  • Required seat-time: {required_seat_time}")
+        logger.info(f"  • Available seat-time: {available_seat_time}")
+        logger.info(f"  • Utilization: {utilization:.2%}")
+
+        if utilization > 0.8:
+            logger.warning(
+                f"⚠️  High utilization ({utilization:.2%}) - may cause infeasibility"
+            )
+
+        if utilization > 1.0:
+            raise RuntimeError(
+                f"INFEASIBLE: Required seat-time exceeds capacity by {(utilization-1)*100:.1f}%"
+            )
+
+    def _validate_uuid_consistency(self) -> None:
+        """Validate UUID consistency across all problem entities"""
+        logger.info("🔍 Validating UUID consistency...")
+
+        # Pre-store entity collections for faster access
+        exams = self.problem.exams
+        rooms = self.problem.rooms
+        timeslots = self.problem.timeslots
+        days = self.problem.days
+
+        # Check exam UUIDs
+        invalid_exam_ids = []
+        for exam_id, exam in exams.items():
+            if not isinstance(exam_id, UUID):
+                invalid_exam_ids.append(exam_id)
+            if not isinstance(getattr(exam, "id", None), UUID):
+                invalid_exam_ids.append(f"exam.id: {exam.id}")
+            if not isinstance(getattr(exam, "course_id", None), UUID):
+                invalid_exam_ids.append(f"exam.course_id: {exam.course_id}")
+
+        if invalid_exam_ids:
+            raise ValueError(f"Non-UUID exam identifiers found: {invalid_exam_ids[:3]}")
+
+        # Check room UUIDs
+        invalid_room_ids = []
+        for room_id, room in rooms.items():
+            if not isinstance(room_id, UUID):
+                invalid_room_ids.append(room_id)
+            if not isinstance(getattr(room, "id", None), UUID):
+                invalid_room_ids.append(f"room.id: {room.id}")
+
+        if invalid_room_ids:
+            raise ValueError(f"Non-UUID room identifiers found: {invalid_room_ids[:3]}")
+
+        # Check time slot UUIDs via property
+        invalid_slot_ids = []
+        for slot_id, slot in timeslots.items():
+            if not isinstance(slot_id, UUID):
+                invalid_slot_ids.append(slot_id)
+            if not isinstance(getattr(slot, "id", None), UUID):
+                invalid_slot_ids.append(f"slot.id: {slot.id}")
+
+        if invalid_slot_ids:
+            raise ValueError(f"Non-UUID slot identifiers found: {invalid_slot_ids[:3]}")
+
+        # Check day UUIDs
+        invalid_day_ids = []
+        for day_id, day in days.items():
+            if not isinstance(day_id, UUID):
+                invalid_day_ids.append(day_id)
+            if not isinstance(getattr(day, "id", None), UUID):
+                invalid_day_ids.append(f"day.id: {day.id}")
+
+        if invalid_day_ids:
+            raise ValueError(f"Non-UUID day identifiers found: {invalid_day_ids[:3]}")
+
+        # Check student course registrations
+        student_courses = getattr(self.problem, "_student_courses", {})
+        if student_courses:
+            invalid_student_data = []
+            for student_id, course_ids in student_courses.items():
+                if not isinstance(student_id, UUID):
+                    invalid_student_data.append(f"student_id: {student_id}")
+                for course_id in course_ids:
+                    if not isinstance(course_id, UUID):
+                        invalid_student_data.append(f"course_id: {course_id}")
+
+            if invalid_student_data:
+                raise ValueError(
+                    f"Non-UUID student/course identifiers found: {invalid_student_data[:3]}"
+                )
+
+        logger.info("✅ UUID consistency validation passed")
+
+    def _create_shared_variables(self) -> SharedVariables:
+        """Create shared variables using Day-aware constraint encoder"""
+        logger.info("🔧 Creating shared variables with Day-aware encoder...")
+
+        encoder = ConstraintEncoder(self.problem, self.model)
+        shared_variables = encoder.encode()
+
+        # Log variable creation statistics
+        variable_stats = {
+            "x_vars": len(shared_variables.x_vars),
+            "z_vars": len(shared_variables.z_vars),
+            "y_vars": len(shared_variables.y_vars),
+            "u_vars": len(shared_variables.u_vars),
+        }
+
+        total_vars = sum(variable_stats.values())
+
+        logger.info(f"📊 Day-aware variable creation statistics:")
+        for var_type, count in variable_stats.items():
+            logger.info(f" • {var_type}: {count}")
+        logger.info(f" • Total variables: {total_vars}")
+
+        # Validate variable key consistency
+        self._validate_variable_keys(shared_variables)
+
+        return shared_variables
+
+    def _validate_variable_keys(self, shared_variables: SharedVariables) -> None:
+        """Validate that all variable keys are proper UUIDs"""
+        logger.info("🔍 Validating variable key consistency...")
+
+        # Sample x variables (exam_id, slot_id)
+        x_vars_keys = list(shared_variables.x_vars.keys())
+        for i in range(min(3, len(x_vars_keys))):
+            key = x_vars_keys[i]
+            if not isinstance(key, tuple) or len(key) != 2:
+                raise ValueError(f"Invalid x variable key format: {key}")
+
+            exam_id, slot_id = key
+            if not isinstance(exam_id, UUID) or not isinstance(slot_id, UUID):
+                raise ValueError(
+                    f"Non-UUID keys in x variables: {type(exam_id)}, {type(slot_id)}"
+                )
+
+        # Sample y variables (exam_id, room_id, slot_id)
+        y_vars_keys = list(shared_variables.y_vars.keys())
+        for i in range(min(3, len(y_vars_keys))):
+            key = y_vars_keys[i]
+            if not isinstance(key, tuple) or len(key) != 3:
+                raise ValueError(f"Invalid y variable key format: {key}")
+
+            exam_id, room_id, slot_id = key
+            if not all(isinstance(k, UUID) for k in [exam_id, room_id, slot_id]):
+                raise ValueError(
+                    f"Non-UUID keys in y variables: {[type(k) for k in key]}"
+                )
+
+        # Check conflict pairs in precomputed data
+        conflict_pairs = shared_variables.precomputed_data.get("conflict_pairs", set())
+        conflict_pairs_list = list(conflict_pairs)
+        for i in range(min(3, len(conflict_pairs_list))):
+            pair = conflict_pairs_list[i]
+            if not isinstance(pair, tuple) or len(pair) != 2:
+                raise ValueError(f"Invalid conflict pair format: {pair}")
+
+            exam1, exam2 = pair
+            if not isinstance(exam1, UUID) or not isinstance(exam2, UUID):
+                raise ValueError(
+                    f"Non-UUID conflict pair: {type(exam1)}, {type(exam2)}"
+                )
+
+        logger.info("✅ Variable key consistency validation passed")
+
+    def _register_constraints(self, shared_variables: SharedVariables) -> None:
+        """FIXED: Enforce category filtering and prevent all constraints from loading"""
+        logger.info("🔗 Registering constraints with ENFORCED category filtering...")
+
+        # CRITICAL FIX: Get ONLY requested categories from constraint registry
+        active_constraints = (
+            self.problem.constraint_registry.get_active_constraint_classes()
+        )
+        constraint_stats = {"total": 0, "successful": 0, "failed": 0}
+
+        # CRITICAL: Log what categories were actually requested vs activated
+        requested_categories = set()
+        for info in active_constraints.values():
+            requested_categories.add(info.get("category", "UNKNOWN"))
+
+        logger.info(
+            f"ENFORCED category filter - Requested: {list(requested_categories)}"
+        )
+        logger.info(f"ENFORCED constraint count: {len(active_constraints)}")
+
+        # CRITICAL: Validate category filtering worked
+        if len(active_constraints) == 0:
+            logger.error("❌ No constraints loaded after filtering!")
+            # Only fallback if truly no constraints were loaded
+            logger.info("Attempting CORE-only fallback...")
+            self.problem.constraint_registry.active_constraints.clear()
+            self.problem.constraint_registry._activate_category("CORE")
+            active_constraints = (
                 self.problem.constraint_registry.get_active_constraint_classes()
             )
 
-            if not active_constraint_info:
-                raise RuntimeError("No active constraints found in registry")
+        if not active_constraints:
+            logger.error("❌ No constraints to apply after category filtering!")
+            return
 
-            logger.info(f"📦 Loaded {len(active_constraint_info)} constraint classes:")
-            for constraint_id, info in active_constraint_info.items():
-                logger.info(f"  ✓ {constraint_id} (category: {info['category']})")
-
-            return active_constraint_info
-
-        except Exception as e:
-            logger.error(f"❌ Failed to get active constraint classes: {e}")
-            raise
-
-    def _register_constraints_with_manager(
-        self, constraint_manager, active_constraint_info
-    ):
-        """Register constraint classes with the manager."""
-        logger.info("📝 Registering constraint classes with manager...")
-
-        registration_success = 0
-        registration_failed = 0
-
-        for constraint_id, info in active_constraint_info.items():
+        # Apply only the filtered constraints
+        constraint_ids = list(active_constraints.keys())
+        for constraint_id in constraint_ids:
+            constraint_info = active_constraints[constraint_id]
             try:
-                constraint_class = info["class"]
-                category = info["category"]
-                constraint_manager.register_module(constraint_class, category)
-                registration_success += 1
-                logger.debug(f"  ✓ Registered {constraint_id} in category {category}")
+                logger.info(f"🔧 Applying constraint: {constraint_id}")
+                constraint_class = constraint_info["class"]
+                category = constraint_info.get("category", "UNKNOWN")
+
+                # Create and apply constraint with Day-aware shared variables
+                constraint_instance = constraint_class(
+                    constraint_id=constraint_id,
+                    problem=self.problem,
+                    shared_vars=shared_variables,
+                    model=self.model,
+                    factory=None,  # Use constraint encoder's factory if needed
+                )
+
+                # Initialize variables first if needed
+                if hasattr(constraint_instance, "initialize_variables"):
+                    constraint_instance.initialize_variables()
+
+                # Apply the constraint
+                constraint_instance.add_constraints()
+                constraint_stats["successful"] += 1
+
+                constraint_count = getattr(
+                    constraint_instance, "constraint_count", "unknown"
+                )
+                logger.debug(
+                    f"✅ Successfully applied {constraint_id} "
+                    f"({constraint_count} constraints, category: {category})"
+                )
+
             except Exception as e:
-                logger.error(f"  ❌ Failed to register {constraint_id}: {e}")
-                registration_failed += 1
+                constraint_stats["failed"] += 1
+                logger.error(f"❌ Failed to apply constraint {constraint_id}: {e}")
 
-        logger.info(
-            f"📝 Registration complete: {registration_success} success, {registration_failed} failed"
-        )
+                # Get full traceback for debugging
+                logger.error(f"Full traceback: {traceback.format_exc()}")
 
-        if registration_failed > 0:
-            raise RuntimeError(
-                f"Failed to register {registration_failed} constraint classes"
-            )
+                # Decide whether to continue or fail based on constraint criticality
+                is_critical = getattr(constraint_instance, "is_critical", False)  # type: ignore
 
-    def _enable_constraint_categories(self, constraint_manager, active_constraint_info):
-        """Enable constraint categories in the manager."""
-        active_categories = set(
-            info["category"] for info in active_constraint_info.values()
-        )
-
-        logger.info(
-            f"🔧 Enabling {len(active_categories)} constraint categories: {sorted(active_categories)}"
-        )
-
-        for category in active_categories:
-            try:
-                constraint_manager.enable_module_category(category)
-                logger.debug(f"  ✓ Enabled category: {category}")
-            except Exception as e:
-                logger.error(f"  ❌ Failed to enable category {category}: {e}")
-                raise
-
-    def _build_constraints(self, constraint_manager, shared_variables):
-        """Build constraints using the manager."""
-        try:
-            build_stats = constraint_manager.build_model(
-                self.model, self.problem, shared_variables
-            )
-
-            if not build_stats["build_successful"]:
-                error_msg = build_stats.get("error", "Unknown error")
-                raise RuntimeError(f"Constraint build failed: {error_msg}")
-
-            return build_stats
-
-        except Exception as e:
-            logger.error(f"❌ Failed to build constraints: {e}")
-            raise
-
-    def _log_build_success(self, build_stats):
-        """Log successful build statistics."""
-        logger.info(f"🎉 Model build SUCCESS!")
-        logger.info(f"📊 Build statistics:")
-        logger.info(f"  • Total modules: {build_stats['total_modules']}")
-        logger.info(f"  • Total constraints: {build_stats['total_constraints']}")
-        logger.info(f"  • Dependency order: {build_stats['dependency_order']}")
-
-        # Log module-specific statistics
-        module_stats = build_stats.get("module_statistics", {})
-        if module_stats:
-            logger.info("📋 Per-module constraint breakdown:")
-            for module_id, stats in module_stats.items():
-                constraint_count = stats.get("constraint_count", 0)
-                category = stats.get("category", "UNKNOWN")
-                logger.info(
-                    f"  • {module_id} ({category}): {constraint_count} constraints"
-                )
-
-        # Log optimizations applied
-        optimizations = build_stats.get("optimizations_applied", [])
-        if optimizations:
-            logger.info("🚀 Applied optimizations:")
-            for opt in optimizations:
-                logger.info(f"  • {opt}")
-
-    def validate_configuration(self) -> Dict[str, Any]:
-        """Validate current configuration with enhanced reporting."""
-        validation = {
-            "valid": True,
-            "warnings": [],
-            "errors": [],
-            "recommendations": [],
-        }
-
-        try:
-            # Check if constraint registry exists
-            if not hasattr(self.problem, "constraint_registry"):
-                validation["errors"].append("Problem has no constraint registry")
-                validation["valid"] = False
-                return validation
-
-            # Check if any constraints are active
-            active_constraints = (
-                self.problem.constraint_registry.get_active_constraints()
-            )
-            if not active_constraints:
-                validation["errors"].append(
-                    "No constraints activated - model will be incomplete"
-                )
-                validation["valid"] = False
-
-            # Check for essential CORE constraints
-            core_constraints = [
-                "StartUniquenessConstraint",
-                "OccupancyDefinitionConstraint",
-                "RoomAssignmentBasicConstraint",
-            ]
-
-            active_core = [c for c in core_constraints if c in active_constraints]
-            if len(active_core) < len(core_constraints):
-                missing = set(core_constraints) - set(active_core)
-                validation["errors"].append(
-                    f"Missing essential CORE constraints: {missing}"
-                )
-                validation["valid"] = False
-
-            # Check for constraint class availability
-            try:
-                active_classes = (
-                    self.problem.constraint_registry.get_active_constraint_classes()
-                )
-                if len(active_classes) < len(active_constraints):
-                    validation["warnings"].append(
-                        f"Some constraint classes could not be loaded: "
-                        f"{len(active_classes)}/{len(active_constraints)} loaded"
+                if is_critical:
+                    raise RuntimeError(
+                        f"Critical constraint {constraint_id} failed: {e}"
+                    ) from e
+                else:
+                    logger.warning(
+                        f"Non-critical constraint {constraint_id} failed, continuing..."
                     )
-            except Exception as e:
-                validation["errors"].append(f"Failed to load constraint classes: {e}")
-                validation["valid"] = False
+
+            constraint_stats["total"] += 1
+
+        # Log constraint application summary
+        logger.info("🔗 Constraint application summary:")
+        logger.info(f"  • Total constraints processed: {constraint_stats['total']}")
+        logger.info(f"  • Successfully applied: {constraint_stats['successful']}")
+        logger.info(f"  • Failed: {constraint_stats['failed']}")
+
+        if constraint_stats["successful"] == 0:
+            logger.error("❌ No constraints were successfully applied!")
+            raise RuntimeError("No constraints were successfully applied!")
+        else:
+            logger.info(
+                f"✅ Successfully applied {constraint_stats['successful']} constraints"
+            )
+
+        logger.info("✅ Constraint registration completed")
+
+    def _validate_variable_domains(self, shared_variables: SharedVariables):
+        """Validate that all exams have feasible assignments"""
+        for exam_id in self.problem.exams:
+            # Check start slots
+            start_vars = [
+                v for k, v in shared_variables.x_vars.items() if k[0] == exam_id
+            ]
+            if not start_vars:
+                raise ValueError(f"Exam {exam_id} has no start variables!")
+
+            # Check room assignments
+            room_vars = [
+                v for k, v in shared_variables.y_vars.items() if k[0] == exam_id
+            ]
+            if not room_vars:
+                raise ValueError(f"Exam {exam_id} has no room assignment variables!")
+
+    def _validate_final_model(self) -> None:
+        """Validate the final CP-SAT model"""
+        logger.info("🔍 Performing final Day-aware model validation...")
+
+        # Basic model validation
+        if not hasattr(self.model, "Proto"):
+            raise RuntimeError("Invalid CP-SAT model - missing Proto method")
+
+        # Get model statistics
+        try:
+            proto = self.model.Proto()
+            num_variables = len(proto.variables)
+            num_constraints = len(proto.constraints)
+
+            logger.info(f"📊 Final model statistics:")
+            logger.info(f" • Variables: {num_variables}")
+            logger.info(f" • Constraints: {num_constraints}")
+
+            if num_variables == 0:
+                raise RuntimeError("Model has no variables!")
+
+            if num_constraints == 0:
+                logger.warning(
+                    "⚠️ Model has no constraints - this may be intentional for testing"
+                )
 
         except Exception as e:
-            validation["errors"].append(f"Configuration validation failed: {e}")
-            validation["valid"] = False
+            logger.warning(f"⚠️ Could not extract model statistics: {e}")
 
-        return validation
+        # Validate shared variables consistency
+        if self.shared_variables:
+            total_shared_vars = (
+                len(self.shared_variables.x_vars)
+                + len(self.shared_variables.z_vars)
+                + len(self.shared_variables.y_vars)
+                + len(self.shared_variables.u_vars)
+            )
+
+            logger.info(f" • Shared variables: {total_shared_vars}")
+
+            if total_shared_vars == 0:
+                raise RuntimeError("No shared variables created!")
+
+        logger.info("✅ Final Day-aware model validation passed")
 
     def get_build_statistics(self) -> Dict[str, Any]:
-        """Get comprehensive build statistics."""
-        try:
-            registry_summary = (
-                self.problem.constraint_registry.get_configuration_summary()
-                if hasattr(self.problem, "constraint_registry")
-                else {}
-            )
-            validation = self.validate_configuration()
+        """Get comprehensive build statistics"""
+        stats = {
+            "build_duration": self.build_duration,
+            "model_valid": self.model is not None,
+            "shared_variables_created": self.shared_variables is not None,
+            "problem_entities": {
+                "exams": len(self.problem.exams),
+                "time_slots": len(self.problem.timeslots),
+                "rooms": len(self.problem.rooms),
+                "days": len(self.problem.days),
+                "students": len(getattr(self.problem, "students", {})),
+            },
+            "active_constraints": len(
+                self.problem.constraint_registry.get_active_constraints()
+            ),
+        }
 
-            return {
-                "builder_type": "CPSATModelBuilder",
-                "constraint_registry": registry_summary,
-                "validation": validation,
-                "build_stats": self._build_stats,
-                "features": {
-                    "optimized_variables": True,
-                    "c6_domain_restriction": True,
-                    "shared_precomputed_data": True,
-                    "enhanced_error_handling": True,
-                    "comprehensive_logging": True,
-                    "mathematical_compliance": True,
-                },
+        if self.shared_variables:
+            stats["variable_counts"] = {
+                "x_vars": len(self.shared_variables.x_vars),
+                "z_vars": len(self.shared_variables.z_vars),
+                "y_vars": len(self.shared_variables.y_vars),
+                "u_vars": len(self.shared_variables.u_vars),
             }
-        except Exception as e:
-            logger.error(f"❌ Failed to get build statistics: {e}")
-            return {"error": str(e)}
 
+            stats["total_variables"] = sum(stats["variable_counts"].values())
 
-def create_optimized_model_builder(
-    problem, configuration: str = "standard"
-) -> CPSATModelBuilder:
-    """
-    Factory function to create configured model builder with enhanced validation.
-    """
-    logger.info(
-        f"🏭 Creating optimized model builder with '{configuration}' configuration..."
-    )
-
-    try:
-        builder = CPSATModelBuilder(problem)
-
-        # Configure based on requested configuration
-        if configuration == "minimal":
-            if hasattr(problem, "constraint_registry"):
-                problem.constraint_registry.configure_minimal()
-            else:
-                logger.warning("Problem has no constraint registry - using defaults")
-        elif configuration == "standard":
-            builder.configure_standard()
-        elif configuration == "with_conflicts":
-            builder.configure_with_student_conflicts()
-        elif configuration == "complete":
-            builder.configure_complete()
-        else:
-            raise ValueError(
-                f"Unknown configuration: {configuration}. "
-                f"Valid: minimal, standard, with_conflicts, complete"
-            )
-
-        # Validate configuration
-        validation = builder.validate_configuration()
-        if not validation["valid"]:
-            logger.error(f"❌ Configuration validation FAILED: {validation['errors']}")
-            raise RuntimeError(
-                f"Configuration validation failed: {validation['errors']}"
-            )
-
-        # Log warnings
-        for warning in validation.get("warnings", []):
-            logger.warning(f"⚠️ Configuration warning: {warning}")
-
-        logger.info(
-            f"✅ Created optimized model builder with '{configuration}' configuration"
-        )
-        return builder
-
-    except Exception as e:
-        logger.error(f"❌ Failed to create model builder: {e}")
-        raise
+        return stats

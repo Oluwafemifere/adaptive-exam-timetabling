@@ -22,10 +22,12 @@ class ConstraintType(Enum):
 
 
 class ConstraintCategory(Enum):
+    CORE = "core"
     STUDENT_CONSTRAINTS = "student_constraints"
     RESOURCE_CONSTRAINTS = "resource_constraints"
-    TEMPORAL_CONSTRAINTS = "temporal_constraints"
     INVIGILATOR_CONSTRAINTS = "invigilator_constraints"
+    TEMPORAL_CONSTRAINTS = "temporal_constraints"
+
     ACADEMIC_POLICIES = "academic_policies"
     OPTIMIZATION_CONSTRAINTS = "optimization_constraints"
     CONVENIENCE_CONSTRAINTS = "convenience_constraints"
