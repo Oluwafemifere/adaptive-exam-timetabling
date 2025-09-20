@@ -1,10 +1,14 @@
 # scheduling_engine/gui/timetable_gui_viewer.py
 
 """
-Comprehensive Timetable GUI Viewer
+Comprehensive Timetable GUI Viewer - UPDATED with Individual Schedules
 
 A professional GUI application for visualizing exam timetable solutions with:
 - Main calendar/grid view of the timetable
+- Individual student schedule views
+- Individual room schedule views
+- Individual invigilator schedule views
+- Enhanced filtering capabilities
 - Color-coded courses and exams
 - Detailed information panels
 - Multiple tabs for different views
@@ -13,12 +17,13 @@ A professional GUI application for visualizing exam timetable solutions with:
 
 Key Features:
 - Calendar-style timetable display
+- Individual schedule views with filtering
 - Color coding for different departments/courses
 - Interactive exam details
 - Student conflict detection
 - Room utilization visualization
 - Invigilator assignment tracking
-- Search and filter capabilities
+- Advanced search and filter capabilities
 """
 
 import tkinter as tk
@@ -62,18 +67,21 @@ class TimetableGUIViewer:
         self.processed_data = None
         self.conflicts = []
 
+        # Current view filters
+        self.current_view_type = "overview"  # overview, student, room, invigilator
+        self.current_filter_id = None
+
         # Initialize GUI
         self.root = None
         self.setup_gui()
-
         logger.info("🖥️ TimetableGUIViewer initialized")
 
     def setup_gui(self):
         """Initialize the main GUI window and components."""
         self.root = tk.Tk()
         self.root.title("Exam Timetable Viewer - Professional Solution Visualization")
-        self.root.geometry("1400x900")
-        self.root.minsize(1200, 800)
+        self.root.geometry("1600x1000")  # Increased size for better individual views
+        self.root.minsize(1400, 900)
 
         # Configure style
         self.setup_styles()
@@ -110,8 +118,8 @@ class TimetableGUIViewer:
         # Main container
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky="nsew")
-
         assert self.root
+
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -128,6 +136,7 @@ class TimetableGUIViewer:
 
         # Create tabs
         self.create_calendar_tab()
+        self.create_individual_schedules_tab()  # NEW: Individual schedules tab
         self.create_details_tab()
         self.create_conflicts_tab()
         self.create_statistics_tab()
@@ -194,6 +203,688 @@ class TimetableGUIViewer:
                 col = 0
                 row += 1
 
+    def create_individual_schedules_tab(self):
+        """Create the individual schedules tab with filtering."""
+        schedules_frame = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(schedules_frame, text="👤 Individual Schedules")
+
+        # Configure main grid
+        schedules_frame.columnconfigure(0, weight=1)
+        schedules_frame.rowconfigure(1, weight=1)
+
+        # Create filtering controls
+        self.create_schedule_filters(schedules_frame)
+
+        # Create paned window for list and schedule display
+        paned_window = ttk.PanedWindow(schedules_frame, orient=tk.HORIZONTAL)
+        paned_window.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+
+        # Left panel - Entity selection
+        self.create_entity_selection_panel(paned_window)
+
+        # Right panel - Individual schedule grid
+        self.create_individual_schedule_panel(paned_window)
+
+    def create_schedule_filters(self, parent):
+        """Create filtering controls for individual schedules."""
+        filter_frame = ttk.LabelFrame(
+            parent, text="Schedule View Filters", padding="10"
+        )
+        filter_frame.grid(row=0, column=0, sticky="we", pady=(0, 10))
+
+        # View type selection
+        ttk.Label(filter_frame, text="View Type:").grid(
+            row=0, column=0, sticky="w", padx=(0, 10)
+        )
+
+        self.view_type_var = tk.StringVar(value="student")
+        view_types = [
+            ("Student Schedules", "student"),
+            ("Room Schedules", "room"),
+            ("Invigilator Schedules", "invigilator"),
+        ]
+
+        for i, (text, value) in enumerate(view_types):
+            ttk.Radiobutton(
+                filter_frame,
+                text=text,
+                variable=self.view_type_var,
+                value=value,
+                command=self.on_view_type_change,
+            ).grid(row=0, column=i + 1, sticky="w", padx=(0, 15))
+
+        # Search/filter box
+        ttk.Label(filter_frame, text="Search:").grid(
+            row=0, column=5, sticky="w", padx=(20, 5)
+        )
+        self.individual_search_var = tk.StringVar()
+        self.individual_search_var.trace("w", self.filter_entity_list)
+
+        search_entry = ttk.Entry(
+            filter_frame, textvariable=self.individual_search_var, width=20
+        )
+        search_entry.grid(row=0, column=6, sticky="w", padx=(0, 10))
+
+        # Refresh button
+        ttk.Button(
+            filter_frame, text="🔄 Refresh", command=self.refresh_individual_view
+        ).grid(row=0, column=7, padx=(10, 0))
+
+    def create_entity_selection_panel(self, parent):
+        """Create the entity selection panel (students, rooms, or invigilators)."""
+        left_frame = ttk.Frame(parent)
+        parent.add(left_frame, weight=1)
+
+        # Header
+        self.entity_header_label = ttk.Label(
+            left_frame, text="👤 Students", font=("Arial", 14, "bold")
+        )
+        self.entity_header_label.pack(pady=(0, 10))
+
+        # Entity list with scrollbar
+        list_frame = ttk.Frame(left_frame)
+        list_frame.pack(fill="both", expand=True)
+
+        # Treeview for entities
+        columns = ("ID", "Details", "Exam Count")
+        self.entity_tree = ttk.Treeview(
+            list_frame, columns=columns, show="tree headings", height=25
+        )
+
+        # Configure columns
+        self.entity_tree.heading("#0", text="Name")
+        self.entity_tree.column("#0", width=150)
+
+        for col in columns:
+            self.entity_tree.heading(col, text=col)
+            self.entity_tree.column(col, width=100)
+
+        # Scrollbars
+        entity_scroll_v = ttk.Scrollbar(
+            list_frame, orient="vertical", command=self.entity_tree.yview
+        )
+        entity_scroll_h = ttk.Scrollbar(
+            list_frame, orient="horizontal", command=self.entity_tree.xview
+        )
+
+        self.entity_tree.configure(
+            yscrollcommand=entity_scroll_v.set, xscrollcommand=entity_scroll_h.set
+        )
+
+        # Grid the components
+        self.entity_tree.grid(row=0, column=0, sticky="nsew")
+        entity_scroll_v.grid(row=0, column=1, sticky="ns")
+        entity_scroll_h.grid(row=1, column=0, sticky="we")
+
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+
+        # Bind selection event
+        self.entity_tree.bind("<<TreeviewSelect>>", self.on_entity_select)
+
+        # Populate initial data
+        self.populate_entity_list()
+
+    def create_individual_schedule_panel(self, parent):
+        """Create the individual schedule display panel."""
+        right_frame = ttk.Frame(parent)
+        parent.add(right_frame, weight=2)
+
+        # Header
+        self.schedule_header_label = ttk.Label(
+            right_frame,
+            text="🔍 Select an entity to view schedule",
+            font=("Arial", 14, "bold"),
+        )
+        self.schedule_header_label.pack(pady=(0, 10))
+
+        # Schedule grid container
+        self.schedule_container = ttk.Frame(right_frame)
+        self.schedule_container.pack(fill="both", expand=True)
+
+        # Create scrollable canvas for schedule grid
+        self.schedule_canvas = tk.Canvas(self.schedule_container, bg="white")
+        schedule_scroll_v = ttk.Scrollbar(
+            self.schedule_container,
+            orient="vertical",
+            command=self.schedule_canvas.yview,
+        )
+        schedule_scroll_h = ttk.Scrollbar(
+            self.schedule_container,
+            orient="horizontal",
+            command=self.schedule_canvas.xview,
+        )
+
+        self.individual_schedule_frame = ttk.Frame(self.schedule_canvas)
+
+        # Configure scrolling
+        self.individual_schedule_frame.bind(
+            "<Configure>",
+            lambda e: self.schedule_canvas.configure(
+                scrollregion=self.schedule_canvas.bbox("all")
+            ),
+        )
+
+        self.schedule_canvas.create_window(
+            (0, 0), window=self.individual_schedule_frame, anchor="nw"
+        )
+        self.schedule_canvas.configure(
+            yscrollcommand=schedule_scroll_v.set, xscrollcommand=schedule_scroll_h.set
+        )
+
+        # Grid the components
+        self.schedule_canvas.grid(row=0, column=0, sticky="nsew")
+        schedule_scroll_v.grid(row=0, column=1, sticky="ns")
+        schedule_scroll_h.grid(row=1, column=0, sticky="we")
+
+        self.schedule_container.columnconfigure(0, weight=1)
+        self.schedule_container.rowconfigure(0, weight=1)
+
+        # Initial empty state message
+        ttk.Label(
+            self.individual_schedule_frame,
+            text="Select an entity from the list to view their schedule",
+        ).pack(pady=50)
+
+    def on_view_type_change(self):
+        """Handle view type change (student/room/invigilator)."""
+        view_type = self.view_type_var.get()
+        logger.info(f"🔄 Changing view type to: {view_type}")
+
+        # Update header labels
+        if view_type == "student":
+            self.entity_header_label.config(text="👤 Students")
+        elif view_type == "room":
+            self.entity_header_label.config(text="🏢 Rooms")
+        elif view_type == "invigilator":
+            self.entity_header_label.config(text="👨‍🏫 Invigilators")
+
+        # Clear current selection
+        self.current_filter_id = None
+
+        # Repopulate entity list
+        self.populate_entity_list()
+
+        # Clear schedule display
+        self.clear_schedule_display()
+
+    def populate_entity_list(self):
+        """Populate the entity list based on current view type."""
+        # Clear existing items
+        for item in self.entity_tree.get_children():
+            self.entity_tree.delete(item)
+
+        view_type = self.view_type_var.get()
+
+        if view_type == "student":
+            self.populate_student_list()
+        elif view_type == "room":
+            self.populate_room_list()
+        elif view_type == "invigilator":
+            self.populate_invigilator_list()
+
+    def populate_student_list(self):
+        """Populate the list with students."""
+        for student_id, student in self.problem.students.items():
+            # Calculate exam count for this student
+            exam_count = 0
+            for assignment in self.solution.assignments.values():
+                if assignment.is_complete():
+                    exam = self.problem.exams.get(assignment.exam_id)
+                    if exam:
+                        student_exams = self.get_students_for_exam_enhanced(
+                            assignment.exam_id
+                        )
+                        if student_id in student_exams:
+                            exam_count += 1
+
+            # Get student details
+            department = getattr(student, "department", "Unknown")
+            student_name = f"Student {str(student_id)[:8]}..."
+
+            self.entity_tree.insert(
+                "",
+                "end",
+                text=student_name,
+                values=(str(student_id)[:8] + "...", department, str(exam_count)),
+                tags=(str(student_id),),
+            )
+
+    def populate_room_list(self):
+        """Populate the list with rooms."""
+        for room_id, room in self.problem.rooms.items():
+            # Calculate exam count for this room
+            exam_count = 0
+            for assignment in self.solution.assignments.values():
+                if assignment.is_complete() and room_id in assignment.room_ids:
+                    exam_count += 1
+
+            self.entity_tree.insert(
+                "",
+                "end",
+                text=room.code,
+                values=(
+                    str(room_id)[:8] + "...",
+                    f"Cap: {room.capacity}",
+                    str(exam_count),
+                ),
+                tags=(str(room_id),),
+            )
+
+    def populate_invigilator_list(self):
+        """Populate the list with invigilators."""
+        invigilators = self.problem.invigilators
+
+        # In populate_invigilator_list method, add proper counting:
+        for invigilator_id, invigilator in invigilators.items():
+            # Calculate exam count for this invigilator using our new method
+            inv_assigns = self.get_invigilator_assignments(invigilator_id)
+            exam_count = len(inv_assigns)
+
+            invigilator_name = getattr(
+                invigilator, "name", f"Invigilator {str(invigilator_id)[:8]}..."
+            )
+            department = getattr(invigilator, "department", "Unknown")
+
+            self.entity_tree.insert(
+                "",
+                "end",
+                text=invigilator_name,
+                values=(str(invigilator_id)[:8] + "...", department, str(exam_count)),
+                tags=(str(invigilator_id),),
+            )
+
+    def filter_entity_list(self, *args):
+        """Filter the entity list based on search term."""
+        search_term = self.individual_search_var.get().lower()
+
+        # If no search term, show all
+        if not search_term:
+            for item in self.entity_tree.get_children():
+                self.entity_tree.item(item, open=True)
+            return
+
+        # Hide items that don't match search
+        for item in self.entity_tree.get_children():
+            item_text = self.entity_tree.item(item, "text").lower()
+            values = [str(v).lower() for v in self.entity_tree.item(item, "values")]
+
+            if search_term in item_text or any(search_term in v for v in values):
+                self.entity_tree.item(item, open=True)
+            else:
+                self.entity_tree.item(item, open=False)
+
+    def on_entity_select(self, event):
+        """Handle entity selection to display individual schedule."""
+        selection = self.entity_tree.selection()
+        if not selection:
+            return
+
+        # Get selected entity
+        item = selection[0]
+        tags = self.entity_tree.item(item, "tags")
+        if tags:
+            entity_id_str = tags[0]
+            try:
+                entity_id = UUID(entity_id_str) if len(entity_id_str) > 10 else None
+                # For shortened IDs, find the full UUID
+                if not entity_id:
+                    entity_id = self.find_entity_by_partial_id(entity_id_str)
+
+                if entity_id:
+                    self.current_filter_id = entity_id
+                    self.display_individual_schedule(entity_id)
+            except ValueError:
+                logger.warning(f"Invalid UUID format: {entity_id_str}")
+
+    def find_entity_by_partial_id(self, partial_id: str) -> Optional[UUID]:
+        """Find full UUID by partial ID string."""
+        view_type = self.view_type_var.get()
+
+        if view_type == "student":
+            entities = self.problem.students
+        elif view_type == "room":
+            entities = self.problem.rooms
+        elif view_type == "invigilator":
+            entities = self.problem.invigilators
+        else:
+            return None
+
+        for entity_id in entities:
+            if str(entity_id).startswith(partial_id.replace("...", "")):
+                return entity_id
+
+        return None
+
+    def display_individual_schedule(self, entity_id: UUID):
+        """Display the schedule for the selected entity."""
+        view_type = self.view_type_var.get()
+
+        # Clear existing schedule display
+        self.clear_schedule_display()
+
+        # Update header
+        entity_name = self.get_entity_name(entity_id, view_type)
+        self.schedule_header_label.config(text=f"📅 Schedule for {entity_name}")
+
+        # Use consistent method for all entity types
+        schedule_data = self.get_entity_schedule_data(entity_id, view_type)
+
+        if not schedule_data:
+            # Enhanced message for students with possible unassigned exams
+            if view_type == "student":
+                message = f"No assigned schedule data found for {entity_name}. This student may have unassigned exams."
+            else:
+                message = f"No schedule data found for {entity_name}"
+
+            ttk.Label(
+                self.individual_schedule_frame,
+                text=message,
+                font=("Arial", 12),
+            ).pack(pady=50)
+            return
+
+        # Create schedule grid
+        self.create_entity_schedule_grid(schedule_data, entity_name)
+
+    def get_entity_name(self, entity_id: UUID, view_type: str) -> str:
+        """Get display name for an entity."""
+        if view_type == "student":
+            student = self.problem.students.get(entity_id)
+            return f"Student {str(entity_id)[:8]}..." if student else "Unknown Student"
+        elif view_type == "room":
+            room = self.problem.rooms.get(entity_id)
+            return room.code if room else "Unknown Room"
+        elif view_type == "invigilator":
+            invigilator = self.problem.invigilators.get(entity_id)
+            return (
+                getattr(invigilator, "name", f"Invigilator {str(entity_id)[:8]}...")
+                if invigilator
+                else "Unknown Invigilator"
+            )
+        else:
+            return "Unknown Entity"
+
+    def get_entity_schedule_data(
+        self, entity_id: UUID, view_type: str
+    ) -> List[Dict[str, Any]]:
+        schedule_data = []
+
+        for assignment in self.solution.assignments.values():
+            if not assignment.is_complete():
+                continue
+
+            include_assignment = False
+
+            if view_type == "student":
+                # Check if student is enrolled in this exam
+                student_exams = self.get_students_for_exam_enhanced(assignment.exam_id)
+                include_assignment = entity_id in student_exams
+            elif view_type == "room":
+                # Check if room is assigned to this exam
+                include_assignment = entity_id in assignment.room_ids
+            elif view_type == "invigilator":
+                # Check if invigilator is assigned to this exam
+                include_assignment = entity_id in assignment.invigilator_ids
+
+            if include_assignment:
+                exam = self.problem.exams.get(assignment.exam_id)
+                assert assignment.time_slot_id
+                timeslot = self.problem.timeslots.get(assignment.time_slot_id)
+
+                if exam and timeslot:
+                    # Get room information
+                    room_info = []
+                    for room_id in assignment.room_ids:
+                        room = self.problem.rooms.get(room_id)
+                        if room:
+                            allocation = assignment.room_allocations.get(room_id, 0)
+                            room_info.append(
+                                {
+                                    "code": room.code,
+                                    "allocation": allocation,
+                                    "capacity": room.capacity,
+                                }
+                            )
+
+                    schedule_data.append(
+                        {
+                            "exam_id": assignment.exam_id,
+                            "course_id": exam.course_id,
+                            "date": assignment.assigned_date,
+                            "timeslot": timeslot,
+                            "rooms": room_info,
+                            "duration": exam.duration_minutes,
+                            "expected_students": exam.expected_students,
+                            "is_practical": exam.is_practical,
+                        }
+                    )
+
+            # Sort by date and time
+            schedule_data.sort(key=lambda x: (x["date"], x["timeslot"].start_time))
+        return schedule_data
+
+    def get_invigilator_assignments(
+        self, invigilator_id: Optional[UUID] = None
+    ) -> List[Dict[str, Any]]:
+        """Get assignments for a specific invigilator or all invigilators if None"""
+        assignments = []
+        for assignment in self.solution.assignments.values():
+            if assignment.is_complete():
+                if (
+                    invigilator_id is None
+                    or invigilator_id in assignment.invigilator_ids
+                ):
+                    exam = self.problem.exams.get(assignment.exam_id)
+                    assert assignment.time_slot_id
+                    timeslot = self.problem.timeslots.get(assignment.time_slot_id)
+                    if exam and timeslot:
+                        # Get room information in the expected format
+                        room_info = []
+                        for room_id in assignment.room_ids:
+                            room = self.problem.rooms.get(room_id)
+                            if room:
+                                allocation = assignment.room_allocations.get(room_id, 0)
+                                room_info.append(
+                                    {
+                                        "code": room.code,
+                                        "allocation": allocation,
+                                        "capacity": room.capacity,
+                                    }
+                                )
+
+                        assignments.append(
+                            {
+                                "exam_id": assignment.exam_id,
+                                "course_id": exam.course_id,  # Added missing field
+                                "date": assignment.assigned_date,
+                                "timeslot": timeslot,
+                                "rooms": room_info,  # Properly formatted room data
+                                "duration": exam.duration_minutes,  # Added missing field
+                                "expected_students": exam.expected_students,  # Added missing field
+                                "is_practical": exam.is_practical,  # Added missing field
+                            }
+                        )
+
+        # Sort by date and time
+        assignments.sort(key=lambda x: (x["date"], x["timeslot"].start_time))
+        return assignments
+
+    def create_entity_schedule_grid(
+        self, schedule_data: List[Dict[str, Any]], entity_name: str
+    ):
+        """Create a grid view of the entity's schedule."""
+        if not schedule_data:
+            return
+
+        # Create headers with error handling
+        headers = [
+            "Date",
+            "Time",
+            "Course",
+            "Exam",
+            "Rooms",
+            "Duration",
+            "Students",
+            "Type",
+        ]
+
+        # Header row creation remains the same...
+
+        # Data rows with proper error handling
+        for row_idx, item in enumerate(schedule_data):
+            row_frame = ttk.Frame(self.individual_schedule_frame)
+            row_frame.pack(fill="x", pady=1)
+
+            # Date
+            date_str = self.safe_format_date(item.get("date"), "%a %b %d")
+            self.create_schedule_cell(row_frame, 0, date_str)
+
+            # Time
+            timeslot = item.get("timeslot")
+            if timeslot:
+                time_str = f"{self.safe_format_time(timeslot.start_time)} - {self.safe_format_time(timeslot.end_time)}"
+            else:
+                time_str = "TBD"
+            self.create_schedule_cell(row_frame, 1, time_str)
+
+            # Course with fallback
+            course_str = str(item.get("course_id", "Unknown"))[:8] + "..."
+            self.create_schedule_cell(row_frame, 2, course_str)
+
+            # Exam
+            exam_str = str(item.get("exam_id", "Unknown"))[:8] + "..."
+            self.create_schedule_cell(row_frame, 3, exam_str)
+
+            # Rooms with proper handling
+            rooms = item.get("rooms", [])
+            if isinstance(rooms, list) and rooms:
+                if isinstance(rooms[0], dict):
+                    # New format with room details
+                    room_str = ", ".join(
+                        [
+                            f"{r.get('code', 'Unknown')}({r.get('allocation', 0)})"
+                            for r in rooms[:2]
+                        ]
+                    )
+                else:
+                    # Fallback for old format (UUID list)
+                    room_str = f"{len(rooms)} room(s)"
+            else:
+                room_str = "No rooms"
+
+            if len(rooms) > 2:
+                room_str += f" +{len(rooms)-2}"
+            self.create_schedule_cell(row_frame, 4, room_str)
+
+            # Duration
+            duration_str = f"{item.get('duration', 0)}min"
+            self.create_schedule_cell(row_frame, 5, duration_str)
+
+            # Students
+            students_str = str(item.get("expected_students", 0))
+            self.create_schedule_cell(row_frame, 6, students_str)
+
+            # Type
+            type_str = "Practical" if item.get("is_practical", False) else "Written"
+            self.create_schedule_cell(row_frame, 7, type_str)
+
+    def create_schedule_cell(
+        self, parent, column: int, text: str, bg_color: str = "white"
+    ):
+        """Create a single cell in the schedule grid."""
+        cell = tk.Label(
+            parent,
+            text=text,
+            font=("Arial", 9),
+            bg=bg_color,
+            relief="solid",
+            borderwidth=1,
+            width=12,
+            anchor="w",
+            wraplength=80,
+        )
+        cell.grid(row=0, column=column, sticky="nsew", padx=1, pady=1)
+        return cell
+
+    def clear_schedule_display(self):
+        """Clear the individual schedule display."""
+        for widget in self.individual_schedule_frame.winfo_children():
+            widget.destroy()
+
+    def refresh_individual_view(self):
+        """Refresh the individual view."""
+        self.populate_entity_list()
+        if self.current_filter_id:
+            self.display_individual_schedule(self.current_filter_id)
+
+    def get_students_for_exam_enhanced(self, exam_id: UUID) -> Set[UUID]:
+        """Get students registered for a specific exam."""
+        students = set()
+
+        # Get exam
+        exam = self.problem.exams.get(exam_id)
+        if exam and hasattr(exam, "_students"):
+            students.update(exam._students)
+
+        # Method 2: Course registration mapping
+        if exam:
+            course_students = self.problem.get_students_for_course(exam.course_id)
+            students.update(course_students)
+
+        # Method 3: Problem-level method
+        exam_students = self.problem.get_students_for_exam(exam_id)
+        students.update(exam_students)
+
+        # Method 4: Registration data lookup
+        if hasattr(self.problem, "course_students") and exam:
+            course_id = exam.course_id
+            if course_id in self.problem._course_students:
+                students.update(self.problem._course_students[course_id])
+
+        return students
+
+    def safe_format_date(self, date_obj, format_str="%Y-%m-%d"):
+        """Safely format date object or string to formatted string"""
+        if date_obj is None:
+            return "Not assigned"
+
+        # If it's already a date object, format it directly
+        if isinstance(date_obj, date):
+            try:
+                return date_obj.strftime(format_str)
+            except:
+                return str(date_obj)
+
+        # If it's a string, try to parse it
+        if isinstance(date_obj, str):
+            try:
+                # Try ISO format first
+                parsed_date = date.fromisoformat(date_obj)
+                return parsed_date.strftime(format_str)
+            except ValueError:
+                try:
+                    # Try other common formats
+                    parsed_date = datetime.strptime(date_obj, "%Y-%m-%d").date()
+                    return parsed_date.strftime(format_str)
+                except:
+                    return str(date_obj)
+
+        return str(date_obj)
+
+    def safe_format_time(self, time_obj, format_str="%H:%M"):
+        """Safely format time object or string"""
+        if isinstance(time_obj, time):
+            return time_obj.strftime(format_str)
+        elif isinstance(time_obj, str):
+            try:
+                # Try to parse string time
+                parsed_time = datetime.strptime(time_obj, "%H:%M:%S").time()
+                return parsed_time.strftime(format_str)
+            except:
+                return time_obj
+        return str(time_obj)
+
     def calculate_quick_stats(self) -> Dict[str, Any]:
         """Calculate quick statistics for the solution."""
         stats = {}
@@ -201,7 +892,7 @@ class TimetableGUIViewer:
         # Basic counts
         stats["Total Exams"] = len(self.problem.exams)
         stats["Total Rooms"] = len(self.problem.rooms)
-        stats["Total Time Slots"] = len(self.problem.time_slots)
+        stats["Total Time Slots"] = len(self.problem.timeslots)
         stats["Total Students"] = len(self.problem.students)
 
         # Assignment stats
@@ -222,7 +913,7 @@ class TimetableGUIViewer:
             if a.is_complete()
         }
         stats["Time Slot Utilization"] = (
-            f"{len(used_slots)}/{len(self.problem.time_slots)}"
+            f"{len(used_slots)}/{len(self.problem.timeslots)}"
         )
 
         # Conflicts
@@ -321,10 +1012,10 @@ class TimetableGUIViewer:
             header, text="Time \\ Date", font=("Arial", 9, "bold"), bg="lightgray"
         ).pack(expand=True)
 
-        # Unique sorted dates
+        # Unique sorted dates - using safe date formatting
         dates = sorted(
             {
-                assignment.assigned_date
+                self.safe_parse_date(assignment.assigned_date)
                 for assignment in self.solution.assignments.values()
                 if assignment.assigned_date is not None
             }
@@ -338,16 +1029,30 @@ class TimetableGUIViewer:
             cell.grid(row=0, column=col, sticky="nsew", padx=1, pady=1)
             tk.Label(
                 cell,
-                text=dt.strftime("%a\n%b %d"),
+                text=self.safe_format_date(dt, "%a\n%b %d"),
                 font=("Arial", 9, "bold"),
                 bg="lightgray",
             ).pack(expand=True)
             self.date_columns[dt] = col
 
+    def safe_parse_date(self, date_input):
+        """Safely parse date input to date object"""
+        if isinstance(date_input, date):
+            return date_input
+        elif isinstance(date_input, str):
+            try:
+                return datetime.strptime(date_input, "%Y-%m-%d").date()
+            except ValueError:
+                try:
+                    return datetime.fromisoformat(date_input).date()
+                except:
+                    return date_input  # return as-is if parsing fails
+        return date_input
+
     def create_timetable_content(self):
         # Unique time‐templates sorted by start_time
         templates = {
-            (ts.start_time, ts.end_time) for ts in self.problem.time_slots.values()
+            (ts.start_time, ts.end_time) for ts in self.problem.timeslots.values()
         }
         sorted_templates = sorted(templates, key=lambda t: t[0])
 
@@ -356,7 +1061,7 @@ class TimetableGUIViewer:
         slot_map = defaultdict(list)
         for assign in self.solution.assignments.values():
             if assign.is_complete() and assign.time_slot_id is not None:
-                ts = self.problem.time_slots[assign.time_slot_id]
+                ts = self.problem.timeslots[assign.time_slot_id]
                 slot_map[(assign.assigned_date, (ts.start_time, ts.end_time))].append(
                     assign
                 )
@@ -536,7 +1241,7 @@ class TimetableGUIViewer:
         title_label.pack(pady=(0, 10))
 
         # Time slot info
-        time_slot = self.problem.time_slots.get(time_slot_id)
+        time_slot = self.problem.timeslots.get(time_slot_id)
         if time_slot:
             time_label = ttk.Label(
                 main_frame,
@@ -561,6 +1266,11 @@ class TimetableGUIViewer:
         # Frame for this exam
         exam_frame = ttk.LabelFrame(parent, text=f"Exam {exam_num}", padding="10")
         exam_frame.pack(fill="x", pady=(0, 10))
+
+        # Get time slot info if available
+        time_slot = None
+        if assignment.time_slot_id:
+            time_slot = self.problem.timeslots.get(assignment.time_slot_id)
 
         # Exam ID and course
         ttk.Label(exam_frame, text=f"Exam ID: {str(exam.id)}", font=("Arial", 10)).pack(
@@ -604,6 +1314,21 @@ class TimetableGUIViewer:
             font=("Arial", 10, "bold"),
         )
         status_label.pack(anchor="w")
+
+        # Date and time - only if we have a valid time slot
+        if time_slot and assignment.assigned_date:
+            start_str = self.safe_format_time(time_slot.start_time)
+            end_str = self.safe_format_time(time_slot.end_time)
+            datetime_str = f"{self.safe_format_date(assignment.assigned_date)} at {start_str}-{end_str}"
+
+            date_time_frame = ttk.Frame(exam_frame)
+            date_time_frame.pack(fill="x", pady=2)
+            ttk.Label(
+                date_time_frame, text="Date & Time:", font=("Arial", 10, "bold")
+            ).pack(side="left")
+            ttk.Label(date_time_frame, text=datetime_str, font=("Arial", 10)).pack(
+                side="left", padx=(10, 0)
+            )
 
     def get_exam_color(self, exam):
         """Get color for an exam based on course/department."""
@@ -764,58 +1489,80 @@ class TimetableGUIViewer:
         ).pack(pady=20)
 
     def populate_exam_list(self):
-        """Populate the exam list treeview."""
+        """Populate the exam list treeview with FIXED conflict status handling"""
         # Clear existing items
         for item in self.exam_tree.get_children():
             self.exam_tree.delete(item)
 
-        # Add exams
+        if not self.solution or not self.solution.assignments:
+            return
+
+        # FIXED: Ensure conflicts are detected and assignment statuses are updated
+        self.solution.detect_conflicts()  # This will now update assignment statuses
+
+        # Process each exam
         for exam_id, assignment in self.solution.assignments.items():
             exam = self.problem.exams.get(exam_id)
             if not exam:
                 continue
+            from scheduling_engine.core.solution import AssignmentStatus
 
-            # Prepare display values
-            status = assignment.status.value.title()
-            date_str = (
-                assignment.assigned_date.strftime("%Y-%m-%d")
-                if assignment.assigned_date
-                else "Not assigned"
-            )
+            # FIXED: Determine display status based on assignment status
+            if assignment.status == AssignmentStatus.UNASSIGNED:
+                status = "Unassigned"
+            elif assignment.status == AssignmentStatus.CONFLICT:
+                status = "Conflict"
+            elif (
+                assignment.status == AssignmentStatus.ASSIGNED
+                and assignment.is_complete()
+            ):
+                status = "Assigned"
+            else:
+                status = "Invalid"
 
-            # Time
-            time_str = "Not assigned"
-            if assignment.time_slot_id:
-                time_slot = self.problem.time_slots.get(assignment.time_slot_id)
-                if time_slot:
-                    time_str = f"{time_slot.start_time.strftime('%H:%M')}-{time_slot.end_time.strftime('%H:%M')}"
+            # Format date, time, rooms, students
+            if assignment.is_complete():
+                date_str = self.safe_format_date(assignment.assigned_date)
 
-            # Rooms
-            room_str = "Not assigned"
-            if assignment.room_ids:
+                # Get time slot info
+                assert assignment.time_slot_id
+                timeslot = self.problem.timeslots.get(assignment.time_slot_id)
+                if timeslot:
+                    time_str = f"{self.safe_format_time(timeslot.start_time)}-{self.safe_format_time(timeslot.end_time)}"
+                else:
+                    time_str = "Unknown"
+
+                # Get room info
                 room_codes = []
                 for room_id in assignment.room_ids:
                     room = self.problem.rooms.get(room_id)
                     if room:
                         room_codes.append(room.code)
-                room_str = ", ".join(room_codes)
+                room_str = ", ".join(room_codes) if room_codes else "No Room"
 
-            # Students
-            students_str = str(exam.expected_students)
+                students_str = str(exam.expected_students)
+            else:
+                date_str = "Not assigned"
+                time_str = "Not assigned"
+                room_str = "Not assigned"
+                students_str = str(exam.expected_students)
 
-            # Add to tree
+            # FIXED: Add to tree with proper status for tag configuration
             self.exam_tree.insert(
                 "",
                 "end",
                 text=str(exam.id)[:8] + "...",
                 values=(status, date_str, time_str, room_str, students_str),
-                tags=(assignment.status.value,),
+                tags=(assignment.status.value,),  # Use assignment.status.value for tag
             )
 
-        # Configure tags for colors
+        # FIXED: Configure tags for colors (match AssignmentStatus enum values)
         self.exam_tree.tag_configure("assigned", background="lightgreen")
         self.exam_tree.tag_configure("conflict", background="lightcoral")
         self.exam_tree.tag_configure("unassigned", background="lightgray")
+        self.exam_tree.tag_configure("invalid", background="orange")
+
+        logger.info(f"Populated exam list with {len(self.solution.assignments)} exams")
 
     def filter_exam_list(self, *args):
         """Filter the exam list based on search."""
@@ -913,10 +1660,10 @@ class TimetableGUIViewer:
                 date_time_frame, text="Date & Time:", font=("Arial", 10, "bold")
             ).pack(side="left")
             assert assignment.time_slot_id
-            time_slot = self.problem.time_slots.get(assignment.time_slot_id)
+            time_slot = self.problem.timeslots.get(assignment.time_slot_id)
             if time_slot:
                 assert assignment.assigned_date
-                datetime_str = f"{assignment.assigned_date.strftime('%A, %B %d, %Y')} at {time_slot.start_time.strftime('%H:%M')}-{time_slot.end_time.strftime('%H:%M')}"
+                datetime_str = f"{self.safe_format_date(assignment.assigned_date, '%Y-%m-%d')} at {time_slot.start_time.strftime('%H:%M')}-{time_slot.end_time.strftime('%H:%M')}"
                 ttk.Label(date_time_frame, text=datetime_str, font=("Arial", 10)).pack(
                     side="left", padx=(10, 0)
                 )
@@ -1188,28 +1935,6 @@ class TimetableGUIViewer:
             ttk.Label(stat_frame, text=f"{label}:", font=("Arial", 10)).pack(
                 side="left"
             )
-            ttk.Label(stat_frame, text=value, font=("Arial", 10, "bold")).pack(
-                side="right"
-            )
-
-        # Right column stats
-        total_students = sum(
-            exam.expected_students for exam in self.problem.exams.values()
-        )
-        avg_students_per_exam = (
-            total_students / len(self.problem.exams) if self.problem.exams else 0
-        )
-
-        right_stats = [
-            ("Total Students", str(total_students)),
-            ("Avg Students/Exam", f"{avg_students_per_exam:.1f}"),
-            ("Total Rooms", str(len(self.problem.rooms))),
-            ("Total Time Slots", str(len(self.problem.time_slots))),
-        ]
-
-        for label, value in right_stats:
-            stat_frame = ttk.Frame(right_col)
-            stat_frame.pack(fill="x", pady=2)
             ttk.Label(stat_frame, text=f"{label}:", font=("Arial", 10)).pack(
                 side="left"
             )
@@ -1242,8 +1967,8 @@ class TimetableGUIViewer:
             if a.is_complete()
         }
         slot_util = (
-            len(used_slots) / len(self.problem.time_slots) * 100
-            if self.problem.time_slots
+            len(used_slots) / len(self.problem.timeslots) * 100
+            if self.problem.timeslots
             else 0
         )
 
@@ -1255,7 +1980,7 @@ class TimetableGUIViewer:
             ),
             (
                 "Time Slot Utilization",
-                f"{len(used_slots)}/{len(self.problem.time_slots)} ({slot_util:.1f}%)",
+                f"{len(used_slots)}/{len(self.problem.timeslots)} ({slot_util:.1f}%)",
             ),
             ("Most Used Room", self.get_most_used_room(room_usage_count)),
             (
@@ -1304,7 +2029,7 @@ class TimetableGUIViewer:
         # Find peak and off-peak times
         if slot_usage:
             peak_slot_id = max(slot_usage, key=lambda k: slot_usage[k])
-            peak_slot = self.problem.time_slots.get(peak_slot_id)
+            peak_slot = self.problem.timeslots.get(peak_slot_id)
             peak_time = (
                 f"{peak_slot.start_time.strftime('%H:%M')}" if peak_slot else "Unknown"
             )
@@ -1320,7 +2045,7 @@ class TimetableGUIViewer:
         time_stats = [
             ("Peak Time Slot", f"{peak_time} ({peak_count} exams)"),
             ("Average Exams per Slot", f"{avg_per_slot:.1f}"),
-            ("Time Slots Used", f"{len(slot_usage)}/{len(self.problem.time_slots)}"),
+            ("Time Slots Used", f"{len(slot_usage)}/{len(self.problem.timeslots)}"),
             ("Exam Period Length", f"{len(self.problem.days)} days"),
         ]
 

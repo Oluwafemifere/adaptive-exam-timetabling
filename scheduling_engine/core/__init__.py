@@ -7,7 +7,7 @@ Core module for scheduling engine data structures and interfaces
 from .problem_model import (
     ExamSchedulingProblem,
     Exam,
-    TimeSlot,
+    Timeslot,
     Room,
     Student,
 )
@@ -26,7 +26,7 @@ __all__ = [
     # Problem model
     "ExamSchedulingProblem",
     "Exam",
-    "TimeSlot",
+    "Timeslot",
     "Room",
     "Student",
     # Solution model
