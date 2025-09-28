@@ -76,6 +76,3 @@ class TimetableJob(Base, TimestampMixin):
     versions: Mapped[List["TimetableVersion"]] = relationship(
         "TimetableVersion", back_populates="job"
     )
-
-
-# REMOVED: TimetableVersion is now in versioning.py module with enhanced functionality

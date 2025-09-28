@@ -6,7 +6,7 @@ Implements fitness evaluation schemes from the research paper.
 """
 
 from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from uuid import UUID
 import time
 import logging
@@ -14,7 +14,7 @@ import math
 
 from .problem_model import ExamSchedulingProblem
 from .solution import TimetableSolution
-from .constraint_types import ConstraintSeverity
+from .constraint_types import ConstraintCategory, ConstraintSeverity
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,12 @@ class QualityScore:
         )
 
         return self
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        MODIFIED: Serializes the QualityScore object to a dictionary for JSON output.
+        """
+        return asdict(self)
 
 
 @dataclass
@@ -139,6 +145,10 @@ class SolutionMetrics:
             )
         )
 
+        # MODIFIED: Also capture completion percentage and conflict count in the quality score object
+        quality.completion_percentage = solution.get_completion_percentage()
+        quality.conflict_count = len(solution.conflicts)
+
         quality.total_score = self._calculate_weighted_total_score(quality, weights)
         self.evaluation_history.append((time.time(), quality))
         return quality
@@ -155,13 +165,24 @@ class SolutionMetrics:
             k: v
             for k, v in active_constraints.items()
             if v.get("category") == "SOFT_CONSTRAINTS"
+            or v.get("category") == ConstraintCategory.SOFT_CONSTRAINTS.name
         }
 
         # Calculate penalty for each soft constraint
         for constraint_id, constraint_info in soft_constraints.items():
             try:
                 constraint_class = constraint_info["class"]
-                constraint_instance = constraint_class(problem)
+                # --- START OF FIX ---
+                # Instantiate the constraint class correctly for evaluation.
+                # The solver-specific arguments 'shared_vars' and 'model' are not
+                # needed for post-solve penalty calculation, so we pass None.
+                constraint_instance = constraint_class(
+                    constraint_id=constraint_id,
+                    problem=problem,
+                    shared_vars=None,
+                    model=None,
+                )
+                # --- END OF FIX ---
                 penalty = constraint_instance.evaluate_penalty(solution)
                 penalties[constraint_id] = penalty
             except Exception as e:

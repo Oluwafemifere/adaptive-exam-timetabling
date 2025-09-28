@@ -1,12 +1,16 @@
 # scheduling_engine/constraints/hard_constraints/max_exams_per_student_per_day.py
 
 """
-MaxExamsPerStudentPerDayConstraint - H6 Implementation
+MaxExamsPerStudentPerDayConstraint - H6 Implementation (FIXED)
 
 H6: Max exams per student per day - ∑ x[e,s] ≤ maxExamsPerDay ∀ student p, day d
 
 This constraint ensures that no student has more than the maximum allowed
 number of exams starting on the same day.
+
+FIX: Added a robust data retrieval method with a fallback to prevent silent failures
+when precomputed student-exam mappings are not available. This ensures the constraint
+always has the data it needs and avoids creating faulty, overly-restrictive constraints.
 """
 
 from collections import defaultdict
@@ -35,8 +39,8 @@ class MaxExamsPerStudentPerDayConstraint(CPSATBaseConstraint):
         """Add max exams per student per day constraints"""
         constraints_added = 0
 
-        # Get student-exam mappings
-        student_exams = self.precomputed_data.get("student_exams", {})
+        # CRITICAL FIX: Get student-exam mappings using a robust method with fallback
+        student_exams = self._get_student_exam_mappings()
         if not student_exams:
             logger.info(f"{self.constraint_id}: No student-exam mappings available")
             self.constraint_count = 0
@@ -85,3 +89,38 @@ class MaxExamsPerStudentPerDayConstraint(CPSATBaseConstraint):
             logger.info(
                 f"{self.constraint_id}: Added {constraints_added} max exams per day constraints"
             )
+
+    def _get_student_exam_mappings(self):
+        """
+        CRITICAL FIX: Get student-exam mappings from multiple sources to ensure data is always found.
+        This pattern prevents silent failures if precomputed data is not available from a dependency.
+        """
+        # First try precomputed_data
+        if hasattr(self, "precomputed_data") and self.precomputed_data:
+            student_exams = self.precomputed_data.get("student_exams", {})
+            if student_exams:
+                logger.debug(
+                    f"{self.constraint_id}: Using student_exams from precomputed_data"
+                )
+                return student_exams
+
+        # Fallback: build it from the problem model's internal registrations
+        logger.warning(
+            f"{self.constraint_id}: student_exams not in precomputed_data. Building locally."
+        )
+        student_exams = defaultdict(list)
+
+        # Build course to exam mapping
+        course_to_exam = {
+            exam.course_id: exam.id for exam in self.problem.exams.values()
+        }
+
+        # Map students to exams through their registered courses using the correct attribute
+        if hasattr(self.problem, "_student_courses"):
+            for student_id, course_ids in self.problem._student_courses.items():
+                for course_id in course_ids:
+                    exam_id = course_to_exam.get(course_id)
+                    if exam_id:
+                        student_exams[student_id].append(exam_id)
+
+        return student_exams

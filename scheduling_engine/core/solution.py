@@ -14,7 +14,7 @@ import json
 import traceback
 from typing import Dict, List, Optional, Any, Set, Tuple, TYPE_CHECKING
 from uuid import UUID, uuid4
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, date
 from enum import Enum
 import logging
@@ -23,6 +23,7 @@ from collections import defaultdict
 
 if TYPE_CHECKING:
     from .problem_model import ExamSchedulingProblem
+    from .metrics import QualityScore
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,10 @@ class SolutionStatistics:
     room_utilization_percentage: float = 0.0
     timeslot_utilization_percentage: float = 0.0
 
+    def to_dict(self) -> Dict[str, Any]:
+        """MODIFIED: Serializes the statistics object to a dictionary."""
+        return asdict(self)
+
 
 class TimetableSolution:
     """FIXED - Solution class with UUID-only internal processing and proper room sharing validation"""
@@ -136,8 +141,10 @@ class TimetableSolution:
 
     def get_completion_percentage(self) -> float:
         """Calculate percentage of exams with complete assignments"""
+        if not self.assignments:
+            return 0.0
         assigned = sum(1 for a in self.assignments.values() if a.is_complete())
-        return (assigned / len(self.assignments)) * 100 if self.assignments else 0
+        return (assigned / len(self.assignments)) * 100
 
     def is_feasible(self) -> bool:
         """FIXED - Check if solution is feasible (complete and conflict-free)"""
@@ -215,50 +222,36 @@ class TimetableSolution:
         logger.info(f"Updated {len(conflicted_exams)} assignments to CONFLICT status")
 
     def detect_conflicts_fixed(self) -> List[ConflictReport]:
-        """FIXED - Enhanced conflict detection with UUID keys and proper room sharing validation
-
-        Detects:
-        1. Student temporal overlaps (same student, same time, different exams)
-        2. Student same-room conflicts (different exams with shared students in same room-time)
-        3. Room capacity violations (multiple exams in same room-time exceeding capacity)
-
-        Does NOT flag valid room sharing (multiple exams in same room with sufficient capacity and no student conflicts)
-        """
+        """FIXED - Enhanced conflict detection with UUID keys and proper room sharing validation"""
         conflicts: List[ConflictReport] = []
 
         # Group assignments by time slot for efficient conflict checking
-        by_slot: Dict[Tuple[date, UUID], List[ExamAssignment]] = {}
+        by_slot: Dict[Tuple[date, UUID], List[ExamAssignment]] = defaultdict(list)
         for assignment in self.assignments.values():
-            if assignment.is_complete():
-                assert assignment.assigned_date is not None
-                assert assignment.time_slot_id is not None
+            if (
+                assignment.is_complete()
+                and assignment.assigned_date
+                and assignment.time_slot_id
+            ):
                 key = (assignment.assigned_date, assignment.time_slot_id)
-                by_slot.setdefault(key, []).append(assignment)
+                by_slot[key].append(assignment)
 
         # Check conflicts for each time slot
         for (day, slot_id), slot_assignments in by_slot.items():
             if len(slot_assignments) <= 1:
-                continue  # No conflicts possible with single exam
+                continue
 
-            # 1. FIXED: Student temporal overlap detection
             conflicts.extend(
                 self.detect_student_temporal_conflicts(slot_assignments, day, slot_id)
             )
-
-            # 2. FIXED: Student same-room conflicts
             conflicts.extend(
                 self.detect_student_room_conflicts(slot_assignments, day, slot_id)
             )
-
-            # 3. FIXED: Room capacity conflicts
             conflicts.extend(
                 self.detect_room_capacity_conflicts(slot_assignments, day, slot_id)
             )
 
-        # Update internal conflicts dict
         self.conflicts = {c.conflict_id: c for c in conflicts}
-
-        logger.info(f"FIXED conflict detection found {len(conflicts)} total conflicts")
         return conflicts
 
     def detect_student_temporal_conflicts(
@@ -268,15 +261,11 @@ class TimetableSolution:
         conflicts = []
         student_exam_map: Dict[UUID, List[UUID]] = defaultdict(list)
 
-        # Build student -> exams mapping for this time slot
         for assignment in slot_assignments:
             exam_students = self.get_students_for_exam_enhanced(assignment.exam_id)
             for student_id in exam_students:
-                if student_id not in student_exam_map:
-                    student_exam_map[student_id] = []
                 student_exam_map[student_id].append(assignment.exam_id)
 
-        # Find students with multiple exams
         for student_id, exam_list in student_exam_map.items():
             if len(exam_list) > 1:
                 conflicts.append(
@@ -287,45 +276,31 @@ class TimetableSolution:
                         affected_exams=exam_list,
                         affected_students=[student_id],
                         description=f"Student {student_id} has {len(exam_list)} overlapping exams at {day} {slot_id}",
-                        resolution_suggestions=[
-                            "Reschedule conflicting exams to different time slots"
-                        ],
                     )
                 )
-
         return conflicts
 
     def detect_student_room_conflicts(
         self, slot_assignments: List[ExamAssignment], day: date, slot_id: UUID
     ) -> List[ConflictReport]:
-        """FIXED - Detect student conflicts when multiple exams share the same room
-
-        This only flags conflicts when students are enrolled in multiple exams
-        that are scheduled in the same room at the same time.
-        """
+        """FIXED - Detect student conflicts when multiple exams share the same room"""
         conflicts = []
-
-        # Group assignments by room
         room_assignments: Dict[UUID, List[ExamAssignment]] = defaultdict(list)
         for assignment in slot_assignments:
             for room_id in assignment.room_ids:
-                if room_id not in room_assignments:
-                    room_assignments[room_id] = []
                 room_assignments[room_id].append(assignment)
 
-        # Check each room for student conflicts
         for room_id, room_exams in room_assignments.items():
             if len(room_exams) <= 1:
-                continue  # No conflicts with single exam
+                continue
 
-            # Check all pairs of exams in this room
             for i, exam1 in enumerate(room_exams):
                 for exam2 in room_exams[i + 1 :]:
                     students1 = self.get_students_for_exam_enhanced(exam1.exam_id)
                     students2 = self.get_students_for_exam_enhanced(exam2.exam_id)
                     overlap = students1 & students2
 
-                    if overlap:  # Only flag if there are overlapping students
+                    if overlap:
                         conflicts.append(
                             ConflictReport(
                                 conflict_id=uuid4(),
@@ -335,79 +310,28 @@ class TimetableSolution:
                                 affected_students=list(overlap),
                                 affected_resources=[room_id],
                                 description=f"{len(overlap)} students conflict in room {room_id} at {day} {slot_id}",
-                                resolution_suggestions=[
-                                    "Assign conflicting exams to different rooms"
-                                ],
                             )
                         )
-
         return conflicts
-
-    def calculate_metrics(self) -> Dict[str, Any]:
-        """Calculate solution metrics - compatibility method"""
-        self.update_statistics()
-        return {
-            "completion_percentage": self.get_completion_percentage(),
-            "is_feasible": self.is_feasible(),
-            "objective_value": self.objective_value,
-            "fitness_score": self.fitness_score,
-            "statistics": self.statistics,
-            "conflict_count": len(self.detect_conflicts_fixed()),
-        }
-
-    def get_quality_score(self) -> Dict[str, Any]:
-        """Get quality score - compatibility method"""
-        from .metrics import SolutionMetrics
-
-        metrics_calculator = SolutionMetrics()
-        quality_score = metrics_calculator.evaluate_solution_quality(self.problem, self)
-
-        return {
-            "total_score": quality_score.total_score,
-            "feasibility_score": quality_score.feasibility_score,
-            "soft_constraint_penalties": quality_score.soft_constraint_penalties,
-            "soft_constraint_satisfaction": quality_score.soft_constraint_satisfaction,
-        }
 
     def detect_room_capacity_conflicts(
         self, slot_assignments: List[ExamAssignment], day: date, slot_id: UUID
     ) -> List[ConflictReport]:
-        """FIXED - Detect room capacity violations
-
-        This only flags conflicts when the total student capacity needed
-        exceeds the room's available capacity.
-        """
+        """FIXED - Detect room capacity violations"""
         conflicts = []
-
-        # Calculate room usage
         room_usage: Dict[UUID, int] = defaultdict(int)
         room_exams: Dict[UUID, List[UUID]] = defaultdict(list)
 
         for assignment in slot_assignments:
             for room_id in assignment.room_ids:
-                capacity_used = assignment.room_allocations.get(room_id, 0)
-                room_usage[room_id] = room_usage.get(room_id, 0) + capacity_used
+                exam = self.problem.exams.get(assignment.exam_id)
+                if exam:
+                    room_usage[room_id] += exam.expected_students
+                    room_exams[room_id].append(assignment.exam_id)
 
-                if room_id not in room_exams:
-                    room_exams[room_id] = []
-                room_exams[room_id].append(assignment.exam_id)
-
-        # Check capacity violations
         for room_id, total_usage in room_usage.items():
             room = self.problem.rooms.get(room_id)
-            if not room:
-                continue
-
-            # Calculate effective capacity with overbooking if allowed
-            base_capacity = room.capacity
-            is_overbookable = getattr(room, "overbookable", False)
-            overbook_rate = getattr(self.problem, "overbook_rate", 0.10)
-
-            effective_capacity = base_capacity
-            if is_overbookable:
-                effective_capacity = int(base_capacity * (1 + overbook_rate))
-
-            if total_usage > effective_capacity:
+            if room and total_usage > room.exam_capacity:
                 conflicts.append(
                     ConflictReport(
                         conflict_id=uuid4(),
@@ -415,27 +339,20 @@ class TimetableSolution:
                         severity=ConstraintSeverity.HIGH,
                         affected_exams=room_exams[room_id],
                         affected_resources=[room_id],
-                        description=f"Room {room_id} over-capacity: {total_usage}/{effective_capacity} at {day} {slot_id}",
-                        resolution_suggestions=[
-                            "Redistribute students to additional rooms",
-                            "Use larger room",
-                        ],
+                        description=f"Room {room.code} over-capacity: {total_usage}/{room.exam_capacity} at {day} {slot_id}",
                     )
                 )
-
         return conflicts
 
     def detect_conflicts(self) -> List[ConflictReport]:
         """Legacy method - delegates to fixed version"""
         conflicts = self.detect_conflicts_fixed()
-        # FIXED: Update assignment statuses when conflicts are detected
         self.update_assignment_statuses()
         return conflicts
 
     def update_statistics(self):
         """Update solution statistics based on current state"""
         stats = SolutionStatistics()
-
         stats.total_exams = len(self.assignments)
         stats.assigned_exams = sum(
             1 for a in self.assignments.values() if a.is_complete()
@@ -451,23 +368,11 @@ class TimetableSolution:
         stats.room_conflicts = sum(
             1 for c in conflicts if c.conflict_type == "room_capacity_conflict"
         )
-        stats.time_conflicts = sum(
-            1
-            for c in conflicts
-            if c.conflict_type
-            not in [
-                "student_temporal_conflict",
-                "student_room_conflict",
-                "room_capacity_conflict",
-            ]
-        )
 
-        # Calculate utilization - FIXED division by zero
         used_rooms = {
             r for a in self.assignments.values() if a.is_complete() for r in a.room_ids
         }
-        # FIXED: Check for zero division
-        total_rooms = len(self.problem.rooms) if self.problem.rooms else 0
+        total_rooms = len(self.problem.rooms)
         stats.room_utilization_percentage = (
             (len(used_rooms) / total_rooms * 100) if total_rooms > 0 else 0.0
         )
@@ -475,8 +380,7 @@ class TimetableSolution:
         used_slots = {
             a.time_slot_id for a in self.assignments.values() if a.is_complete()
         }
-        # FIXED: Check for zero division
-        total_timeslots = len(self.problem.timeslots) if self.problem.timeslots else 0
+        total_timeslots = len(self.problem.timeslots)
         stats.timeslot_utilization_percentage = (
             (len(used_slots) / total_timeslots * 100) if total_timeslots > 0 else 0.0
         )
@@ -484,75 +388,77 @@ class TimetableSolution:
         self.statistics = stats
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert solution to dictionary format - only convert UUIDs for serialization"""
+        """
+        MODIFIED: Creates a comprehensive dictionary representation of the solution,
+        ideal for serialization to JSON for frontend display.
+        """
+        # Ensure all computed properties are up-to-date
         self.update_statistics()
+        self.detect_conflicts_fixed()
 
+        # Calculate quality metrics
+        from .metrics import SolutionMetrics
+
+        metrics_calculator = SolutionMetrics()
+        quality_score = metrics_calculator.evaluate_solution_quality(self.problem, self)
+
+        # Build the final dictionary
         return {
-            "solution_id": str(self.id),  # Convert UUID to string for serialization
+            "solution_id": str(self.id),
+            "problem_id": str(self.problem.id),
+            "created_at": self.created_at.isoformat(),
+            "last_modified": self.last_modified.isoformat(),
             "status": self.status.value,
-            "objective_value": self.objective_value,
-            "fitness_score": self.fitness_score,
-            "completion_percentage": self.get_completion_percentage(),
-            "is_feasible": self.is_feasible(),
+            "statistics": self.statistics.to_dict(),
+            "quality_metrics": quality_score.to_dict(),
             "assignments": {
-                str(eid): {  # Convert UUID to string for serialization
+                str(eid): {
                     "exam_id": str(a.exam_id),
                     "time_slot_id": str(a.time_slot_id) if a.time_slot_id else None,
                     "assigned_date": (
                         a.assigned_date.isoformat() if a.assigned_date else None
                     ),
-                    "room_ids": [
-                        str(r) for r in a.room_ids
-                    ],  # Convert UUIDs to strings
+                    "room_ids": [str(r) for r in a.room_ids],
                     "status": a.status.value,
                     "conflicts": a.conflicts,
                     "room_allocations": {
                         str(r): cap for r, cap in a.room_allocations.items()
-                    },  # Convert UUID keys to strings
-                    "invigilator_ids": [
-                        str(inv_id) for inv_id in a.invigilator_ids
-                    ],  # ADD THIS LINE
+                    },
+                    "invigilator_ids": [str(inv_id) for inv_id in a.invigilator_ids],
                 }
                 for eid, a in self.assignments.items()
             },
-            "conflicts": {
-                str(c.conflict_id): {  # Convert UUID to string
+            "conflicts": [
+                {
+                    "conflict_id": str(c.conflict_id),
                     "type": c.conflict_type,
                     "severity": c.severity.value,
                     "description": c.description,
-                    "affected_exams": [
-                        str(e) for e in c.affected_exams
-                    ],  # Convert UUIDs to strings
+                    "affected_exams": [str(e) for e in c.affected_exams],
                     "affected_students": [str(s) for s in c.affected_students],
                     "affected_resources": [str(r) for r in c.affected_resources],
                     "resolution_suggestions": c.resolution_suggestions,
                 }
                 for c in self.conflicts.values()
-            },
-            "statistics": {
-                "total_exams": self.statistics.total_exams,
-                "assigned_exams": self.statistics.assigned_exams,
-                "unassigned_exams": self.statistics.unassigned_exams,
-                "student_conflicts": self.statistics.student_conflicts,
-                "room_conflicts": self.statistics.room_conflicts,
-                "time_conflicts": self.statistics.time_conflicts,
-                "room_utilization_percentage": self.statistics.room_utilization_percentage,
-                "timeslot_utilization_percentage": self.statistics.timeslot_utilization_percentage,
-            },
-            "soft_constraint_penalties": {
-                name: penalty
-                for name, penalty in self.soft_constraint_penalties.items()
-            },
-            "soft_constraint_satisfaction": {
-                name: satisfaction
-                for name, satisfaction in self.soft_constraint_satisfaction.items()
-            },
-            "total_soft_constraint_penalty": sum(
-                self.soft_constraint_penalties.values()
-            ),
+            ],
         }
 
-    # solution.py - Add method to TimetableSolution
+    def to_json_file(self, file_path: str, indent: int = 4):
+        """
+        ADDED: Serializes the solution to a JSON file.
+
+        Args:
+            file_path: The path to the output JSON file.
+            indent: The indentation level for pretty-printing the JSON.
+        """
+        logger.info(f"Exporting solution to {file_path}...")
+        try:
+            with open(file_path, "w") as f:
+                json.dump(self.to_dict(), f, indent=indent)
+            logger.info("Solution export successful.")
+        except Exception as e:
+            logger.error(f"Failed to export solution to JSON: {e}")
+            raise
 
     def update_soft_constraint_metrics(self, problem: "ExamSchedulingProblem"):
         """Update soft constraint metrics using SolutionMetrics"""
@@ -560,145 +466,70 @@ class TimetableSolution:
 
         metrics_calculator = SolutionMetrics()
         quality_score = metrics_calculator.evaluate_solution_quality(problem, self)
-
         self.soft_constraint_penalties = quality_score.soft_constraint_penalties
         self.soft_constraint_satisfaction = quality_score.soft_constraint_satisfaction
 
     def show_gui_viewer(self, title: Optional[str] = None) -> Any:
-        """Launch the GUI viewer for interactive timetable visualization.
-        Enhanced with better error handling and fallback options.
-        """
+        """Launch the GUI viewer for interactive timetable visualization."""
         logger.info("Attempting to launch GUI viewer for timetable solution...")
-
-        # Validate GUI requirements first with enhanced checks
         if not self.validate_gui_requirements():
             logger.warning("GUI requirements not met, cannot display GUI")
             self.print_solution_summary()
             return None
-
         try:
-            # Import GUI module (lazy import to avoid dependency issues)
-            try:
-                from scheduling_engine.gui import show_timetable_gui
-            except ImportError as e:
-                logger.error(f"GUI components not available: {e}")
-                raise ImportError("GUI components not available") from e
+            from scheduling_engine.gui import show_timetable_gui
 
-            # Update solution statistics before displaying
             self.update_statistics()
-
-            # Detect conflicts for display
-            conflicts = self.detect_conflicts()
-            logger.info(f"Solution has {len(conflicts)} conflicts to display")
-
-            # Create and show GUI with error handling
-            gui_viewer = show_timetable_gui(self.problem, self)
-            logger.info("GUI viewer launched successfully")
-            return gui_viewer
-
+            self.detect_conflicts()
+            return show_timetable_gui(self.problem, self)
         except ImportError as e:
-            error_msg = f"GUI components not available: {e}"
-            logger.error(f"{error_msg}")
-
-            # Enhanced fallback: print solution summary to console
-            print("=" * 80)
-            print("TIMETABLE SOLUTION SUMMARY (GUI Not Available)")
-            print("=" * 80)
+            logger.error(f"GUI components not available: {e}")
+            print("\n--- TIMETABLE SOLUTION SUMMARY (GUI Not Available) ---")
             self.print_solution_summary()
-            print("=" * 80)
-
-            # Ask if user wants to save solution to file instead
             try:
-                response = input(
-                    "Would you like to save solution to JSON file? (y/N): "
-                )
-                if response.lower() in ["y", "yes"]:
-                    filename = f"timetable_solution_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                    with open(filename, "w") as f:
-                        json.dump(self.to_dict(), f, indent=2)
-                    print(f"Solution saved to {filename}")
+                if input("Save solution to JSON file? (y/N): ").lower() == "y":
+                    filename = f"timetable_solution_{self.id}.json"
+                    self.to_json_file(filename)
             except:
-                pass  # Ignore errors in fallback mode
-
-            raise ImportError(f"Cannot display GUI: {error_msg}")
-
+                pass
+            return None
         except Exception as e:
             logger.error("Failed to launch GUI viewer", exc_info=True)
-
-            # Print full traceback to stdout
-            print("".join(traceback.format_exception(type(e), e, e.__traceback__)))
-
-            # Fallback: print solution summary
-            print(f"GUI Error: {e}")
-            print("Displaying text summary instead:")
             self.print_solution_summary()
-
-            # Re-raise the exception for test reporting
             raise
 
     def print_solution_summary(self):
-        """Print a comprehensive text-based summary of the solution.
-        This serves as a fallback when GUI is not available.
-        """
-        print(f"Solution Statistics:")
-        print(f"  Total Exams: {len(self.assignments)}")
-
-        assigned = sum(1 for a in self.assignments.values() if a.is_complete())
-        completion = self.get_completion_percentage()
+        """Print a comprehensive text-based summary of the solution."""
+        stats = self.statistics
+        print(f"Solution ID: {self.id}")
+        print(f"Status: {self.status.value}, Feasible: {self.is_feasible()}")
         print(
-            f"  Assigned Exams: {assigned}/{len(self.assignments)} ({completion:.1f}%)"
+            f"Assigned Exams: {stats.assigned_exams}/{stats.total_exams} ({self.get_completion_percentage():.1f}%)"
         )
-
-        conflicts = self.detect_conflicts()
-        print(f"  Conflicts: {len(conflicts)}")
-
-        if self.is_feasible():
-            print("  Status: FEASIBLE")
-        else:
-            print("  Status: HAS CONFLICTS")
-
-        # Show conflicts if any
-        if conflicts:
-            print(f"\nDetected Conflicts:")
-            for i, conflict in enumerate(conflicts[:3], 1):  # Show first 3
-                print(f"  {i}. {conflict.conflict_type}: {conflict.description}")
-            if len(conflicts) > 3:
-                print(f"  ... and {len(conflicts) - 3} more conflicts")
-        print()
+        print(f"Total Conflicts: {len(self.conflicts)}")
+        if self.conflicts:
+            for i, conflict in enumerate(list(self.conflicts.values())[:3], 1):
+                print(f"  - Conflict {i}: {conflict.description}")
 
     def validate_gui_requirements(self) -> bool:
-        """Validate that the solution has the necessary data for GUI display.
-        Returns:
-            bool: True if GUI can be displayed, False otherwise
-        """
-        try:
-            # Check essential data
-            if not self.problem:
-                logger.warning("No problem instance available")
-                return False
+        """Validate that the solution has the necessary data for GUI display."""
+        return all(
+            [
+                self.problem,
+                getattr(self.problem, "exams", None),
+                getattr(self.problem, "timeslots", None),
+                getattr(self.problem, "rooms", None),
+                self.assignments,
+            ]
+        )
 
-            if not hasattr(self.problem, "exams") or not self.problem.exams:
-                logger.warning("No exams in problem")
-                return False
+    def get_quality_score(self) -> Dict[str, Any]:
+        """Get quality score - compatibility method"""
+        from .metrics import SolutionMetrics
 
-            if not hasattr(self.problem, "timeslots") or not self.problem.timeslots:
-                logger.warning("No time slots in problem")
-                return False
-
-            if not hasattr(self.problem, "rooms") or not self.problem.rooms:
-                logger.warning("No rooms in problem")
-                return False
-
-            # Check assignments
-            if not self.assignments:
-                logger.warning("No assignments in solution")
-                return False
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Error validating GUI requirements: {e}")
-            return False
+        metrics_calculator = SolutionMetrics()
+        quality_score = metrics_calculator.evaluate_solution_quality(self.problem, self)
+        return quality_score.to_dict()
 
     def export_for_gui(self) -> Dict[str, Any]:
         """Export solution data in format optimized for GUI display (UUID keys internally)"""

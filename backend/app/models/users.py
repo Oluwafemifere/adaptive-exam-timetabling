@@ -12,7 +12,8 @@ from .base import Base, TimestampMixin
 if TYPE_CHECKING:
     from .jobs import TimetableJob
     from .constraints import ConfigurationConstraint
-    from .academic import Faculty, Department, Staff
+    from .academic import Faculty, Department
+    from .scheduling import Staff  # Added Staff to TYPE_CHECKING for relationship hint
 
 
 class User(Base, TimestampMixin):

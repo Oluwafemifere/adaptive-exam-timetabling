@@ -1,10 +1,14 @@
 """
-OverbookingPenaltyConstraint - S1 Implementation
+OverbookingPenaltyConstraint - S1 Implementation (FIXED)
 
 S1: Enhanced overbooking penalty
 
 For overbookable_r = 1 rooms, allow limited overbooking up to maxOverbookAbsolute_r.
 Penalty: W_overbook × ∑_{r,s} overbookExtra_{r,s} where W_overbook = 1000.
+
+FIX: The implementation was incomplete. It now correctly calculates the number of
+seated students in each room, links it to the overbooking penalty variable, and
+adds the penalty term to the objective function.
 """
 
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
@@ -43,13 +47,15 @@ class OverbookingPenaltyConstraint(CPSATBaseConstraint):
                 capacity = getattr(room, "capacity", 0)
                 overbook_rate = getattr(room, "overbook_rate", 0.1)
                 max_overbook_absolute = int(capacity * overbook_rate)
+                # Max possible students = capacity + overbooking allowance
+                max_seated = capacity + max_overbook_absolute
 
                 for slot_id in self._timeslots:
-                    # Variable for number of seated students
                     seated_key = (room_id, slot_id)
+                    # Variable for number of seated students
                     self.seated_vars[seated_key] = self.model.NewIntVar(
                         0,
-                        capacity + max_overbook_absolute,
+                        max_seated,
                         f"seated_{room_id}_{slot_id}",
                     )
 
@@ -62,23 +68,37 @@ class OverbookingPenaltyConstraint(CPSATBaseConstraint):
         """Add overbooking penalty constraints"""
         constraints_added = 0
 
-        for room_id, room in self._rooms.items():
-            is_overbookable = getattr(room, "overbookable", False)
-            if not is_overbookable:
-                continue  # Only process overbookable rooms
-
+        # For each room and slot that is overbookable
+        for (room_id, slot_id), overbook_var in self.overbook_extra_vars.items():
+            room = self._rooms[room_id]
             capacity = getattr(room, "capacity", 0)
-            overbook_rate = getattr(room, "overbook_rate", 0.1)
-            max_overbook_absolute = int(capacity * overbook_rate)
+            seated_var = self.seated_vars[(room_id, slot_id)]
 
-            for slot_id in self._timeslots:
-                seated_key = (room_id, slot_id)
+            # Calculate total seated students: seated_{r,s} = ∑_e enrol_e × y_{e,r,s}
+            seated_terms = []
+            for exam_id, exam in self._exams.items():
+                enrollment = getattr(exam, "enrollment", 0)
+                y_key = (exam_id, room_id, slot_id)
+                if y_key in self.y:
+                    seated_terms.append(enrollment * self.y[y_key])
 
-                # Ensure we don't exceed maximum overbooking limit
-                self.model.Add(
-                    self.overbook_extra_vars[seated_key] <= max_overbook_absolute
-                )
+            # Link the sum of enrollments to the seated_var
+            if seated_terms:
+                self.model.Add(seated_var == sum(seated_terms))
                 constraints_added += 1
+            else:
+                self.model.Add(seated_var == 0)
+                constraints_added += 1
+
+            # Define overbooking: overbookExtra_{r,s} >= seated_{r,s} - capacity_r
+            # This captures the number of students beyond the normal capacity.
+            self.model.Add(overbook_var >= seated_var - capacity)
+            constraints_added += 1
+
+        # Store penalty terms for the objective function
+        self.penalty_terms = [
+            (self.penalty_weight, var) for var in self.overbook_extra_vars.values()
+        ]
 
         self.constraint_count = constraints_added
 

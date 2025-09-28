@@ -18,7 +18,6 @@ from ...models import (
     Building,
     RoomType,
     Room,
-    TimeSlot,
     # Academic
     AcademicSession,
     Faculty,
@@ -30,7 +29,6 @@ from ...models import (
     # Scheduling
     Exam,
     Staff,
-    ExamRoom,
     ExamInvigilator,
     # Users and System
     User,
@@ -70,9 +68,6 @@ class DatabaseSeeder:
             # Get or create the academic session
             session_data = await self._ensure_academic_session(session_id)
 
-            # Seed core infrastructure optimized for scheduling
-            infrastructure = await self._seed_scheduling_infrastructure()
-
             # Seed academic structure with controlled complexity
             academic = await self._seed_academic_structure_for_scheduling(session_id)
 
@@ -103,7 +98,6 @@ class DatabaseSeeder:
                 "session_id": str(session_id),
                 "seeded_data": {
                     "session": session_data,
-                    "infrastructure": infrastructure,
                     "academic": academic,
                     "courses_students": courses_students,
                     "exams": exams,
@@ -160,123 +154,6 @@ class DatabaseSeeder:
             "start_date": session.start_date.isoformat(),
             "end_date": session.end_date.isoformat(),
             "is_active": session.is_active,
-        }
-
-    async def _seed_scheduling_infrastructure(self) -> Dict[str, Any]:
-        """Create infrastructure optimized for scheduling engine testing"""
-        # Check if infrastructure already exists
-        existing_buildings = await self.session.execute(select(Building))
-        if existing_buildings.scalars().first():
-            logger.info("Using existing infrastructure")
-            return await self._get_existing_infrastructure_summary()
-
-        # Create buildings
-        buildings_data = [
-            ("MAIN", "Main Building"),
-            ("ENG", "Engineering Block"),
-            ("SCI", "Science Block"),
-            ("MGT", "Management Block"),
-        ]
-
-        buildings = {}
-        for code, name in buildings_data:
-            building = Building(code=code, name=name, is_active=True)
-            self.session.add(building)
-            await self.session.flush()
-            buildings[code] = building
-
-        # Create room types
-        room_types_data = [
-            ("Lecture Hall", "Standard lecture hall"),
-            ("Computer Lab", "Computer laboratory"),
-            ("Auditorium", "Large auditorium"),
-            ("Classroom", "Regular classroom"),
-        ]
-
-        room_types = {}
-        for name, desc in room_types_data:
-            room_type = RoomType(name=name, description=desc, is_active=True)
-            self.session.add(room_type)
-            await self.session.flush()
-            room_types[name] = room_type
-
-        # Create rooms with strategic capacities for scheduling
-        rooms_config = [
-            # Main Building - mixed capacities
-            ("MAIN", "MAIN001", "Main Auditorium", 200, "Auditorium"),
-            ("MAIN", "MAIN101", "Main Lecture Hall 1", 120, "Lecture Hall"),
-            ("MAIN", "MAIN102", "Main Lecture Hall 2", 100, "Lecture Hall"),
-            ("MAIN", "MAIN201", "Main Classroom 1", 60, "Classroom"),
-            ("MAIN", "MAIN202", "Main Classroom 2", 50, "Classroom"),
-            # Engineering Block - tech-focused
-            ("ENG", "ENG101", "Engineering Lab 1", 40, "Computer Lab"),
-            ("ENG", "ENG102", "Engineering Lab 2", 40, "Computer Lab"),
-            ("ENG", "ENG201", "Engineering Lecture Hall", 80, "Lecture Hall"),
-            ("ENG", "ENG202", "Engineering Classroom", 45, "Classroom"),
-            # Science Block
-            ("SCI", "SCI101", "Science Lecture Hall", 90, "Lecture Hall"),
-            ("SCI", "SCI201", "Science Lab", 35, "Computer Lab"),
-            ("SCI", "SCI202", "Science Classroom", 50, "Classroom"),
-            # Management Block
-            ("MGT", "MGT101", "Management Hall", 150, "Lecture Hall"),
-            ("MGT", "MGT201", "Management Room 1", 70, "Classroom"),
-            ("MGT", "MGT202", "Management Room 2", 55, "Classroom"),
-        ]
-
-        rooms = []
-        for building_code, room_code, name, capacity, room_type_name in rooms_config:
-            room = Room(
-                code=room_code,
-                name=name,
-                capacity=capacity,
-                exam_capacity=int(capacity * 0.7),  # 70% for exams
-                building_id=buildings[building_code].id,
-                room_type_id=room_types[room_type_name].id,
-                has_projector=(capacity > 60),  # Larger rooms have projectors
-                has_ac=True,
-                has_computers=(room_type_name == "Computer Lab"),
-                is_active=True,
-            )
-            self.session.add(room)
-            rooms.append(room)
-
-        # Create time slots optimized for scheduling
-        time_slots_config = [
-            ("Morning Slot 1", time(8, 0), time(11, 0), 180),
-            ("Morning Slot 2", time(9, 0), time(12, 0), 180),
-            ("Afternoon Slot 1", time(12, 0), time(15, 0), 180),
-            ("Afternoon Slot 2", time(13, 0), time(16, 0), 180),
-            ("Evening Slot", time(16, 0), time(19, 0), 180),
-        ]
-
-        time_slots = []
-        for name, start_time, end_time, duration in time_slots_config:
-            slot = TimeSlot(
-                name=name,
-                start_time=start_time,
-                end_time=end_time,
-                duration_minutes=duration,
-                is_active=True,
-            )
-            self.session.add(slot)
-            time_slots.append(slot)
-
-        await self.session.commit()
-
-        self.seeded_counts.update(
-            {
-                "buildings": len(buildings),
-                "room_types": len(room_types),
-                "rooms": len(rooms),
-                "time_slots": len(time_slots),
-            }
-        )
-
-        return {
-            "buildings": len(buildings),
-            "room_types": len(room_types),
-            "rooms": len(rooms),
-            "time_slots": len(time_slots),
         }
 
     async def _seed_academic_structure_for_scheduling(
@@ -837,18 +714,6 @@ class DatabaseSeeder:
 
         return {"categories": len(categories), "rules": len(rules)}
 
-    async def _get_existing_infrastructure_summary(self) -> Dict[str, Any]:
-        """Get summary of existing infrastructure"""
-        buildings_count = await self.session.execute(select(Building))
-        rooms_count = await self.session.execute(select(Room))
-        time_slots_count = await self.session.execute(select(TimeSlot))
-
-        return {
-            "buildings": len(list(buildings_count.scalars().all())),
-            "rooms": len(list(rooms_count.scalars().all())),
-            "time_slots": len(list(time_slots_count.scalars().all())),
-        }
-
     async def _validate_seeded_data(self, session_id: UUID) -> Dict[str, Any]:
         """Validate the seeded data for scheduling engine compatibility"""
         issues = []
@@ -869,7 +734,7 @@ class DatabaseSeeder:
                     """
                 SELECT COUNT(*) FROM exam_system.students s
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM exam_system.course_registrations cr 
+                    SELECT 1 FROM exam_system.course_registrations cr
                     WHERE cr.student_id = s.id AND cr.session_id = :session_id
                 )
                 """
@@ -891,7 +756,7 @@ class DatabaseSeeder:
                     """
                 SELECT COUNT(*) FROM exam_system.courses c
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM exam_system.course_registrations cr 
+                    SELECT 1 FROM exam_system.course_registrations cr
                     WHERE cr.course_id = c.id AND cr.session_id = :session_id
                 )
                 """

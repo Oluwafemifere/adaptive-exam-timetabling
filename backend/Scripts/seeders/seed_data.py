@@ -34,7 +34,6 @@ from app.models import (
     Faculty,
     Department,
     Programme,
-    TimeSlot,
     ConstraintCategory,
     ConstraintRule,
     Course,
@@ -212,7 +211,7 @@ class EnhancedDatabaseSeeder:
         await self._seed_infrastructure()
         await self._seed_academic_structure()
         await self._seed_constraint_system()
-        await self._seed_time_slots()
+        # await self._seed_time_slots()
 
         if sample_data:
             await self._seed_sample_data()
@@ -1039,45 +1038,45 @@ class EnhancedDatabaseSeeder:
                     f"Constraint system seeding skipped (models may not exist): {e}"
                 )
 
-    async def _seed_time_slots(self) -> None:
-        """Seed time slots for exams"""
-        async with db_manager.get_db_transaction() as session:
-            logger.info("⏰ Seeding time slots...")
+    # async def _seed_time_slots(self) -> None:
+    #     """Seed time slots for exams"""
+    #     async with db_manager.get_db_transaction() as session:
+    #         logger.info("⏰ Seeding time slots...")
 
-            slots_data = [
-                ("Morning Slot", time(8, 0), time(11, 0), 180),
-                ("Afternoon Slot", time(12, 0), time(15, 0), 180),
-                ("Evening Slot", time(16, 0), time(19, 0), 180),
-                ("Extended Morning", time(8, 0), time(12, 0), 240),
-                ("Extended Afternoon", time(13, 0), time(17, 0), 240),
-                ("Weekend Morning", time(9, 0), time(12, 0), 180),
-                ("Weekend Afternoon", time(14, 0), time(17, 0), 180),
-            ]
+    #         slots_data = [
+    #             ("Morning Slot", time(8, 0), time(11, 0), 180),
+    #             ("Afternoon Slot", time(12, 0), time(15, 0), 180),
+    #             ("Evening Slot", time(16, 0), time(19, 0), 180),
+    #             ("Extended Morning", time(8, 0), time(12, 0), 240),
+    #             ("Extended Afternoon", time(13, 0), time(17, 0), 240),
+    #             ("Weekend Morning", time(9, 0), time(12, 0), 180),
+    #             ("Weekend Afternoon", time(14, 0), time(17, 0), 180),
+    #         ]
 
-            slots_created = 0
-            for name, start_time, end_time, duration in slots_data:
-                existing = (
-                    (
-                        await session.execute(
-                            select(TimeSlot).where(TimeSlot.name == name)
-                        )
-                    )
-                    .scalars()
-                    .first()
-                )
+    #         slots_created = 0
+    #         for name, start_time, end_time, duration in slots_data:
+    #             existing = (
+    #                 (
+    #                     await session.execute(
+    #                         select(TimeSlot).where(TimeSlot.name == name)
+    #                     )
+    #                 )
+    #                 .scalars()
+    #                 .first()
+    #             )
 
-                if not existing:
-                    slot = TimeSlot(
-                        name=name,
-                        start_time=start_time,
-                        end_time=end_time,
-                        duration_minutes=duration,
-                        is_active=True,
-                    )
-                    session.add(slot)
-                    slots_created += 1
+    #             if not existing:
+    #                 slot = TimeSlot(
+    #                     name=name,
+    #                     start_time=start_time,
+    #                     end_time=end_time,
+    #                     duration_minutes=duration,
+    #                     is_active=True,
+    #                 )
+    #                 session.add(slot)
+    #                 slots_created += 1
 
-            logger.info(f"✓ Time slots seeded: {slots_created} slots")
+    #         logger.info(f"✓ Time slots seeded: {slots_created} slots")
 
     async def _seed_sample_data(self) -> None:
         """Seed sample courses, students, and exams for testing"""

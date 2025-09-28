@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from .jobs import TimetableJob
     from .academic import AcademicSession
     from .users import User
-    from .scheduling import TimetableAssignment, ExamRoom
+    from .scheduling import TimetableAssignment
 
 
 class TimetableVersion(Base, TimestampMixin):
@@ -84,12 +84,9 @@ class TimetableVersion(Base, TimestampMixin):
         back_populates="depends_on_version",
     )
 
-    # Link to assignments and rooms
+    # Link to assignments
     timetable_assignments: Mapped[List["TimetableAssignment"]] = relationship(
         "TimetableAssignment", back_populates="version"
-    )
-    exam_rooms: Mapped[List["ExamRoom"]] = relationship(
-        "ExamRoom", back_populates="version"
     )
 
     approver: Mapped["User"] = relationship("User", foreign_keys=[approved_by])

@@ -4,15 +4,23 @@ import uuid
 
 from typing import List, Optional, TYPE_CHECKING
 
-from sqlalchemy import Date, DateTime, String, Boolean, Integer, ForeignKey, Index, func
+from sqlalchemy import (
+    Date,
+    DateTime,
+    String,
+    Boolean,
+    Integer,
+    ForeignKey,
+    Index,
+    func,
+    UniqueConstraint,
+)
 
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin
-
-from sqlalchemy import Date, UniqueConstraint
 
 from datetime import date
 
@@ -66,6 +74,9 @@ class AcademicSession(Base, TimestampMixin):
     )
     file_uploads: Mapped[List["FileUploadSession"]] = relationship(
         "FileUploadSession", back_populates="session"
+    )
+    student_enrollments: Mapped[List["StudentEnrollment"]] = relationship(
+        "StudentEnrollment", back_populates="session"
     )
 
     # NEW RELATIONSHIPS for template functionality
@@ -197,29 +208,22 @@ class Course(Base):
     )
 
 
-# Add these fields to the Student model
+# MODIFIED: Student model holds permanent info
 class Student(Base, TimestampMixin):
     __tablename__ = "students"
 
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-
     matric_number: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    # MISSING FIELDS
     first_name: Mapped[str] = mapped_column(String, nullable=False)
     last_name: Mapped[str] = mapped_column(String, nullable=False)
     entry_year: Mapped[int] = mapped_column(Integer, nullable=False)
-    current_level: Mapped[int] = mapped_column(Integer, nullable=False)
-    student_type: Mapped[str] = mapped_column(String, default="regular", nullable=True)
     special_needs: Mapped[list[str] | None] = mapped_column(
         ARRAY(String), nullable=True
     )
     programme_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("programmes.id"), nullable=False
-    )
-    is_active: Mapped[Optional[bool]] = mapped_column(
-        Boolean, default=True, nullable=True
     )
 
     programme: Mapped["Programme"] = relationship(
@@ -227,6 +231,38 @@ class Student(Base, TimestampMixin):
     )
     registrations: Mapped[List["CourseRegistration"]] = relationship(
         "CourseRegistration", back_populates="student"
+    )
+    enrollments: Mapped[List["StudentEnrollment"]] = relationship(
+        "StudentEnrollment", back_populates="student"
+    )
+
+
+# NEW: StudentEnrollment model for session-specific data
+class StudentEnrollment(Base):
+    __tablename__ = "student_enrollments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("students.id"), nullable=False
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
+    )
+    level: Mapped[int] = mapped_column(Integer, nullable=False)
+    student_type: Mapped[str | None] = mapped_column(
+        String, default="regular", nullable=True
+    )
+    is_active: Mapped[bool | None] = mapped_column(Boolean, default=True, nullable=True)
+
+    student: Mapped["Student"] = relationship("Student", back_populates="enrollments")
+    session: Mapped["AcademicSession"] = relationship(
+        "AcademicSession", back_populates="student_enrollments"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "session_id", name="student_session_key"),
     )
 
 
@@ -236,7 +272,6 @@ class CourseRegistration(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-
     student_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("students.id"), nullable=False
     )

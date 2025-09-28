@@ -8,12 +8,12 @@ from .academic import (
     Programme,
     Course,
     Student,
+    StudentEnrollment,  # New model
     CourseRegistration,
 )
 from .scheduling import (
     Exam,
     ExamDepartment,
-    TimeSlot,
     Staff,
     ExamInvigilator,
     StaffUnavailability,
@@ -24,7 +24,6 @@ from .infrastructure import (
     RoomType,
     Room,
     ExamAllowedRoom,
-    ExamRoom,
 )
 from .users import (
     User,
@@ -61,11 +60,11 @@ __all__ = [
     "Programme",
     "Course",
     "Student",
+    "StudentEnrollment",  # New model
     "CourseRegistration",
     # Scheduling models
     "Exam",
     "ExamDepartment",
-    "TimeSlot",
     "Staff",
     "ExamInvigilator",
     "StaffUnavailability",
@@ -75,7 +74,6 @@ __all__ = [
     "RoomType",
     "Room",
     "ExamAllowedRoom",
-    "ExamRoom",
     # User and system models
     "User",
     "UserRole",

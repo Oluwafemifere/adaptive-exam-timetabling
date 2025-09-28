@@ -14,8 +14,7 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from .base import Base, TimestampMixin
 
 if TYPE_CHECKING:
-    from .scheduling import Exam
-    from .versioning import TimetableVersion
+    from .scheduling import Exam, TimetableAssignment
 
 
 class Building(Base, TimestampMixin):
@@ -80,7 +79,9 @@ class Room(Base, TimestampMixin):
 
     building: Mapped["Building"] = relationship(back_populates="rooms")
     room_type: Mapped["RoomType"] = relationship(back_populates="rooms")
-    exam_rooms: Mapped[List["ExamRoom"]] = relationship(back_populates="room")
+    timetable_assignments: Mapped[List["TimetableAssignment"]] = relationship(
+        back_populates="room"
+    )
     allowed_exams: Mapped[List["ExamAllowedRoom"]] = relationship(back_populates="room")
 
 
@@ -96,40 +97,3 @@ class ExamAllowedRoom(Base):
 
     exam: Mapped["Exam"] = relationship(back_populates="allowed_rooms")
     room: Mapped["Room"] = relationship(back_populates="allowed_exams")
-
-
-class ExamRoom(Base):
-    __tablename__ = "exam_rooms"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    exam_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("exams.id"), nullable=False
-    )
-    room_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("rooms.id"), nullable=False
-    )
-    allocated_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
-    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    seating_arrangement: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-
-    # NEW FIELD: Add version reference
-    version_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("timetable_versions.id"), nullable=True
-    )
-
-    exam: Mapped["Exam"] = relationship(back_populates="exam_rooms")
-    room: Mapped["Room"] = relationship(back_populates="exam_rooms")
-
-    # NEW RELATIONSHIP: Link to version
-    version: Mapped["TimetableVersion"] = relationship(
-        "TimetableVersion", back_populates="exam_rooms"
-    )
-
-    # Add indexes for performance
-    __table_args__ = (
-        Index("idx_exam_rooms_version_id", "version_id"),
-        Index("idx_exam_rooms_exam_id", "exam_id"),
-        Index("idx_exam_rooms_room_id", "room_id"),
-    )

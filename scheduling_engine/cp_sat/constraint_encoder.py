@@ -1,3 +1,4 @@
+# scheduling_engine/cp_sat/constraint_encoder.py
 # UPDATED: constraint_encoder.py with filtering and pruning removed
 # Constraint encoder with simplified variable creation (no filtering)
 # scheduling_engine\cp_sat\constraint_encoder.py
@@ -35,6 +36,10 @@ class VariableCreationStats:
     y_vars_created: int = 0
     z_vars_created: int = 0
     u_vars_created: int = 0
+    # --- START OF FIX for Soft Constraints ---
+    unused_seats_vars_created: int = 0
+    daily_exam_count_vars_created: int = 0
+    # --- END OF FIX for Soft Constraints ---
     creation_time: float = 0.0
 
 
@@ -86,6 +91,27 @@ class VariableFactory:
             self.stats.z_vars_created += 1
         return self.variable_cache[key]
 
+    # --- START OF FIX for Soft Constraints ---
+    def get_unused_seats_var(self, room_id: UUID, slot_id: UUID, room_capacity: int):
+        """Create IntVar for unused seats in a room during a timeslot."""
+        key = f"unused_seats_{room_id}_{slot_id}"
+        if key not in self.variable_cache:
+            # The number of unused seats can range from 0 to the room's total capacity.
+            self.variable_cache[key] = self.model.NewIntVar(0, room_capacity, key)
+            self.stats.unused_seats_vars_created += 1
+        return self.variable_cache[key]
+
+    def get_daily_exam_count_var(self, invigilator_id: UUID, day_id: UUID):
+        """Create IntVar for the number of exams an invigilator works on a given day."""
+        key = f"daily_exams_{invigilator_id}_{day_id}"
+        if key not in self.variable_cache:
+            # Assuming max 3 slots per day, an invigilator can't have more than 3 assignments.
+            self.variable_cache[key] = self.model.NewIntVar(0, 3, key)
+            self.stats.daily_exam_count_vars_created += 1
+        return self.variable_cache[key]
+
+    # --- END OF FIX for Soft Constraints ---
+
     def get_creation_stats(self) -> VariableCreationStats:
         """Get basic variable creation statistics"""
         self.stats.creation_time = time.time() - self.creation_start_time
@@ -94,15 +120,26 @@ class VariableFactory:
     def log_statistics(self):
         """Log basic statistics"""
         stats = self.get_creation_stats()
+        total_vars = (
+            stats.x_vars_created
+            + stats.y_vars_created
+            + stats.u_vars_created
+            + stats.z_vars_created
+            + stats.unused_seats_vars_created
+            + stats.daily_exam_count_vars_created
+        )
+
         logger.info("=== SIMPLE VARIABLE FACTORY STATISTICS ===")
         logger.info(f"X Variables: {stats.x_vars_created}")
         logger.info(f"Y Variables: {stats.y_vars_created}")
         logger.info(f"U Variables: {stats.u_vars_created}")
         logger.info(f"Z Variables: {stats.z_vars_created}")
-        logger.info(f"Total creation time: {stats.creation_time:.2f}s")
+        logger.info(f"Unused Seats Variables: {stats.unused_seats_vars_created}")
         logger.info(
-            f"Total variables created: {stats.x_vars_created + stats.y_vars_created + stats.u_vars_created + stats.z_vars_created}"
+            f"Daily Exam Count Variables: {stats.daily_exam_count_vars_created}"
         )
+        logger.info(f"Total creation time: {stats.creation_time:.2f}s")
+        logger.info(f"Total variables created: {total_vars}")
 
 
 @dataclass(frozen=True)
@@ -113,6 +150,12 @@ class SharedVariables:
     z_vars: MappingProxyType  # (exam_id: UUID, slot_id: UUID) -> BoolVar
     y_vars: MappingProxyType  # (exam_id: UUID, room_id: UUID, slot_id: UUID) -> BoolVar
     u_vars: MappingProxyType  # (invigilator_id: UUID, exam_id: UUID, room_id: UUID, slot_id: UUID) -> BoolVar
+    # --- START OF FIX for Soft Constraints ---
+    unused_seats_vars: MappingProxyType  # (room_id: UUID, slot_id: UUID) -> IntVar
+    daily_exam_count_vars: (
+        MappingProxyType  # (invigilator_id: UUID, day_id: UUID) -> IntVar
+    )
+    # --- END OF FIX for Soft Constraints ---
     precomputed_data: MappingProxyType  # All precomputed data
     variable_creation_stats: VariableCreationStats  # Variable creation statistics
 
@@ -175,6 +218,10 @@ class ConstraintEncoder:
                 y_vars=MappingProxyType(variables["y"]),
                 z_vars=MappingProxyType(variables["z"]),
                 u_vars=MappingProxyType(variables["u"]),
+                # --- START OF FIX for Soft Constraints ---
+                unused_seats_vars=MappingProxyType(variables["unused_seats"]),
+                daily_exam_count_vars=MappingProxyType(variables["daily_exam_counts"]),
+                # --- END OF FIX for Soft Constraints ---
                 precomputed_data=MappingProxyType(precomputed_data),
                 variable_creation_stats=factory_stats,
             )
@@ -197,13 +244,21 @@ class ConstraintEncoder:
         if not self.factory:
             raise RuntimeError("Factory not initialized")
 
-        variables = {"x": {}, "y": {}, "u": {}, "z": {}}
+        variables = {
+            "x": {},
+            "y": {},
+            "u": {},
+            "z": {},
+            "unused_seats": {},
+            "daily_exam_counts": {},
+        }
 
         # Log available entities
         logger.info(f"Available entities for variable creation:")
         logger.info(f"  - Exams: {len(self.problem.exams)}")
         logger.info(f"  - Timeslots: {len(self.problem.timeslots)}")
         logger.info(f"  - Rooms: {len(self.problem.rooms)}")
+        logger.info(f"  - Days: {len(self.problem.days)}")
 
         # Check for invigilators - FIXED: Use proper attribute access
         invigilators = getattr(self.problem, "invigilators", {})
@@ -254,8 +309,28 @@ class ConstraintEncoder:
         else:
             logger.warning("No invigilators found - U variables will be missing!")
 
+        # --- START OF FIX for Soft Constraints ---
+        # Create unused_seats_vars
+        for room_id, room in self.problem.rooms.items():
+            for slot_id in self.problem.timeslots:
+                variables["unused_seats"][(room_id, slot_id)] = (
+                    self.factory.get_unused_seats_var(
+                        room_id, slot_id, room.exam_capacity
+                    )
+                )
+
+        # Create daily_exam_count_vars
+        if invigilators:
+            for inv_id in invigilators:
+                for day_id in self.problem.days:
+                    variables["daily_exam_counts"][(inv_id, day_id)] = (
+                        self.factory.get_daily_exam_count_var(inv_id, day_id)
+                    )
+        # --- END OF FIX for Soft Constraints ---
+
         logger.info(
-            f"Created all variables: X={len(variables['x'])}, Y={len(variables['y'])}, U={len(variables['u'])}, Z={len(variables['z'])}"
+            f"Created all variables: X={len(variables['x'])}, Y={len(variables['y'])}, U={len(variables['u'])}, Z={len(variables['z'])}, "
+            f"unused_seats={len(variables['unused_seats'])}, daily_exam_counts={len(variables['daily_exam_counts'])}"
         )
 
         return variables
@@ -305,6 +380,8 @@ class ConstraintEncoder:
     def _log_performance_breakdown(self):
         """Log basic performance breakdown"""
         total_time = self.encoding_stats["total_time"]
+        if total_time == 0:
+            total_time = 1e-6  # Avoid division by zero
         logger.info("=== ENCODING PERFORMANCE BREAKDOWN ===")
         logger.info(
             f"Variable creation: {self.encoding_stats['variable_creation_time']:.2f}s "

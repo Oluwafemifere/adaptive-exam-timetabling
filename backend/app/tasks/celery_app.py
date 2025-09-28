@@ -29,6 +29,7 @@ def make_celery() -> Celery:
         timezone="UTC",
         enable_utc=True,
         task_routes={
+            "generate_timetable": {"queue": "scheduling"},
             "backend.app.tasks.scheduling_tasks.*": {"queue": "scheduling"},
             "backend.app.tasks.data_processing_tasks.*": {"queue": "data_processing"},
             "backend.app.tasks.notification_tasks.*": {"queue": "notifications"},
@@ -182,7 +183,7 @@ class TaskMonitor:
     @staticmethod
     def get_task_info(task_id: str) -> Optional[Dict[str, Any]]:
         try:
-            res = celery_app.AsyncResult(task_id)
+            res = celery_app.AsyncResult(task_id)  # type: ignore
             return {
                 "task_id": task_id,
                 "status": getattr(res, "status", None),
@@ -197,7 +198,7 @@ class TaskMonitor:
     @staticmethod
     def get_active_tasks() -> Dict[str, Any]:
         try:
-            inspect = celery_app.control.inspect()
+            inspect = celery_app.control.inspect()  # type: ignore
             return {
                 "active": inspect.active() if inspect else {},
                 "scheduled": inspect.scheduled() if inspect else {},
@@ -210,7 +211,7 @@ class TaskMonitor:
     @staticmethod
     def cancel_task(task_id: str) -> bool:
         try:
-            celery_app.control.revoke(task_id, terminate=True)
+            celery_app.control.revoke(task_id, terminate=True)  # type: ignore
             return True
         except Exception as exc:
             logger.error("TaskMonitor.cancel_task failed: %s", exc)

@@ -1,3 +1,4 @@
+# scheduling_engine/core/problem_model.py
 # FIXED Problem Model Enhancement
 # This file enhances the problem model to properly handle backend data
 
@@ -15,7 +16,8 @@ import uuid
 
 
 from scheduling_engine.core.constraint_registry import ConstraintRegistry
-from ..data_flow_tracker import track_data_flow, DataFlowTracker
+
+# from ..data_flow_tracker import track_data_flow, DataFlowTracker
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,13 +97,19 @@ class Room:
 
     @classmethod
     def from_backend_data(cls, data: Dict[str, Any]) -> "Room":
-        """FIXED: Create Room from backend data with proper field mapping"""
-        # Handle UUID conversion
+        """FIXED: Create Room from backend data with proper field mapping and careful handling of adjacent_seat_pairs."""
         id_value = data["id"]
-        if isinstance(id_value, UUID):
-            uuid_obj = id_value
-        else:
-            uuid_obj = UUID(str(id_value))
+        uuid_obj = UUID(str(id_value)) if not isinstance(id_value, UUID) else id_value
+
+        # Carefully handle adjacent_seat_pairs which may be null or a dictionary
+        adjacent_pairs_value = data.get("adjacent_seat_pairs")
+        if not isinstance(adjacent_pairs_value, list):
+            if adjacent_pairs_value is not None:
+                logger.warning(
+                    f"Room {data.get('code', '')} has non-list adjacent_seat_pairs: {adjacent_pairs_value}. "
+                    "This field is being ignored as it doesn't match the expected format List[Tuple[int, int]]."
+                )
+            adjacent_pairs_value = []
 
         return cls(
             id=uuid_obj,
@@ -109,7 +117,7 @@ class Room:
             capacity=int(data.get("capacity", 0)),
             exam_capacity=int(data.get("exam_capacity", data.get("capacity", 0))),
             has_computers=bool(data.get("has_computers", False)),
-            adjacent_seat_pairs=data.get("adjacent_seat_pairs", []),
+            adjacent_seat_pairs=adjacent_pairs_value,
         )
 
 
@@ -468,7 +476,7 @@ class ExamSchedulingProblem:
 
         target_days = self.exam_days_count if self.exam_days_count else 10
         logger.info(
-            f"Generating exactly {target_days} days from {self.exam_period_start} to {self.exam_period_end}"
+            f"Generating exactly {target_days} weekdays from {self.exam_period_start} to {self.exam_period_end}"
         )
 
         holidays_set = self.holidays
@@ -480,7 +488,7 @@ class ExamSchedulingProblem:
             and (current_date - self.exam_period_start).days < 365
         ):  # Safety limit
 
-            # Only weekdays, exclude holidays
+            # Only weekdays (Monday=0, Sunday=6), exclude holidays
             if current_date.weekday() < 5 and current_date not in holidays_set:
                 day = Day(id=uuid4(), date=current_date)
                 days[day.id] = day
@@ -492,7 +500,7 @@ class ExamSchedulingProblem:
         # If we didn't get enough days, extend beyond the original end date
         if days_generated < target_days:
             logger.warning(
-                f"Only generated {days_generated} days, need {target_days}. Extending date range."
+                f"Only generated {days_generated} weekdays, need {target_days}. Extending date range."
             )
             extra_days_needed = target_days - days_generated
 
@@ -520,7 +528,7 @@ class ExamSchedulingProblem:
 
         total_timeslots = sum(len(day.timeslots) for day in days.values())
         logger.info(
-            f"Generated {len(days)} days with exactly {total_timeslots} timeslots"
+            f"Generated {len(days)} days with exactly {total_timeslots} timeslots (3 per day)"
         )
 
         # Validate exactly 3 timeslots per day
@@ -582,9 +590,9 @@ class ExamSchedulingProblem:
         day = self.days.get(day_id)
         return day.timeslots if day else []
 
-    @track_data_flow("load_frrom_backend", include_stats=True)
+    # @track_data_flow("load_frrom_backend", include_stats=True)
     async def load_from_backend(self, dataset: "ProblemModelCompatibleDataset") -> None:
-        """Enhanced loading with comprehensive logging"""
+        """Enhanced loading with comprehensive logging AND FIXED DATA MAPPING"""
         logger.info("=== PROBLEM MODEL LOADING START ===")
         logger.info(
             f"📦 DATASET INFO: {len(dataset.exams)} exams, {len(dataset.students)} students, {len(dataset.rooms)} rooms"
@@ -597,7 +605,11 @@ class ExamSchedulingProblem:
 
             for entity_type, count in entities_loaded.items():
                 if count == 0:
-                    logger.error(f"🔴 CRITICAL: No {entity_type} loaded!")
+                    # Make this a warning for students/invigilators, but an error for exams/rooms
+                    if entity_type in ["exams", "rooms"]:
+                        logger.error(f"🔴 CRITICAL: No {entity_type} loaded!")
+                    else:
+                        logger.warning(f"🟡 WARNING: No {entity_type} loaded!")
                 else:
                     logger.info(f"✅ {entity_type.upper()}: {count} loaded")
 
@@ -607,9 +619,33 @@ class ExamSchedulingProblem:
 
             # Phase 3: Student-exam mapping application
             logger.info("📋 PHASE 3: Applying student-exam mappings...")
+
+            # --- START OF CRITICAL FIX ---
+            # Use course_registrations from the dataset to populate the internal dictionaries.
+            # This ensures constraints like MaxExamsPerStudentPerDay have the data they need.
+            if dataset.course_registrations:
+                logger.info(
+                    f"Populating internal student-course mappings from {len(dataset.course_registrations)} registrations."
+                )
+                for reg in dataset.course_registrations:
+                    student_id = self._ensure_uuid(reg["student_id"])
+                    course_id = self._ensure_uuid(reg["course_id"])
+                    if (
+                        student_id in self.students and course_id
+                    ):  # Check course_id exists
+                        self.register_student_course(student_id, course_id)
+            else:
+                logger.warning(
+                    "No course registrations found in the dataset to build internal mappings."
+                )
+            # --- END OF CRITICAL FIX ---
+
             if dataset.student_exam_mappings:
                 self._apply_exact_student_exam_mappings(dataset.student_exam_mappings)
                 self._log_exam_student_statistics()
+
+            # This call is now supplemental to the registration data above
+            self.populate_exam_students()
 
             # Phase 4: Day and timeslot configuration
             logger.info("📋 PHASE 4: Configuring days and timeslots...")
@@ -683,7 +719,7 @@ class ExamSchedulingProblem:
                     f"  👻 {exam_info['course_code']} (ID: {exam_info['exam_id']})"
                 )
 
-    @track_data_flow("load_exams")
+    # @track_data_flow("load_exams")
     def _load_exams(self, exam_data_list: List[Dict[str, Any]]) -> int:
         """Load exams with tracking"""
         exams_loaded = 0
@@ -699,18 +735,9 @@ class ExamSchedulingProblem:
                 )
                 continue
 
-        DataFlowTracker.log_event(
-            "exams_loaded",
-            {
-                "total_attempted": len(exam_data_list),
-                "successfully_loaded": exams_loaded,
-                "failed": len(exam_data_list) - exams_loaded,
-            },
-        )
-
         return exams_loaded
 
-    @track_data_flow("load_rooms")
+    # @track_data_flow("load_rooms")
     def _load_rooms(self, room_data_list: List[Dict[str, Any]]) -> int:
         """Load rooms with tracking"""
         rooms_loaded = 0
@@ -725,15 +752,6 @@ class ExamSchedulingProblem:
                     f"Error loading room {room_data.get('id', 'unknown')}: {e}"
                 )
                 continue
-
-        DataFlowTracker.log_event(
-            "rooms_loaded",
-            {
-                "total_attempted": len(room_data_list),
-                "successfully_loaded": rooms_loaded,
-                "failed": len(room_data_list) - rooms_loaded,
-            },
-        )
 
         return rooms_loaded
 
@@ -759,7 +777,7 @@ class ExamSchedulingProblem:
                 if hasattr(exam, "_students") and exam._students:
                     exams_with_students += 1
 
-            if exams_with_students == 0:
+            if exams_with_students == 0 and len(self.exams) > 0:
                 warnings.append("No exams have students assigned")
 
         # Check room capacity vs exam requirements
@@ -1366,7 +1384,7 @@ class ExamSchedulingProblem:
         )
 
         # FIXED: Don't fail completely if some exams have no students
-        if exams_with_students == 0:
+        if exams_with_students == 0 and len(self.exams) > 0:
             logger.error("CRITICAL: No exams have students assigned!")
             return False
         elif exams_with_students < len(self.exams):
@@ -1420,7 +1438,7 @@ class ExamSchedulingProblem:
         total_registrations = sum(
             len(courses) for courses in self._student_courses.values()
         )
-        if total_registrations == 0:
+        if total_registrations == 0 and len(self.students) > 0:
             validation["warnings"].append("No student-course registrations found")
         validation["stats"]["student_registrations"] = total_registrations
 

@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Optional
 from uuid import UUID
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text  # MODIFIED: Imported text
 from .celery_app import celery_app
 from ..services.data_validation.csv_processor import CSVProcessor
 from ..services.data_validation.data_mapper import DataMapper
@@ -20,12 +20,13 @@ from ..services.data_validation.integrity_checker import (
     DataIntegrityChecker,
     IntegrityCheckResult,
 )
-from ..services.data_retrieval.audit_data import AuditData
+
+# REMOVED: from ..services.data_retrieval.audit_data import AuditData
 from ..models.file_uploads import FileUploadSession
 from ..core.exceptions import DataProcessingError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import update
-from sqlalchemy.orm import Session  # Add this import
+from sqlalchemy.orm import Session
 import asyncio
 from asgiref.sync import async_to_sync
 
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _async_process_csv_upload(
-    task_id: str,  # Receive task_id instead of task instance
+    task_id: str,
     upload_session_id: str,
     file_path: str,
     entity_type: str,
@@ -46,7 +47,6 @@ async def _async_process_csv_upload(
     from sqlalchemy.pool import NullPool
     from ..core.config import settings
 
-    # Get the current task instance using the task_id
     task = current_task._get_current_object()
     if task and task.request.id == task_id:
         update_state_func = task.update_state
@@ -66,12 +66,11 @@ async def _async_process_csv_upload(
             try:
                 csv_processor = CSVProcessor()
                 data_mapper = DataMapper(session)
-                audit_data = AuditData(session)
+                # REMOVED: audit_data = AuditData(session)
 
                 upload_uuid = UUID(upload_session_id)
                 user_uuid = UUID(user_id)
 
-                # Update progress
                 update_state_func(
                     state="PROGRESS",
                     meta={
@@ -175,13 +174,28 @@ async def _async_process_csv_upload(
                 )
 
                 try:
-                    await audit_data.log_activity(
-                        user_id=user_uuid,
-                        action="data_import",
-                        entity_type=entity_type,
-                        notes=f"CSV upload processed {mapping_result['processed_records']} records for {entity_type}",
-                        session_id=upload_session_id,
+                    # MODIFIED: Call the database function to log audit activity
+                    await session.execute(
+                        text(
+                            """
+                            SELECT exam_system.log_audit_activity(
+                                p_user_id => :user_id,
+                                p_action => :action,
+                                p_entity_type => :entity_type,
+                                p_notes => :notes,
+                                p_session_id => :session_id
+                            );
+                            """
+                        ),
+                        {
+                            "user_id": user_uuid,
+                            "action": "data_import",
+                            "entity_type": entity_type,
+                            "notes": f"CSV upload processed {mapping_result['processed_records']} records for {entity_type}",
+                            "session_id": upload_session_id,
+                        },
                     )
+                    await session.commit()
                 except Exception as e:
                     logger.warning(f"Failed to create audit log: {e}")
 
@@ -253,7 +267,6 @@ def process_csv_upload_task(
             },
         )
 
-        # Pass self.request.id instead of self
         return async_to_sync(_async_process_csv_upload)(
             self.request.id,
             upload_session_id,
@@ -319,14 +332,11 @@ async def _async_validate_data_integrity(
 
     async with db_manager.get_session() as db:
         try:
-            # Add null check for engine
             if db_manager.engine is None:
                 raise RuntimeError("Database engine not initialized")
 
-            # Get sync engine from async engine
             sync_engine = db_manager.engine.sync_engine
 
-            # Rest of the function remains the same...
             with Session(sync_engine) as sync_session:
                 integrity_checker = DataIntegrityChecker(sync_session)
 
@@ -335,7 +345,7 @@ async def _async_validate_data_integrity(
             total_entities = len(entity_types)
 
             for i, entity_type in enumerate(entity_types):
-                progress = int((i / total_entities) * 80) + 10  # 10-90%
+                progress = int((i / total_entities) * 80) + 10
 
                 task.update_state(
                     state="PROGRESS",
@@ -347,16 +357,12 @@ async def _async_validate_data_integrity(
                     },
                 )
 
-                # Get data for validation
                 data = await _get_entity_data(db, entity_type)
-
-                # Validate entity data
                 entity_validation = integrity_checker.check_integrity(
                     {entity_type: data}
                 )
                 validation_results[entity_type] = entity_validation
 
-            # Cross-entity validation
             task.update_state(
                 state="PROGRESS",
                 meta={
@@ -367,14 +373,12 @@ async def _async_validate_data_integrity(
                 },
             )
 
-            # Get all data for cross-validation
             all_data = {}
             for entity_type in entity_types:
                 all_data[entity_type] = await _get_entity_data(db, entity_type)
 
             cross_validation = integrity_checker.check_integrity(all_data)
 
-            # Compile final results
             task.update_state(
                 state="SUCCESS",
                 meta={
@@ -385,7 +389,6 @@ async def _async_validate_data_integrity(
                 },
             )
 
-            # Fix attribute access - use .errors instead of .get("errors")
             total_errors = sum(
                 len(result.errors) for result in validation_results.values()
             ) + len(cross_validation.errors)
@@ -467,8 +470,7 @@ async def _async_bulk_data_import(
             total_sources = len(sources)
 
             for i, source_config in enumerate(sources):
-                progress = int((i / total_sources) * 90) + 5  # 5-95%
-
+                progress = int((i / total_sources) * 90) + 5
                 source_type = source_config.get("type")
                 source_name = source_config.get("name", f"Source {i+1}")
 
@@ -482,7 +484,6 @@ async def _async_bulk_data_import(
                     },
                 )
 
-                # Process each source based on type
                 if source_type == "csv":
                     result = await _process_csv_source(db, source_config, user_id)
                 elif source_type == "json":
@@ -497,7 +498,6 @@ async def _async_bulk_data_import(
 
                 import_results[source_name] = result
 
-            # Final validation
             task.update_state(
                 state="PROGRESS",
                 meta={
@@ -545,17 +545,21 @@ async def _async_bulk_data_import(
 
 
 async def _get_entity_data(db: AsyncSession, entity_type: str) -> List[Dict[str, Any]]:
-    """Helper to get entity data for validation"""
-    # Implement your data retrieval logic here
-    # This is a placeholder implementation
-    return []
+    """
+    MODIFIED: Helper to get entity data for validation by calling a DB function.
+    """
+    result = await db.execute(
+        text("SELECT exam_system.get_entity_data_as_json(:entity_type)"),
+        {"entity_type": entity_type},
+    )
+    data = result.scalar_one_or_none()
+    return data if data is not None else []
 
 
 async def _update_upload_session_completed(
     db: AsyncSession, session_id: UUID, results: Dict[str, Any]
 ) -> None:
     """Update upload session as completed"""
-
     query = (
         update(FileUploadSession)
         .where(FileUploadSession.id == session_id)
@@ -567,7 +571,6 @@ async def _update_upload_session_completed(
             completed_at=datetime.utcnow(),
         )
     )
-
     await db.execute(query)
     await db.commit()
 
@@ -576,7 +579,6 @@ async def _update_upload_session_failed(
     db: AsyncSession, session_id: UUID, errors: List[str]
 ) -> None:
     """Update upload session as failed"""
-
     query = (
         update(FileUploadSession)
         .where(FileUploadSession.id == session_id)
@@ -586,7 +588,6 @@ async def _update_upload_session_failed(
             completed_at=datetime.utcnow(),
         )
     )
-
     await db.execute(query)
     await db.commit()
 
@@ -595,7 +596,6 @@ async def _process_csv_source(
     db: AsyncSession, source_config: Dict[str, Any], user_id: str
 ) -> Dict[str, Any]:
     """Process CSV data source"""
-    # Implementation for CSV source processing
     return {"success": True, "records_imported": 0}
 
 
@@ -603,7 +603,6 @@ async def _process_json_source(
     db: AsyncSession, source_config: Dict[str, Any], user_id: str
 ) -> Dict[str, Any]:
     """Process JSON data source"""
-    # Implementation for JSON source processing
     return {"success": True, "records_imported": 0}
 
 
@@ -611,11 +610,9 @@ async def _process_database_source(
     db: AsyncSession, source_config: Dict[str, Any], user_id: str
 ) -> Dict[str, Any]:
     """Process database data source"""
-    # Implementation for database source processing
     return {"success": True, "records_imported": 0}
 
 
-# Export task functions
 __all__ = [
     "process_csv_upload_task",
     "validate_data_integrity_task",

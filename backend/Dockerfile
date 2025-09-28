@@ -1,7 +1,8 @@
+# backend/Dockerfile
+
 # =================================================================
 # BAZE UNIVERSITY ADAPTIVE EXAM TIMETABLING SYSTEM - BACKEND DOCKERFILE
 # =================================================================
-
 # Multi-stage Docker build for FastAPI application
 FROM python:3.12-slim as base
 
@@ -37,12 +38,12 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
-# Create necessary directories
+# Create necessary directories and set permissions
 RUN mkdir -p /app/uploads /app/logs && \
     chown -R appuser:appuser /app
 
-# Make entrypoint script executable
-RUN chmod +x /app/scripts/entrypoint.sh
+# Make entrypoint script executable (if you have one)
+# RUN chmod +x /app/scripts/entrypoint.sh
 
 # Switch to non-root user
 USER appuser
@@ -54,5 +55,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Default command (will be overridden by docker-compose)
-CMD ["./scripts/entrypoint.sh", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# The CMD is now handled in the docker-compose.yml to allow for different commands
+# for the backend and celery_worker services.

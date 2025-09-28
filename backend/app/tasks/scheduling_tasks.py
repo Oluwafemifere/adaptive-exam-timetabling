@@ -3,33 +3,39 @@
 """
 Celery tasks for scheduling operations including timetable generation,
 optimization, and solution management with real-time progress updates.
+REFACTORED FOR PURE CP-SAT SOLVER IMPLEMENTATION.
 """
 
 import asyncio
+import json
 import logging
-from typing import Dict, Any, Optional, List
-from uuid import UUID, uuid4
-from datetime import datetime
+from typing import Dict, Any, Optional
+from uuid import UUID
+from datetime import datetime, date
 from celery import Task
 
+# --- Core Application Imports ---
 from .celery_app import celery_app
-from ..services.scheduling.timetable_job_orchestrator import (
-    TimetableJobOrchestrator,
-    OrchestratorOptions,
-)
-from ..services.scheduling.data_preparation_service import DataPreparationService
+from ..services.scheduling.data_preparation_service import ExactDataFlowService
 from ..services.notification.websocket_manager import publish_job_update
 from ..models.jobs import TimetableJob
 from ..core.exceptions import SchedulingError
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from ..core.config import settings
 
-# Scheduling engine imports
+# --- SQLAlchemy Imports for Per-Task DB Connection ---
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    create_async_engine,
+    async_sessionmaker,
+)
+from sqlalchemy import update, text
+from sqlalchemy.pool import NullPool
+
+# --- SCHEDULING ENGINE IMPORTS (CP-SAT ONLY) ---
 from scheduling_engine.core.problem_model import ExamSchedulingProblem
-from scheduling_engine.core.solution import TimetableSolution
+from scheduling_engine.core.solution import TimetableSolution, SolutionStatus
 from scheduling_engine.cp_sat.solver_manager import CPSATSolverManager
-from scheduling_engine.hybrid.coordinator import HybridCoordinator
-from scheduling_engine.genetic_algorithm.evolution_manager import EvolutionManager
+from ortools.sat.python import cp_model
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +53,6 @@ class SchedulingTask(Task):
         self.progress = progress
         self.current_phase = phase
 
-        # Update Celery task state
         self.update_state(
             state="PROGRESS",
             meta={
@@ -58,20 +63,32 @@ class SchedulingTask(Task):
                 "job_id": self.job_id,
             },
         )
-
-        # Send WebSocket update if job_id is available
         if self.job_id:
-            asyncio.create_task(
-                publish_job_update(
-                    self.job_id,
-                    {
-                        "status": "running",
-                        "progress": progress,
-                        "phase": phase,
-                        "message": message,
-                    },
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    publish_job_update(
+                        self.job_id,
+                        {
+                            "status": "running",
+                            "progress": progress,
+                            "phase": phase,
+                            "message": message,
+                        },
+                    )
                 )
-            )
+            except RuntimeError:  # No running loop
+                asyncio.run(
+                    publish_job_update(
+                        self.job_id,
+                        {
+                            "status": "running",
+                            "progress": progress,
+                            "phase": phase,
+                            "message": message,
+                        },
+                    )
+                )
 
 
 @celery_app.task(bind=True, base=SchedulingTask, name="generate_timetable")
@@ -84,45 +101,56 @@ def generate_timetable_task(
     options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Main timetable generation task using hybrid scheduling engine.
+    Main timetable generation task using the CP-SAT scheduling engine.
     Runs asynchronously with progress updates.
     """
     self.job_id = job_id
+    options = options or {}
 
     try:
         logger.info(f"Starting timetable generation for job {job_id}")
-
-        # Run the async scheduling process
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            result = loop.run_until_complete(
-                _async_generate_timetable(
-                    self, job_id, session_id, configuration_id, user_id, options
-                )
-            )
-            return result
-        finally:
-            loop.close()
+        coroutine = _async_generate_timetable(
+            self, job_id, session_id, configuration_id, user_id, options
+        )
+        result = asyncio.run(coroutine)
+        return result
 
     except Exception as exc:
-        logger.error(f"Timetable generation failed for job {job_id}: {exc}")
-
-        # Update job status to failed
-        asyncio.create_task(
+        logger.error(
+            f"Timetable generation failed catastrophically for job {job_id}: {exc}",
+            exc_info=True,
+        )
+        # Send a final failure message over WebSocket
+        asyncio.run(
             publish_job_update(
                 job_id,
                 {
                     "status": "failed",
-                    "progress": 0,
+                    "progress": self.progress,  # Report last known progress
                     "phase": "error",
-                    "message": f"Generation failed: {str(exc)}",
+                    "message": f"Critical Error: {str(exc)}",
                 },
             )
         )
+        # Re-raise the exception to have Celery mark the task as FAILED
+        raise
 
-        raise exc
+
+async def _update_job_status(
+    db: AsyncSession, job_id: UUID, status: str, started_at: Optional[datetime] = None
+) -> None:
+    """Updates the status and start time of a job."""
+    # --- START OF FIX ---
+    # Explicitly type the dictionary to allow for mixed value types (str, datetime).
+    # This resolves the Pylance reportArgumentType error.
+    values: Dict[str, Any] = {"status": status}
+    if started_at:
+        values["started_at"] = started_at
+    # --- END OF FIX ---
+
+    query = update(TimetableJob).where(TimetableJob.id == job_id).values(**values)
+    await db.execute(query)
+    await db.commit()
 
 
 async def _async_generate_timetable(
@@ -131,141 +159,118 @@ async def _async_generate_timetable(
     session_id: str,
     configuration_id: str,
     user_id: str,
-    options: Optional[Dict[str, Any]] = None,
+    options: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Async implementation of timetable generation"""
+    """Async implementation of timetable generation using CP-SAT solver."""
 
-    from ..database import db_manager
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    async_session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
 
-    if not db_manager._is_initialized:
-        await db_manager.initialize()
-    async with db_manager.get_session() as db:
-        try:
-            # Initialize services
-            orchestrator = TimetableJobOrchestrator(db)
-            data_prep = DataPreparationService(db)
+    try:
+        async with async_session_factory() as db:
+            # Immediately update the job status to 'running'
+            await db.execute(
+                text("SELECT exam_system.update_job_status(:job_id, 'running', true)"),
+                {"job_id": UUID(job_id)},
+            )
+            await db.commit()
 
-            # Parse UUIDs
-            session_uuid = UUID(session_id)
-            config_uuid = UUID(configuration_id)
-            user_uuid = UUID(user_id)
-            job_uuid = UUID(job_id)
+            # --- 1. Data Preparation ---
+            task.update_progress(5, "preparing_data", "Preparing scheduling dataset...")
+            data_prep = ExactDataFlowService(db)
+            dataset = await data_prep.build_exact_problem_model_dataset(
+                UUID(session_id)
+            )
 
-            task.update_progress(5, "preparing_data", "Preparing scheduling data...")
+            assert options
+            start_date_str = options.get("start_date")
+            end_date_str = options.get("end_date")
 
-            # Prepare dataset
-            dataset = await data_prep.build_dataset(session_uuid)
+            if start_date_str and end_date_str:
+                start_date = date.fromisoformat(start_date_str)
+                end_date = date.fromisoformat(end_date_str)
+                logger.info(
+                    f"Using date range from task options: {start_date} to {end_date}"
+                )
+            else:
+                date_range_config = dataset.date_range_config
+                if not date_range_config or "start_date" not in date_range_config:
+                    raise SchedulingError(
+                        "Dataset does not contain a valid date range configuration and none was provided in options."
+                    )
+                start_date = datetime.fromisoformat(
+                    date_range_config["start_date"]
+                ).date()
+                end_date = datetime.fromisoformat(date_range_config["end_date"]).date()
+                logger.info(
+                    f"Using date range from dataset: {start_date} to {end_date}"
+                )
 
+            # --- 2. Problem Model Building ---
             task.update_progress(15, "building_problem", "Building problem model...")
-
-            # Create problem model
             problem = ExamSchedulingProblem(
-                session_id=session_uuid,
-                session_name=f"Session {session_id}",
+                session_id=UUID(session_id),
+                exam_period_start=start_date,
+                exam_period_end=end_date,
                 db_session=db,
-                configuration_id=config_uuid,
             )
+            await problem.load_from_backend(dataset)
 
-            # Load data into problem model
-            await problem.load_from_backend()
-
+            # --- 3. Solver Initialization & Execution ---
             task.update_progress(
-                25, "initializing_solver", "Initializing hybrid solver..."
+                25, "initializing_solver", "Initializing CP-SAT solver..."
             )
+            solver_manager = CPSATSolverManager(problem=problem)
 
-            # Create hybrid coordinator
-            coordinator = HybridCoordinator()
+            task.update_progress(30, "solving", "Running CP-SAT solver...")
+            status, solution = solver_manager.solve()
 
-            def handle_progress(progress_info):
-                progress = progress_info.get(
-                    "progress", 0.0
-                )  # Expected to be between 0.0-1.0
-                message = progress_info.get("message", "")
-                phase = progress_info.get("phase", "optimizing")
-                # Map 0-1 progress to 25-85% of overall task progress
-                task_progress = 25 + int(progress * 60)
-                task.update_progress(task_progress, phase, message)
-
-            coordinator.add_progress_callback(handle_progress)
-            task.update_progress(30, "solving", "Running hybrid optimization...")
-
-            # Run optimization
-            results = await coordinator.optimize_schedule(
-                problem=problem, time_limit_seconds=600  # 10 minutes total timeout
-            )
-            solution = results.best_solution
-
-            if solution is None:
-                raise SchedulingError("No solution found during optimization")
+            # --- 4. Process Solution ---
+            if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                raise SchedulingError(
+                    f"Solver failed to find a solution. Status: {solver_manager.solver.StatusName(status)}"
+                )
 
             task.update_progress(85, "post_processing", "Processing solution...")
+            solution.update_statistics()
 
-            # Update solution statistics
-            if hasattr(solution, "update_statistics"):
-                solution.update_statistics()
+            objective_value = solution.objective_value
+            completion_percentage = solution.get_completion_percentage()
+            backend_solution_dict = solution.to_dict()
+            statistics_dict = solution.statistics.to_dict()
 
-            # Calculate quality metrics
-            objective_value = (
-                solution.calculate_objective_value()
-                if hasattr(solution, "calculate_objective_value")
-                else 0
+            # --- 5. Save Results ---
+            # --- 5. Save Results ---
+            task.update_progress(90, "saving_results", "Saving results to database...")
+            # --- START OF FIX ---
+            # Use the new DB function to save results
+            results_payload = {
+                "solution": backend_solution_dict,
+                "objective_value": objective_value,
+                "completion_percentage": completion_percentage,
+                "statistics": statistics_dict,
+            }
+            await db.execute(
+                text("SELECT exam_system.update_job_results(:job_id, :results)"),
+                {"job_id": UUID(job_id), "results": json.dumps(results_payload)},
             )
-            fitness_score = (
-                solution.calculate_fitness_score()
-                if hasattr(solution, "calculate_fitness_score")
-                else 0
-            )
-            completion_percentage = (
-                solution.get_completion_percentage()
-                if hasattr(solution, "get_completion_percentage")
-                else 0
-            )
+            await db.commit()
+            # --- END OF FIX ---
 
-            task.update_progress(90, "saving_results", "Saving results...")
-
-            # Export solution to backend format
-            backend_solution = (
-                solution.export_to_backend_format()
-                if hasattr(solution, "export_to_backend_format")
-                else {}
-            )
-
-            # Update job with results
-            await _update_job_results(
-                db,
-                job_uuid,
-                {
-                    "solution": backend_solution,
-                    "objective_value": objective_value,
-                    "fitness_score": fitness_score,
-                    "completion_percentage": completion_percentage,
-                    "statistics": (
-                        solution.statistics.__dict__
-                        if hasattr(solution, "statistics") and solution.statistics
-                        else {}
-                    ),
-                },
-            )
-
-            task.update_progress(100, "completed", "Timetable generation completed!")
-
-            # Send completion notification
+            task.update_progress(100, "completed", "Timetable generation complete!")
             await publish_job_update(
                 job_id,
                 {
                     "status": "completed",
                     "progress": 100,
                     "phase": "completed",
-                    "message": f"Generated timetable with {completion_percentage:.1f}% completion",
+                    "message": f"Generated timetable with {completion_percentage:.1f}% completion.",
                     "result": {
                         "objective_value": objective_value,
-                        "fitness_score": fitness_score,
                         "completion_percentage": completion_percentage,
-                        "total_assignments": (
-                            len(solution.assignments)
-                            if hasattr(solution, "assignments")
-                            else 0
-                        ),
+                        "total_assignments": len(solution.assignments),
                     },
                 },
             )
@@ -279,242 +284,23 @@ async def _async_generate_timetable(
                 "total_assignments": len(solution.assignments),
             }
 
-        except Exception as e:
-            logger.error(f"Error in timetable generation: {e}")
+    except Exception as e:
+        logger.error(
+            f"Error in async timetable generation for job {job_id}: {e}",
+            exc_info=True,
+        )
+        async with async_session_factory() as error_db:
+            await _update_job_failed(error_db, UUID(job_id), str(e))
 
-            # Update job as failed
-            await _update_job_failed(db, UUID(job_id), str(e))
-
-            raise SchedulingError(f"Timetable generation failed: {e}")
-
-
-@celery_app.task(bind=True, base=SchedulingTask, name="optimize_existing_timetable")
-def optimize_existing_timetable_task(
-    self, job_id: str, timetable_version_id: str, optimization_type: str = "incremental"
-) -> Dict[str, Any]:
-    """Optimize an existing timetable solution"""
-
-    self.job_id = job_id
-
-    try:
-        logger.info(f"Starting timetable optimization for job {job_id}")
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            result = loop.run_until_complete(
-                _async_optimize_timetable(
-                    self, job_id, timetable_version_id, optimization_type
-                )
-            )
-            return result
-        finally:
-            loop.close()
-
-    except Exception as exc:
-        logger.error(f"Timetable optimization failed for job {job_id}: {exc}")
-        raise exc
-
-
-async def _async_optimize_timetable(
-    task: SchedulingTask, job_id: str, timetable_version_id: str, optimization_type: str
-) -> Dict[str, Any]:
-    """Async implementation of timetable optimization"""
-
-    from ..database import db_manager
-
-    if not db_manager._is_initialized:
-        await db_manager.initialize()
-
-    async with db_manager.get_session() as db:
-        try:
-            task.update_progress(10, "loading_solution", "Loading existing solution...")
-
-            # Load existing solution (implementation would depend on your storage format)
-            # This is a placeholder - you'd implement based on how solutions are stored
-
-            task.update_progress(
-                30, "optimizing", f"Running {optimization_type} optimization..."
-            )
-
-            # Run optimization based on type
-            if optimization_type == "incremental":
-                # Run incremental optimization
-                pass
-            elif optimization_type == "full":
-                # Run full re-optimization
-                pass
-
-            task.update_progress(90, "saving_optimized", "Saving optimized solution...")
-
-            task.update_progress(100, "completed", "Optimization completed!")
-
-            return {
-                "success": True,
-                "job_id": job_id,
-                "optimization_type": optimization_type,
-            }
-
-        except Exception as e:
-            logger.error(f"Error in timetable optimization: {e}")
-            raise SchedulingError(f"Timetable optimization failed: {e}")
-
-
-@celery_app.task(name="validate_timetable_solution")
-def validate_timetable_solution_task(
-    solution_data: Dict[str, Any], session_id: str, configuration_id: str
-) -> Dict[str, Any]:
-    """Validate a timetable solution against constraints"""
-
-    try:
-        logger.info(f"Validating timetable solution for session {session_id}")
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            result = loop.run_until_complete(
-                _async_validate_solution(solution_data, session_id, configuration_id)
-            )
-            return result
-        finally:
-            loop.close()
-
-    except Exception as exc:
-        logger.error(f"Solution validation failed: {exc}")
-        raise exc
-
-
-async def _async_validate_solution(
-    solution_data: Dict[str, Any], session_id: str, configuration_id: str
-) -> Dict[str, Any]:
-    """Async implementation of solution validation"""
-
-    from ..database import db_manager
-
-    if not db_manager._is_initialized:
-        await db_manager.initialize()
-    async with db_manager.get_session() as db:
-        try:
-            # Create problem model for validation
-            problem = ExamSchedulingProblem(
-                session_id=UUID(session_id),
-                session_name=f"Validation Session {session_id}",
-                db_session=db,
-                configuration_id=UUID(configuration_id),
-            )
-
-            await problem.load_from_backend()
-
-            # Create solution from data
-            solution = TimetableSolution(problem=problem)
-
-            # Load assignments from solution_data
-            # (Implementation depends on your solution format)
-
-            # Validate with backend
-            validation_result = await solution.validate_with_backend()
-
-            # Detect conflicts
-            conflicts = solution.detect_conflicts()
-
-            return {
-                "success": True,
-                "validation_result": validation_result,
-                "conflict_count": len(conflicts),
-                "conflicts": [
-                    {
-                        "type": c.conflict_type,
-                        "severity": c.severity.value,
-                        "description": c.description,
-                        "affected_exams": [str(e) for e in c.affected_exams],
-                    }
-                    for c in conflicts
-                ],
-                "is_feasible": solution.is_feasible(),
-                "completion_percentage": solution.get_completion_percentage(),
-            }
-
-        except Exception as e:
-            logger.error(f"Error in solution validation: {e}")
-            raise SchedulingError(f"Solution validation failed: {e}")
-
-
-@celery_app.task(name="cancel_scheduling_job")
-def cancel_scheduling_job_task(
-    job_id: str, reason: str = "Cancelled by user"
-) -> Dict[str, Any]:
-    """Cancel a running scheduling job"""
-
-    try:
-        logger.info(f"Cancelling scheduling job {job_id}")
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            result = loop.run_until_complete(_async_cancel_job(job_id, reason))
-            return result
-        finally:
-            loop.close()
-
-    except Exception as exc:
-        logger.error(f"Job cancellation failed for {job_id}: {exc}")
-        raise exc
-
-
-async def _async_cancel_job(job_id: str, reason: str) -> Dict[str, Any]:
-    """Async implementation of job cancellation"""
-
-    from ..database import db_manager
-
-    if not db_manager._is_initialized:
-        await db_manager.initialize()
-    async with db_manager.get_session() as db:
-        try:
-            job_uuid = UUID(job_id)
-
-            # Update job status to cancelled
-            query = (
-                update(TimetableJob)
-                .where(TimetableJob.id == job_uuid)
-                .values(
-                    status="cancelled",
-                    error_message=reason,
-                    completed_at=datetime.utcnow(),
-                )
-            )
-
-            await db.execute(query)
-            await db.commit()
-
-            # Send cancellation notification
-            await publish_job_update(
-                job_id,
-                {
-                    "status": "cancelled",
-                    "progress": 0,
-                    "phase": "cancelled",
-                    "message": reason,
-                },
-            )
-
-            return {"success": True, "job_id": job_id, "reason": reason}
-
-        except Exception as e:
-            logger.error(f"Error cancelling job: {e}")
-            raise SchedulingError(f"Job cancellation failed: {e}")
-
-
-# Helper functions
+        raise SchedulingError(f"Timetable generation failed: {e}")
+    finally:
+        await engine.dispose()
 
 
 async def _update_job_results(
     db: AsyncSession, job_id: UUID, results: Dict[str, Any]
 ) -> None:
     """Update job with results data"""
-
     query = (
         update(TimetableJob)
         .where(TimetableJob.id == job_id)
@@ -523,12 +309,8 @@ async def _update_job_results(
             progress_percentage=100,
             result_data=results,
             completed_at=datetime.utcnow(),
-            objective_value=results.get("objective_value"),
-            soft_constraint_score=results.get("fitness_score"),
-            room_utilization_percentage=results.get("completion_percentage"),
         )
     )
-
     await db.execute(query)
     await db.commit()
 
@@ -537,7 +319,6 @@ async def _update_job_failed(
     db: AsyncSession, job_id: UUID, error_message: str
 ) -> None:
     """Update job as failed"""
-
     query = (
         update(TimetableJob)
         .where(TimetableJob.id == job_id)
@@ -545,15 +326,10 @@ async def _update_job_failed(
             status="failed", error_message=error_message, completed_at=datetime.utcnow()
         )
     )
-
     await db.execute(query)
     await db.commit()
 
 
-# Export task functions
 __all__ = [
     "generate_timetable_task",
-    "optimize_existing_timetable_task",
-    "validate_timetable_solution_task",
-    "cancel_scheduling_job_task",
 ]

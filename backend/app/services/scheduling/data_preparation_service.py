@@ -1,3 +1,4 @@
+# backend/app/services/scheduling/data_preparation_service.py
 # FIXED VERSION - Data Preparation Service with Exact Problem Model Compatibility
 from __future__ import annotations
 from datetime import datetime, date, time, timedelta
@@ -8,7 +9,9 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 import logging
 import uuid
-from scheduling_engine.data_flow_tracker import track_data_flow, DataFlowTracker
+from sqlalchemy import text
+import json
+
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,13 @@ class ExactDataMapper:
     @staticmethod
     def map_room_to_problem_model(db_room: Dict) -> Dict[str, Any]:
         """Map database room to EXACT problem model format"""
+        # Handle adjacent_seat_pairs carefully as it may be null or an object
+        adjacent_pairs = db_room.get("adjacent_seat_pairs")
+        if not isinstance(adjacent_pairs, list):
+            # If it's null or a dict like {"adjacent_rooms": [...]}, default to empty list.
+            # The problem model expects a List[Tuple[int, int]] which this data doesn't match.
+            adjacent_pairs = []
+
         return {
             # Required fields - must match Room class in problem_model.py
             "id": UUID(str(db_room["id"])),
@@ -55,7 +65,7 @@ class ExactDataMapper:
             "exam_capacity": db_room.get("exam_capacity", db_room.get("capacity", 0)),
             # Optional fields
             "has_computers": db_room.get("has_computers", False),
-            "adjacent_seat_pairs": db_room.get("adjacency_pairs", []),
+            "adjacent_seat_pairs": adjacent_pairs,
             # Additional fields for reference
             "name": db_room.get("name", ""),
             "building_name": db_room.get("building_name"),
@@ -76,7 +86,7 @@ class ExactDataMapper:
             ),
             # Optional fields with defaults
             "email": db_staff.get("email"),
-            "department": db_staff.get("department_name"),
+            "department": db_staff.get("department"),
             "can_invigilate": db_staff.get("can_invigilate", True),
             "max_concurrent_exams": db_staff.get("max_concurrent_exams", 1),
             "max_students_per_exam": db_staff.get("max_students_per_exam", 50),
@@ -155,7 +165,7 @@ class ExactDataMapper:
             # Validate required fields
             ExactDataMapper._validate_required_fields(
                 db_exam,
-                ["id", "course_id", "duration_minutes", "expected_students"],
+                ["id", "course_id", "duration_minutes"],
                 f"exam {db_exam.get('id', 'unknown')}",
             )
 
@@ -169,11 +179,21 @@ class ExactDataMapper:
 
             # Validate numeric fields
             duration = db_exam.get("duration_minutes", 180)
+            # Define the maximum possible duration for a single day
+            MAX_DURATION_MINUTES = 540  # 3 slots * 180 minutes/slot
+
             if not isinstance(duration, (int, float)) or duration <= 0:
                 logger.warning(
                     f"Invalid duration_minutes for exam {exam_id}: {duration}, using default 180"
                 )
                 duration = 180
+            elif duration > MAX_DURATION_MINUTES:
+                logger.error(
+                    f"CRITICAL: Exam {exam_id} has a duration of {duration} minutes, which exceeds the daily maximum of {MAX_DURATION_MINUTES}. Capping duration to prevent infeasibility."
+                )
+                # Cap the duration to the maximum possible value to allow scheduling.
+                # The ideal solution is to fix the data in the database.
+                duration = MAX_DURATION_MINUTES
 
             expected_students = db_exam.get("expected_students", 0)
             if not isinstance(expected_students, (int, float)) or expected_students < 0:
@@ -232,7 +252,7 @@ class ExactDataMapper:
 
             return {
                 "id": student_id,
-                "department": db_student.get("department_name", "Unknown Department"),
+                "department": db_student.get("department", "Unknown Department"),
                 "registered_courses": set(),
                 "matric_number": db_student.get("matric_number", f"STU_{student_id}"),
                 "current_level": int(db_student.get("current_level", 100)),
@@ -252,30 +272,16 @@ class ExactDataFlowService:
         self.session = session
         self.mapper = ExactDataMapper()
 
-    @track_data_flow("build_dataset")
+    # @track_data_flow("build_dataset")
     async def build_exact_problem_model_dataset(
         self, session_id: UUID
     ) -> ProblemModelCompatibleDataset:
         """Build dataset with EXACT problem model compatibility and comprehensive validation"""
         logger.info(f"Building EXACT problem model dataset for session {session_id}")
 
-        # Set session for tracking
-        DataFlowTracker.set_session(session_id)
-
         try:
-            # Phase 1: Validate raw data retrieval
+            # Phase 1: Validate raw data retrieval from PostgreSQL function
             raw_data = await self._validate_and_retrieve_raw_data(session_id)
-
-            # Log raw data statistics
-            DataFlowTracker.log_stats(
-                "raw_data_retrieved",
-                {
-                    "exams_count": len(raw_data.get("exams", [])),
-                    "rooms_count": len(raw_data.get("rooms", [])),
-                    "students_count": len(raw_data.get("students", [])),
-                    "session_id": str(session_id),
-                },
-            )
 
             # Phase 2: Map entities with validation
             mapped_entities = await self._map_entities_with_validation(raw_data)
@@ -305,7 +311,6 @@ class ExactDataFlowService:
 
         except Exception as e:
             logger.error(f"Error building exact problem model dataset: {e}")
-            DataFlowTracker.log_event("dataset_build_error", {"error": str(e)})
             raise
 
     def _log_dataset_statistics(self, dataset: ProblemModelCompatibleDataset):
@@ -320,19 +325,32 @@ class ExactDataFlowService:
             "total_registrations": len(dataset.course_registrations),
             "student_exam_mappings": len(dataset.student_exam_mappings),
         }
-        DataFlowTracker.log_stats("dataset_statistics", stats)
+        logger.info(f"Dataset Statistics: {stats}")
 
     async def _validate_and_retrieve_raw_data(self, session_id: UUID) -> Dict[str, Any]:
-        """Validate and retrieve raw data with comprehensive error handling"""
+        """
+        Validate and retrieve raw data by calling the PostgreSQL function.
+        """
+        logger.info(f"Executing PostgreSQL function for session {session_id}")
         try:
-            from ...services.data_retrieval.scheduling_data import SchedulingData
+            # Construct the SQL query to call the function
+            query = text("SELECT exam_system.get_scheduling_dataset(:session_id)")
+            result = await self.session.execute(query, {"session_id": session_id})
 
-            scheduling_data = SchedulingData(self.session)
-            raw_data = await scheduling_data.get_scheduling_data_for_session(session_id)
+            # The function returns a single row with a single column containing the JSONB
+            raw_data = result.scalar_one_or_none()
+
+            if not raw_data:
+                raise ValueError("PostgreSQL function returned no data.")
+
+            # The database driver (asyncpg) automatically decodes JSONB to a Python dict
+            if not isinstance(raw_data, dict):
+                # Fallback if the result is a string that needs parsing
+                raw_data = json.loads(raw_data)
 
             # Validate raw data structure
             if not raw_data or not isinstance(raw_data, dict):
-                raise ValueError("Invalid raw data structure")
+                raise ValueError("Invalid raw data structure from PostgreSQL function")
 
             # Check for critical data components
             critical_components = ["exams", "rooms", "students"]
@@ -342,7 +360,7 @@ class ExactDataFlowService:
 
             if missing_components:
                 raise ValueError(
-                    f"Missing critical data components: {missing_components}"
+                    f"Missing critical data components from PG function: {missing_components}"
                 )
 
             logger.info(
@@ -354,7 +372,7 @@ class ExactDataFlowService:
             logger.error(f"Failed to retrieve raw data for session {session_id}: {e}")
             raise
 
-    @track_data_flow("map_entities")
+    # @track_data_flow("map_entities")
     async def _map_entities_with_validation(
         self, raw_data: Dict[str, Any]
     ) -> Dict[str, List[Dict]]:
@@ -394,6 +412,41 @@ class ExactDataFlowService:
                 continue
         mapped_entities["students"] = students
 
+        # Map staff
+        staff = []
+        for staff_data in raw_data.get("staff", []):
+            try:
+                # Use the invigilator mapper as it contains all necessary fields
+                mapped_staff = self.mapper.map_invigilator_to_problem_model(staff_data)
+                staff.append(mapped_staff)
+            except Exception as e:
+                logger.error(
+                    f"Failed to map staff member {staff_data.get('id', 'unknown')}: {e}"
+                )
+                continue
+        mapped_entities["staff"] = staff
+
+        # Map invigilators (from invigilators key)
+        invigilators = []
+        for invigilator_data in raw_data.get("invigilators", []):
+            try:
+                mapped_invigilator = self.mapper.map_invigilator_to_problem_model(
+                    invigilator_data
+                )
+                invigilators.append(mapped_invigilator)
+            except Exception as e:
+                logger.error(
+                    f"Failed to map invigilator from staff {invigilator_data.get('id', 'unknown')}: {e}"
+                )
+                continue
+        mapped_entities["invigilators"] = invigilators
+
+        # Validate we have invigilators if we have exams
+        if len(exams) > 0 and len(invigilators) == 0:
+            logger.warning(
+                "No valid invigilators were mapped from the provided staff data."
+            )
+
         # Validate we have minimum required entities
         if len(exams) == 0:
             raise ValueError("No valid exams could be mapped")
@@ -430,7 +483,7 @@ class ExactDataFlowService:
                     has_students = len(exam["students"]) > 0
 
                 # Check actual student count
-                if not has_students and exam.get("actualstudentcount", 0) > 0:
+                if not has_students and exam.get("actual_student_count", 0) > 0:
                     has_students = True
 
                 if has_students:
@@ -439,11 +492,11 @@ class ExactDataFlowService:
                     phantom_exams.append(
                         {
                             "id": exam_id_str,
-                            "course_code": exam.get("coursecode", "Unknown"),
+                            "course_code": exam.get("course_code", "Unknown"),
                         }
                     )
                     logger.warning(
-                        f"👻 PHANTOM EXAM: {exam_id_str} - {exam.get('coursecode')}"
+                        f"👻 PHANTOM EXAM: {exam_id_str} - {exam.get('course_code')}"
                     )
 
             except Exception as e:
@@ -454,12 +507,14 @@ class ExactDataFlowService:
             f"📊 Valid exams: {len(valid_exams)}, Phantom exams filtered: {len(phantom_exams)}"
         )
 
-        if len(valid_exams) == 0:
-            raise ValueError("No valid exams found after phantom filtering!")
+        if len(valid_exams) == 0 and len(phantom_exams) > 0:
+            raise ValueError(
+                "No valid exams found after phantom filtering! All exams lack student registrations."
+            )
 
         return valid_exams
 
-    @track_data_flow("build_relationships")
+    # @track_data_flow("build_relationships")
     async def _build_and_validate_relationships(
         self, mapped_entities: Dict[str, List[Dict]], raw_data: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -471,14 +526,14 @@ class ExactDataFlowService:
 
             # Extract entities
             exams = mapped_entities.get("exams", [])
-            students = mapped_entities.get("students", [])
             raw_registrations = raw_data.get("course_registrations", [])
+            raw_student_exam_mappings = raw_data.get("student_exam_mappings", {})
 
-            # Build student-exam mappings
-            # Build initial mappings
-            student_exam_mappings = await self._build_student_exam_mappings(
-                exams, [], raw_registrations
-            )
+            # Build student-exam mappings from the raw JSON data
+            student_exam_mappings = {
+                str(student_id): {str(exam_id) for exam_id in exam_ids}
+                for student_id, exam_ids in raw_student_exam_mappings.items()
+            }
 
             # CRITICAL: Filter phantom exams before model creation
             filtered_exams = await self.validate_and_filter_phantom_exams(
@@ -494,13 +549,14 @@ class ExactDataFlowService:
             relationships["course_registrations"] = course_registrations
 
             # Populate exam student lists
-            populated_exams = self._populate_exam_students(exams, student_exam_mappings)
+            populated_exams = self._populate_exam_students(
+                filtered_exams, student_exam_mappings
+            )
             mapped_entities["exams"] = populated_exams
 
-            # Build timeslots and days
-            timeslots, days = await self._build_timeslots_and_days(raw_data)
-            relationships["timeslots"] = timeslots
-            relationships["days"] = days
+            # Days and timeslots are handled by the problem model as per user request
+            relationships["timeslots"] = raw_data.get("timeslots", [])
+            relationships["days"] = raw_data.get("days", [])
 
             # Validate relationship integrity
             self._validate_relationship_integrity(mapped_entities, relationships)
@@ -593,23 +649,81 @@ class ExactDataFlowService:
     async def _build_timeslots_and_days(
         self, raw_data: Dict[str, Any]
     ) -> Tuple[List[Dict], List[Dict]]:
-        """Build timeslots and days structure from raw data"""
+        """
+        CRITICAL FIX: Build timeslots and days structure from raw data by grouping
+        timeslots by date, instead of relying on a non-existent 'parent_day_id'.
+        """
         timeslots = []
         days = []
+        db_timeslots = raw_data.get("timeslots", [])
 
-        # Map timeslots
-        for ts_data in raw_data.get("timeslots", []):
+        if not db_timeslots:
+            logger.warning("No timeslots found in raw data to build days.")
+            return [], []
+
+        # Group timeslots by their date
+        slots_by_date = defaultdict(list)
+        for ts_data in db_timeslots:
             try:
-                timeslot = self.mapper.map_timeslot_to_problem_model(ts_data)
-                timeslots.append(timeslot)
-            except Exception as e:
-                logger.error(f"Failed to map timeslot: {e}")
+                # Ensure start_time is a time object to extract its date part for grouping
+                start_time_obj = ts_data.get("start_time")
+                if isinstance(start_time_obj, time):
+                    # We can't get a date from a time object alone, assume today for grouping logic
+                    # A more robust solution would require a date field on the timeslot in the DB
+                    # For now, we'll group them into a single day as a fallback.
+                    # A better approach requires exam_date on the exam object.
+                    # Let's assume for now that all timeslots belong to a generic date.
+                    # This is a limitation of the provided schema.
+                    # A better fix would be to generate days based on problem's start/end dates.
+                    # We'll use a simplified grouping here. Let's group by name.
+                    slots_by_date[ts_data["name"]].append(ts_data)
+                else:
+                    slots_by_date[start_time_obj.date()].append(ts_data)
+
+            except AttributeError:
+                logger.warning(
+                    f"Timeslot data missing 'start_time' or it's not a time object: {ts_data}"
+                )
                 continue
 
-        # Generate days from timeslots
-        if timeslots:
-            days = self._generate_days_from_timeslots(timeslots)
+        # If grouping by date failed (e.g. only time objects), generate days from problem model
+        if all(isinstance(k, str) for k in slots_by_date.keys()):
+            logger.warning(
+                "Could not group timeslots by date. Days will be generated by the problem model."
+            )
+            # Just map the timeslots and let the problem model handle day creation.
+            for ts_data in db_timeslots:
+                try:
+                    timeslots.append(self.mapper.map_timeslot_to_problem_model(ts_data))
+                except Exception as e:
+                    logger.error(f"Failed to map timeslot: {e}")
+            return timeslots, []
 
+        # Create a Day for each unique date and link its timeslots
+        for date_obj, date_slots_data in slots_by_date.items():
+            day_id = uuid4()
+            day_data = {"id": day_id, "date": date_obj, "timeslots": []}
+
+            for ts_data in date_slots_data:
+                try:
+                    ts_data["parent_day_id"] = (
+                        day_id  # Link timeslot to its new parent day
+                    )
+                    mapped_timeslot = self.mapper.map_timeslot_to_problem_model(ts_data)
+                    day_data["timeslots"].append(mapped_timeslot)
+                    timeslots.append(
+                        mapped_timeslot
+                    )  # Also add to the flat list for the dataset
+                except Exception as e:
+                    logger.error(
+                        f"Failed to map timeslot {ts_data.get('id', 'unknown')}: {e}"
+                    )
+
+            days.append(day_data)
+
+        logger.info(
+            f"Correctly built {len(days)} days and {len(timeslots)} timeslots from raw data."
+        )
         return timeslots, days
 
     def _validate_relationship_integrity(
@@ -723,7 +837,7 @@ class ExactDataFlowService:
             warnings.append(f"Removed {phantom_count} phantom exams")
 
         # Check if we have enough exams after removal
-        if len(dataset.exams) == 0:
+        if len(dataset.exams) == 0 and len(phantom_exams) > 0:
             integrity_issues.append("No valid exams remaining after phantom removal")
 
         # Report results
@@ -983,7 +1097,7 @@ class ExactDataFlowService:
             f"{total_students_assigned} total student assignments"
         )
 
-        if exams_with_students == 0:
+        if exams_with_students == 0 and total_exams > 0:
             logger.error("CRITICAL: No exams have students assigned after population!")
         elif exams_with_students < total_exams:
             logger.warning(

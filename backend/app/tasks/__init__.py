@@ -15,9 +15,6 @@ from .notification_tasks import (
 # Import and re-export scheduling tasks
 from .scheduling_tasks import (
     generate_timetable_task,
-    optimize_existing_timetable_task,
-    validate_timetable_solution_task,
-    cancel_scheduling_job_task,
 )
 
 # Import and re-export data processing tasks
@@ -40,9 +37,6 @@ __all__ = [
     "cleanup_old_notifications_task",
     # Scheduling tasks
     "generate_timetable_task",
-    "optimize_existing_timetable_task",
-    "validate_timetable_solution_task",
-    "cancel_scheduling_job_task",
     # Data processing tasks
     "process_csv_upload_task",
     "validate_data_integrity_task",

@@ -1,7 +1,14 @@
 # backend/app/models/base.py
 import uuid
 from datetime import datetime
-from sqlalchemy import DateTime, func, MetaData
+from sqlalchemy import (
+    DateTime,
+    func,
+    MetaData,
+    Table,
+    Column,
+    ForeignKey,
+)  # Added Table, Column, ForeignKey for association table
 from sqlalchemy.orm import Mapped, mapped_column, declarative_base
 from pydantic import ConfigDict
 
