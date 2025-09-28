@@ -1,3 +1,5 @@
+# scheduling_engine/core/constraint_registry.py
+
 """
 FIXED Constraint Registry - Enhanced Logging and Proper Category Activation with Dependency Resolution
 
@@ -11,6 +13,8 @@ Key Fixes:
 import logging
 import importlib
 from typing import Dict, List, Set, Optional, Any, TYPE_CHECKING
+
+# Import constraint types before conditional imports
 from .constraint_types import ConstraintDefinition, ConstraintType, ConstraintCategory
 
 if TYPE_CHECKING:
@@ -18,151 +22,141 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Predefined module mapping to avoid repeated dict creation
-# Updated MODULE_MAP in constraint_registry.py
-MODULE_MAP = {
-    "StartUniquenessConstraint": "scheduling_engine.constraints.hard_constraints.start_uniqueness",
-    "OccupancyDefinitionConstraint": "scheduling_engine.constraints.hard_constraints.occupancy_definition",
-    "RoomAssignmentConsistencyConstraint": "scheduling_engine.constraints.hard_constraints.room_assignment_consistency",
-    "RoomCapacityHardConstraint": "scheduling_engine.constraints.hard_constraints.room_capacity_hard",
-    "UnifiedStudentConflictConstraint": "scheduling_engine.constraints.hard_constraints.unified_student_conflict",
-    "MinimumInvigilatorsConstraint": "scheduling_engine.constraints.hard_constraints.minimum_invigilators",
-    "InvigilatorSinglePresenceConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_single_presence",
-    "RoomContinuityConstraint": "scheduling_engine.constraints.hard_constraints.room_continuity",
-    "MaxExamsPerStudentPerDayConstraint": "scheduling_engine.constraints.hard_constraints.max_exams_per_student_per_day",
-    "MinimumGapConstraint": "scheduling_engine.constraints.hard_constraints.minimum_gap",
-    "StartFeasibilityConstraint": "scheduling_engine.constraints.hard_constraints.start_feasibility",
-}
+# Global registry variables to avoid repeated imports
+_CONSTRAINT_REGISTRIES_LOADED = False
+_SOFT_REGISTRY = {}
+_HARD_REGISTRY = {}
 
 
-# Updated _load_all_definitions function in constraint_registry.py
-def _load_all_definitions() -> (
-    tuple[Dict[str, ConstraintDefinition], Dict[str, List[str]]]
-):
-    """Collect all constraint definitions and category mappings once."""
-    definitions: Dict[str, ConstraintDefinition] = {}
-    category_map: Dict[str, List[str]] = {}
+def _load_constraint_registries():
+    """Load constraint registries once and cache them globally."""
+    global _CONSTRAINT_REGISTRIES_LOADED, _SOFT_REGISTRY, _HARD_REGISTRY
 
-    def register_group(cat_key: str, items: List[tuple], cat_enum: ConstraintCategory):
-        ids = []
-        for cid, name, desc in items:
-            definition = ConstraintDefinition(
-                constraint_id=cid,
-                name=name,
-                description=desc,
-                constraint_type=ConstraintType.HARD,
-                category=cat_enum,
-                parameters={"category": cat_key, "required": cat_key == "CORE"},
-            )
-            definitions[cid] = definition
-            ids.append(cid)
-        category_map[cat_key] = ids
+    if _CONSTRAINT_REGISTRIES_LOADED:
+        return _SOFT_REGISTRY, _HARD_REGISTRY
 
-    # CORE constraints
-    register_group(
-        "CORE",
-        [
-            (
-                "StartUniquenessConstraint",
-                "C1 Start Uniqueness",
-                "Ensures each exam starts exactly once",
-            ),
-            (
-                "OccupancyDefinitionConstraint",
-                "C2 Occupancy Definition",
-                "Links occupancy to start variables",
-            ),
-            (
-                "RoomAssignmentConsistencyConstraint",
-                "C3 Room Assignment",
-                "Ensures room assignment consistency",
-            ),
-            (
-                "StartFeasibilityConstraint",
-                "C4 Start Feasibility",
-                "Ensures exams start in feasible slots",
-            ),
-        ],
-        ConstraintCategory.CORE,
-    )
+    try:
+        # Import with explicit module paths to avoid circular imports
+        from scheduling_engine.constraints.soft_constraints import (
+            SOFT_CONSTRAINT_REGISTRY as SOFT_REGISTRY,
+        )
+        from scheduling_engine.constraints.hard_constraints import (
+            HARD_CONSTRAINT_REGISTRY as HARD_REGISTRY,
+        )
 
-    # STUDENT_CONSTRAINTS
-    register_group(
-        "STUDENT_CONSTRAINTS",
-        [
-            (
-                "UnifiedStudentConflictConstraint",
-                "C5 Student Conflict",
-                "Prevents student exam conflicts",
-            ),
-            (
-                "MaxExamsPerStudentPerDayConstraint",
-                "C6 Max Exams Per Day",
-                "Limits daily exams per student",
-            ),
-            (
-                "MinimumGapConstraint",
-                "C7 Minimum Gap",
-                "Ensures minimum gap between student exams",
-            ),
-        ],
-        ConstraintCategory.STUDENT_CONSTRAINTS,
-    )
+        _SOFT_REGISTRY = SOFT_REGISTRY
+        _HARD_REGISTRY = HARD_REGISTRY
+        _CONSTRAINT_REGISTRIES_LOADED = True
 
-    # RESOURCE_CONSTRAINTS
-    register_group(
-        "RESOURCE_CONSTRAINTS",
-        [
-            (
-                "RoomCapacityHardConstraint",
-                "C8 Room Capacity",
-                "Enforces room capacity limits",
-            ),
-            (
-                "RoomContinuityConstraint",
-                "C9 Room Continuity",
-                "Ensures room continuity for multi-slot exams",
-            ),
-        ],
-        ConstraintCategory.RESOURCE_CONSTRAINTS,
-    )
+    except ImportError as e:
+        logger.warning(f"Constraints unavailable at import: {e}")
+        _SOFT_REGISTRY = {}
+        _HARD_REGISTRY = {}
+        _CONSTRAINT_REGISTRIES_LOADED = True
 
-    # INVIGILATOR_CONSTRAINTS
-    register_group(
-        "INVIGILATOR_CONSTRAINTS",
-        [
-            (
-                "MinimumInvigilatorsConstraint",
-                "C10 Minimum Invigilators",
-                "Ensures minimum invigilators",
-            ),
-            (
-                "InvigilatorSinglePresenceConstraint",
-                "C11 Single Presence",
-                "Prevents invigilator double-booking",
-            ),
-        ],
-        ConstraintCategory.INVIGILATOR_CONSTRAINTS,
-    )
-
-    logger.info(f"Loaded {len(definitions)} constraint definitions")
-    return definitions, category_map
-
-
-GLOBAL_CONSTRAINT_DEFINITIONS, GLOBAL_CATEGORY_CONSTRAINTS = _load_all_definitions()
+    return _SOFT_REGISTRY, _HARD_REGISTRY
 
 
 class ConstraintRegistry:
     """FIXED: Registry for constraint definitions with enhanced logging and dependency-based ordering."""
 
     def __init__(self):
-        # Copy the preloaded definitions and categories
-        self.definitions = GLOBAL_CONSTRAINT_DEFINITIONS.copy()
+        self.definitions = {}
         self.active_constraints = set()
-        self.category_constraints = GLOBAL_CATEGORY_CONSTRAINTS
+        self.category_constraints = {}
         self._cached_constraint_classes = {}
         self._active_constraints_changed = True
         self._cached_active_classes = None
+        self.module_map = {}
+
+        # Load definitions on initialization
+        self._load_all_definitions()
+
+    def _load_all_definitions(self):
+        """Load all constraint definitions from hard and soft registries."""
+        soft_registry, hard_registry = _load_constraint_registries()
+
+        if not soft_registry and not hard_registry:
+            logger.error("No constraint registries available")
+            return
+
+        definitions = {}
+        category_map = {}
+
+        CATEGORY_MAPPING = {
+            "CORE": ConstraintCategory.CORE,
+            "STUDENT_CONSTRAINTS": ConstraintCategory.STUDENT_CONSTRAINTS,
+            "RESOURCE_CONSTRAINTS": ConstraintCategory.RESOURCE_CONSTRAINTS,
+            "INVIGILATOR_CONSTRAINTS": ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+            "SOFT_CONSTRAINTS": ConstraintCategory.SOFT_CONSTRAINTS,
+        }
+
+        # Process hard constraints
+        for name, info in hard_registry.items():
+            category_str = info.get("category", "CORE")
+            category_enum = CATEGORY_MAPPING.get(category_str, ConstraintCategory.OTHER)
+
+            definition = ConstraintDefinition(
+                constraint_id=name,
+                name=info.get(
+                    "name", name.replace("Constraint", "").replace("_", " ").title()
+                ),
+                description=info.get("description", ""),
+                constraint_type=ConstraintType.HARD,
+                category=category_enum,
+                parameters={
+                    "category": category_str,
+                    "required": info.get("is_critical", False),
+                    "equation_ref": info.get("equation_ref", ""),
+                },
+            )
+
+            definitions[name] = definition
+            if category_str not in category_map:
+                category_map[category_str] = []
+            category_map[category_str].append(name)
+
+            # Build module map
+            if "class" in info:
+                self.module_map[name] = info["class"].__module__
+
+        # Process soft constraints
+        for name, info in soft_registry.items():
+            category_str = info.get("category", "SOFT_CONSTRAINTS")
+            category_enum = CATEGORY_MAPPING.get(category_str, ConstraintCategory.OTHER)
+
+            definition = ConstraintDefinition(
+                constraint_id=name,
+                name=info.get(
+                    "name", name.replace("Constraint", "").replace("_", " ").title()
+                ),
+                description=info.get("description", ""),
+                constraint_type=ConstraintType.SOFT,
+                category=category_enum,
+                parameters={
+                    "category": category_str,
+                    "weight": info.get("weight", 0),
+                    "equation_ref": info.get("equation_ref", ""),
+                    "required": False,
+                },
+            )
+
+            definitions[name] = definition
+            if category_str not in category_map:
+                category_map[category_str] = []
+            category_map[category_str].append(name)
+
+            # Build module map
+            if "class" in info:
+                self.module_map[name] = info["class"].__module__
+
+        self.definitions = definitions
+        self.category_constraints = category_map
+
+        logger.info(f"Loaded categories: {list(category_map.keys())}")
+        for category, constraints in category_map.items():
+            logger.info(f"Category '{category}' has {len(constraints)} constraints")
+        logger.info(f"Loaded {len(definitions)} constraint definitions")
 
     def register_definition(self, definition: ConstraintDefinition):
         """Register a constraint definition (not normally used)."""
@@ -194,6 +188,7 @@ class ConstraintRegistry:
         if category not in self.category_constraints:
             logger.error(f"Unknown category {category}")
             return
+
         constraints = self.category_constraints[category]
         for cid in constraints:
             self.activate(cid)
@@ -237,6 +232,18 @@ class ConstraintRegistry:
         self._activate_category("INVIGILATOR_CONSTRAINTS")
         logger.info("COMPLETE setup complete")
 
+    def configure_complete_with_soft(self):
+        """All constraints."""
+        logger.info("🚀 Starting COMPLETE configuration...")
+        self.active_constraints.clear()
+        self._active_constraints_changed = True
+        self._activate_category("CORE")
+        self._activate_category("STUDENT_CONSTRAINTS")
+        self._activate_category("RESOURCE_CONSTRAINTS")
+        self._activate_category("INVIGILATOR_CONSTRAINTS")
+        self._activate_category("SOFT_CONSTRAINTS")
+        logger.info("COMPLETE setup complete")
+
     def list_definitions(self) -> List[ConstraintDefinition]:
         """List all registered constraint definitions."""
         return list(self.definitions.values())
@@ -246,7 +253,7 @@ class ConstraintRegistry:
         if cid in self._cached_constraint_classes:
             return self._cached_constraint_classes[cid]
 
-        module_path = MODULE_MAP.get(cid)
+        module_path = self.module_map.get(cid)
         if not module_path:
             logger.error(f"No module mapping for {cid}")
             return None
@@ -306,7 +313,6 @@ class ConstraintRegistry:
 
             temp_visited.remove(node)
             visited.add(node)
-
             if node not in resolved_order:
                 resolved_order.append(node)
 
@@ -337,6 +343,7 @@ class ConstraintRegistry:
         logger.info(f"🔧 Constraint dependency order resolved: {resolved_order}")
 
         active = {}
+
         # Now iterate in dependency order instead of random set order
         for cid in resolved_order:
             if cid not in self.definitions:
@@ -365,8 +372,10 @@ class ConstraintRegistry:
             logger.info(f"Loaded constraint class {cid} category {cat_key}")
 
         logger.info(f"Successfully loaded {len(active)} active constraint classes")
+
         self._cached_active_classes = active
         self._active_constraints_changed = False
+
         return active
 
     def get_definition(self, constraint_id: str) -> Optional[ConstraintDefinition]:

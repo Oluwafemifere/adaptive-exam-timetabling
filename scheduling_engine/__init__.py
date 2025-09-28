@@ -22,7 +22,8 @@ from .core import (
     ConstraintRegistry,
     SolutionMetrics,
 )
-
+from .cp_sat.model_builder import CPSATModelBuilder
+from .cp_sat.solver_manager import CPSATSolverManager
 
 __version__ = "1.0.0"
 __author__ = "Baze University Exam Scheduling System"
@@ -40,6 +41,8 @@ __all__ = [
     "TimetableSolution",
     "ConstraintRegistry",
     "SolutionMetrics",
+    "CPSATModelBuilder",
+    "CPSATSolverManager",
 ]
 
 # Initialize package-level logger

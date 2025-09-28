@@ -8,8 +8,10 @@
 # 5. Updated all methods to work with UUID keys directly
 # 6. FIXED conflict detection to allow valid room sharing
 # 7. FIXED Update assignment status to CONFLICT when conflicts are detected
+# 8. FIXED division by zero errors in statistics calculation
 
 import json
+import traceback
 from typing import Dict, List, Optional, Any, Set, Tuple, TYPE_CHECKING
 from uuid import UUID, uuid4
 from dataclasses import dataclass, field
@@ -106,6 +108,8 @@ class TimetableSolution:
         }
         self.conflicts: Dict[UUID, ConflictReport] = {}
         self.statistics = SolutionStatistics()
+        self.soft_constraint_penalties: Dict[str, float] = {}
+        self.soft_constraint_satisfaction: Dict[str, float] = {}
 
     def assign(
         self,
@@ -174,8 +178,8 @@ class TimetableSolution:
         # Method 4: Registration data lookup
         if hasattr(self.problem, "course_students") and exam:
             course_id = exam.course_id
-            if course_id in self.problem._course_students:
-                students.update(self.problem._course_students[course_id])
+            if course_id in self.problem.course_students:
+                students.update(self.problem.course_students[course_id])
 
         return students
 
@@ -339,6 +343,32 @@ class TimetableSolution:
 
         return conflicts
 
+    def calculate_metrics(self) -> Dict[str, Any]:
+        """Calculate solution metrics - compatibility method"""
+        self.update_statistics()
+        return {
+            "completion_percentage": self.get_completion_percentage(),
+            "is_feasible": self.is_feasible(),
+            "objective_value": self.objective_value,
+            "fitness_score": self.fitness_score,
+            "statistics": self.statistics,
+            "conflict_count": len(self.detect_conflicts_fixed()),
+        }
+
+    def get_quality_score(self) -> Dict[str, Any]:
+        """Get quality score - compatibility method"""
+        from .metrics import SolutionMetrics
+
+        metrics_calculator = SolutionMetrics()
+        quality_score = metrics_calculator.evaluate_solution_quality(self.problem, self)
+
+        return {
+            "total_score": quality_score.total_score,
+            "feasibility_score": quality_score.feasibility_score,
+            "soft_constraint_penalties": quality_score.soft_constraint_penalties,
+            "soft_constraint_satisfaction": quality_score.soft_constraint_satisfaction,
+        }
+
     def detect_room_capacity_conflicts(
         self, slot_assignments: List[ExamAssignment], day: date, slot_id: UUID
     ) -> List[ConflictReport]:
@@ -432,23 +462,23 @@ class TimetableSolution:
             ]
         )
 
-        # Calculate utilization
+        # Calculate utilization - FIXED division by zero
         used_rooms = {
             r for a in self.assignments.values() if a.is_complete() for r in a.room_ids
         }
+        # FIXED: Check for zero division
+        total_rooms = len(self.problem.rooms) if self.problem.rooms else 0
         stats.room_utilization_percentage = (
-            len(used_rooms) / len(self.problem.rooms) * 100
-            if self.problem.rooms
-            else 0.0
+            (len(used_rooms) / total_rooms * 100) if total_rooms > 0 else 0.0
         )
 
         used_slots = {
             a.time_slot_id for a in self.assignments.values() if a.is_complete()
         }
+        # FIXED: Check for zero division
+        total_timeslots = len(self.problem.timeslots) if self.problem.timeslots else 0
         stats.timeslot_utilization_percentage = (
-            len(used_slots) / len(self.problem.timeslots) * 100
-            if self.problem.timeslots
-            else 0.0
+            (len(used_slots) / total_timeslots * 100) if total_timeslots > 0 else 0.0
         )
 
         self.statistics = stats
@@ -509,7 +539,30 @@ class TimetableSolution:
                 "room_utilization_percentage": self.statistics.room_utilization_percentage,
                 "timeslot_utilization_percentage": self.statistics.timeslot_utilization_percentage,
             },
+            "soft_constraint_penalties": {
+                name: penalty
+                for name, penalty in self.soft_constraint_penalties.items()
+            },
+            "soft_constraint_satisfaction": {
+                name: satisfaction
+                for name, satisfaction in self.soft_constraint_satisfaction.items()
+            },
+            "total_soft_constraint_penalty": sum(
+                self.soft_constraint_penalties.values()
+            ),
         }
+
+    # solution.py - Add method to TimetableSolution
+
+    def update_soft_constraint_metrics(self, problem: "ExamSchedulingProblem"):
+        """Update soft constraint metrics using SolutionMetrics"""
+        from .metrics import SolutionMetrics
+
+        metrics_calculator = SolutionMetrics()
+        quality_score = metrics_calculator.evaluate_solution_quality(problem, self)
+
+        self.soft_constraint_penalties = quality_score.soft_constraint_penalties
+        self.soft_constraint_satisfaction = quality_score.soft_constraint_satisfaction
 
     def show_gui_viewer(self, title: Optional[str] = None) -> Any:
         """Launch the GUI viewer for interactive timetable visualization.
@@ -570,7 +623,10 @@ class TimetableSolution:
             raise ImportError(f"Cannot display GUI: {error_msg}")
 
         except Exception as e:
-            logger.error(f"Failed to launch GUI viewer: {e}")
+            logger.error("Failed to launch GUI viewer", exc_info=True)
+
+            # Print full traceback to stdout
+            print("".join(traceback.format_exception(type(e), e, e.__traceback__)))
 
             # Fallback: print solution summary
             print(f"GUI Error: {e}")
@@ -723,7 +779,7 @@ class TimetableSolution:
         assigned_exams = sum(1 for a in self.assignments.values() if a.is_complete())
         completion_rate = (assigned_exams / total_exams) * 100 if total_exams > 0 else 0
 
-        # Resource utilization using UUID keys
+        # Resource utilization using UUID keys - FIXED division by zero
         used_rooms = set()
         room_usage_count = defaultdict(int)
         for assignment in self.assignments.values():
@@ -732,18 +788,18 @@ class TimetableSolution:
                 for room_id in assignment.room_ids:
                     room_usage_count[room_id] += 1
 
+        total_rooms = len(self.problem.rooms) if self.problem.rooms else 0
         room_utilization = (
-            len(used_rooms) / len(self.problem.rooms) * 100 if self.problem.rooms else 0
+            (len(used_rooms) / total_rooms) * 100 if total_rooms > 0 else 0
         )
 
-        # Time utilization using UUID keys
+        # Time utilization using UUID keys - FIXED division by zero
         used_slots = {
             a.time_slot_id for a in self.assignments.values() if a.is_complete()
         }
+        total_timeslots = len(self.problem.timeslots) if self.problem.timeslots else 0
         slot_utilization = (
-            len(used_slots) / len(self.problem.timeslots) * 100
-            if self.problem.timeslots
-            else 0
+            (len(used_slots) / total_timeslots) * 100 if total_timeslots > 0 else 0
         )
 
         # Conflicts
@@ -772,10 +828,10 @@ class TimetableSolution:
                 "fitness_score": self.fitness_score,
             },
             "resources": {
-                "total_rooms": len(self.problem.rooms),
+                "total_rooms": total_rooms,
                 "used_rooms": len(used_rooms),
                 "room_utilization": room_utilization,
-                "total_timeslots": len(self.problem.timeslots),
+                "total_timeslots": total_timeslots,
                 "used_timeslots": len(used_slots),
                 "slot_utilization": slot_utilization,
                 "most_used_room": most_used_room,
@@ -783,7 +839,7 @@ class TimetableSolution:
             "students": {
                 "total_students": (
                     len(self.problem.students)
-                    if hasattr(self.problem, "students")
+                    if hasattr(self.problem, "students") and self.problem.students
                     else 0
                 ),
                 "avg_students_per_exam": (
@@ -792,7 +848,7 @@ class TimetableSolution:
                         for exam in self.problem.exams.values()
                     )
                     / len(self.problem.exams)
-                    if self.problem.exams
+                    if self.problem.exams and len(self.problem.exams) > 0
                     else 0
                 ),
                 "total_registrations": (

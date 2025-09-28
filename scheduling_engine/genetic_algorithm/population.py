@@ -1,106 +1,95 @@
-# scheduling_engine/genetic_algorithm/population.py
-
+# FIXED Population Module - Statistics Issues Resolved
 """
-Population Management for Genetic Algorithm component of hybrid CP-SAT + GA scheduling engine.
-Manages the population of chromosomes representing variable selectors for CP-SAT search guidance.
+Safe Population Module - DEAP-Integrated population management without circular imports.
+This module fixes circular import issues and implements constraint-aware population
+management that works with the safe chromosome and operator implementations.
 
-Based on Nguyen et al. 2024 "Genetic-based Constraint Programming for Resource Constrained Job Scheduling"
+FIXED Issues:
+- Fixed statistics.stdev() error with proper variance calculation
+- Safe statistics calculations that work with Python 3.13
+- Proper handling of empty fitness lists
 """
 
-from typing import Dict, List, Optional, Any
-from uuid import UUID, uuid4
-from datetime import datetime
-from dataclasses import dataclass, field
-from enum import Enum
-from collections import defaultdict, Counter
+import logging
 import random
-import statistics
-import math
+from typing import List, Dict, Optional, Any
+import numpy as np
+from dataclasses import dataclass
+import math  # Use math instead of statistics for better compatibility
 
-from ..core.problem_model import ExamSchedulingProblem
-from .chromosome import VariableSelectorChromosome as Chromosome
-from ..utils.logging import get_logger
+# Safe imports - no circular dependencies
+from .deap_setup import is_deap_available
+from .types import PopulationStatistics, safe_fitness_value
 
-logger = get_logger(__name__)
+# Import for type checking only
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from .chromosome import DEAPIndividual, ChromosomeEncoder
 
-class PopulationInitStrategy(Enum):
-    """Population initialization strategies"""
-
-    RANDOM = "random"
-    SEEDED = "seeded"
-    HYBRID = "hybrid"
-    PROBLEM_AWARE = "problem_aware"
-
-
-class DiversityMeasure(Enum):
-    """Diversity measurement methods"""
-
-    GENOTYPIC = "genotypic"  # Based on chromosome structure
-    PHENOTYPIC = "phenotypic"  # Based on solution quality
-    BEHAVIORAL = "behavioral"  # Based on solution characteristics
+logger = logging.getLogger(__name__)
 
 
-@dataclass
-class PopulationStatistics:
-    """Statistics about the current population"""
+def safe_std_deviation(values: List[float]) -> float:
+    """Calculate standard deviation safely without using statistics.stdev()."""
+    if len(values) <= 1:
+        return 0.0
 
-    generation: int
-    size: int
-    best_fitness: float
-    worst_fitness: float
-    average_fitness: float
-    fitness_variance: float
-    fitness_std: float
-    diversity_score: float
-    convergence_measure: float
-    unique_individuals: int
-    elite_proportion: float
-    stagnation_generations: int
+    try:
+        mean_val = sum(values) / len(values)
+        variance = sum((x - mean_val) ** 2 for x in values) / (len(values) - 1)
+        return math.sqrt(variance)
+    except (ZeroDivisionError, ValueError):
+        return 0.0
 
 
-@dataclass
-class DiversityMetrics:
-    """Detailed diversity metrics"""
+def safe_variance(values: List[float]) -> float:
+    """Calculate variance safely without using statistics.variance()."""
+    if len(values) <= 1:
+        return 0.0
 
-    genotypic_diversity: float
-    phenotypic_diversity: float
-    behavioral_diversity: float
-    structure_entropy: float
-    fitness_entropy: float
-    population_spread: float
+    try:
+        mean_val = sum(values) / len(values)
+        variance = sum((x - mean_val) ** 2 for x in values) / (len(values) - 1)
+        return variance
+    except (ZeroDivisionError, ValueError):
+        return 0.0
 
 
-class Population:
+class DEAPPopulation:
     """
-    Represents a population of chromosomes (variable selectors) for the genetic algorithm.
-    Maintains diversity, tracks fitness, and supports various population operations.
+    FIXED DEAP-compatible population container with constraint-aware operations.
+
+    Fixes:
+    - No circular imports
+    - Safe individual management
+    - Constraint-aware population operations
+    - Memory-efficient processing
     """
 
-    def __init__(
-        self,
-        individuals: Optional[List[Chromosome]] = None,
-        max_size: int = 100,
-        diversity_threshold: float = 0.1,
-    ):
-        self.individuals: List[Chromosome] = individuals or []
-        self.max_size = max_size
-        self.diversity_threshold = diversity_threshold
+    def __init__(self, individuals: Optional[List["DEAPIndividual"]] = None):
+        self.individuals = individuals or []
         self.generation = 0
+        self.statistics = None
 
-        # Population tracking
-        self.fitness_history: List[List[float]] = []
-        self.diversity_history: List[float] = []
-        self.best_ever_individual: Optional[Chromosome] = None
-        self.best_ever_fitness: float = float("inf")
+        # DEAP-compatible containers (safe initialization)
+        if is_deap_available():
+            try:
+                from deap import tools
 
-        # Statistics
-        self.last_improvement_generation = 0
-        self.stagnation_counter = 0
+                self.hall_of_fame = tools.HallOfFame(10)
+                self.logbook = tools.Logbook()
+            except ImportError:
+                self.hall_of_fame = None
+                self.logbook = None
+        else:
+            self.hall_of_fame = None
+            self.logbook = None
 
-        # Diversity maintenance
-        self.diversity_archive: List[Chromosome] = []
-        self.diversity_threshold_adaptive = diversity_threshold
+        # Constraint-aware tracking
+        self.constraint_history = []
+        self.critical_constraint_history = []
+        self.feasibility_history = []
 
     def __len__(self) -> int:
         return len(self.individuals)
@@ -108,959 +97,688 @@ class Population:
     def __iter__(self):
         return iter(self.individuals)
 
-    def __getitem__(self, index: int) -> Chromosome:
+    def __getitem__(self, index):
         return self.individuals[index]
 
-    def add_individual(self, individual: Chromosome) -> bool:
-        """Add individual to population if there's space and it's diverse enough"""
-        try:
-            if len(self.individuals) >= self.max_size:
-                return False
+    def __setitem__(self, index, value):
+        self.individuals[index] = value
 
-            # Check diversity
-            if self._is_sufficiently_diverse(individual):
-                self.individuals.append(individual)
-                return True
+    def append(self, individual: "DEAPIndividual"):
+        """Add an individual to the population."""
+        self.individuals.append(individual)
 
-            return False
+    def extend(self, individuals: List["DEAPIndividual"]):
+        """Add multiple individuals to the population."""
+        self.individuals.extend(individuals)
 
-        except Exception as e:
-            logger.error(f"Error adding individual to population: {e}")
-            return False
-
-    def remove_individual(self, index: int) -> Optional[Chromosome]:
-        """Remove individual at specified index"""
-        try:
-            if 0 <= index < len(self.individuals):
-                return self.individuals.pop(index)
-            return None
-        except Exception as e:
-            logger.error(f"Error removing individual from population: {e}")
-            return None
-
-    def get_best_individual(self) -> Optional[Chromosome]:
-        """Get the best individual in current population"""
-        try:
-            if not self.individuals:
-                return None
-
-            evaluated_individuals = [
-                ind
-                for ind in self.individuals
-                if hasattr(ind, "fitness") and ind.fitness is not None
-            ]
-
-            if not evaluated_individuals:
-                return None
-
-            return min(evaluated_individuals, key=lambda x: x.fitness)
-
-        except Exception as e:
-            logger.error(f"Error getting best individual: {e}")
-            return None
-
-    def get_worst_individual(self) -> Optional[Chromosome]:
-        """Get the worst individual in current population"""
-        try:
-            if not self.individuals:
-                return None
-
-            evaluated_individuals = [
-                ind
-                for ind in self.individuals
-                if hasattr(ind, "fitness") and ind.fitness is not None
-            ]
-
-            if not evaluated_individuals:
-                return None
-
-            return max(evaluated_individuals, key=lambda x: x.fitness)
-
-        except Exception as e:
-            logger.error(f"Error getting worst individual: {e}")
-            return None
-
-    def get_elite_individuals(self, count: int) -> List[Chromosome]:
-        """Get top N individuals by fitness"""
-        try:
-            evaluated_individuals = [
-                ind
-                for ind in self.individuals
-                if hasattr(ind, "fitness") and ind.fitness is not None
-            ]
-
-            if not evaluated_individuals:
-                return []
-
-            # Sort by fitness (lower is better)
-            sorted_individuals = sorted(evaluated_individuals, key=lambda x: x.fitness)
-
-            return sorted_individuals[:count]
-
-        except Exception as e:
-            logger.error(f"Error getting elite individuals: {e}")
+    def get_best(self, n: int = 1) -> List["DEAPIndividual"]:
+        """Get the n best individuals by constraint-aware fitness."""
+        if not self.individuals:
             return []
 
-    def calculate_diversity(
-        self, measure: DiversityMeasure = DiversityMeasure.GENOTYPIC
-    ) -> float:
-        """Calculate population diversity using specified measure"""
-        try:
-            if len(self.individuals) < 2:
-                return 0.0
+        # Priority: fewer critical violations, fewer regular violations, higher fitness
+        def sort_key(x):
+            critical_violations = getattr(x, "critical_constraint_violations", 0)
+            regular_violations = getattr(x, "constraint_violations", 0)
+            fitness_value = safe_fitness_value(x)
 
-            if measure == DiversityMeasure.GENOTYPIC:
-                return self._calculate_genotypic_diversity()
-            elif measure == DiversityMeasure.PHENOTYPIC:
-                return self._calculate_phenotypic_diversity()
-            elif measure == DiversityMeasure.BEHAVIORAL:
-                return self._calculate_behavioral_diversity()
-            else:
-                return 0.0
+            # Sort by constraint priority first, then by fitness
+            return (critical_violations, regular_violations, -fitness_value)
 
-        except Exception as e:
-            logger.error(f"Error calculating diversity: {e}")
-            return 0.0
+        sorted_individuals = sorted(self.individuals, key=sort_key)
+        return sorted_individuals[:n]
 
-    def _calculate_genotypic_diversity(self) -> float:
-        """Calculate genotypic diversity based on chromosome structure"""
-        try:
-            total_distance = 0.0
-            comparisons = 0
+    def get_feasible(self) -> List["DEAPIndividual"]:
+        """Get all feasible individuals (no critical constraint violations)."""
+        return [
+            ind
+            for ind in self.individuals
+            if getattr(ind, "critical_constraint_violations", 0) == 0
+        ]
 
-            for i in range(len(self.individuals)):
-                for j in range(i + 1, len(self.individuals)):
-                    # Placeholder for genetic distance calculation
-                    # This should be implemented based on your specific chromosome structure
-                    distance = self._calculate_genetic_distance(
-                        self.individuals[i], self.individuals[j]
-                    )
-                    total_distance += distance
-                    comparisons += 1
+    def get_constraint_violators(self) -> List["DEAPIndividual"]:
+        """Get individuals with constraint violations."""
+        return [
+            ind
+            for ind in self.individuals
+            if getattr(ind, "constraint_violations", 0) > 0
+        ]
 
-            return total_distance / max(comparisons, 1)
-
-        except Exception as e:
-            logger.error(f"Error calculating genotypic diversity: {e}")
-            return 0.0
-
-    def _calculate_genetic_distance(
-        self, chrom1: Chromosome, chrom2: Chromosome
-    ) -> float:
-        """Calculate genetic distance between two chromosomes"""
-        # Placeholder implementation - should be customized based on your chromosome structure
-        try:
-            # Simple implementation: compare tree structures
-            if len(chrom1.genes) != len(chrom2.genes):
-                return 1.0
-
-            similarity = 0
-            for gene1, gene2 in zip(chrom1.genes, chrom2.genes):
-                if gene1.priority_tree.to_string() == gene2.priority_tree.to_string():
-                    similarity += 1
-
-            return 1.0 - (similarity / len(chrom1.genes))
-        except Exception as e:
-            logger.error(f"Error calculating genetic distance: {e}")
-            return 1.0
-
-    def _calculate_phenotypic_diversity(self) -> float:
-        """Calculate phenotypic diversity based on fitness values"""
-        try:
-            fitness_values = [
-                ind.fitness
-                for ind in self.individuals
-                if hasattr(ind, "fitness") and ind.fitness is not None
-            ]
-
-            if len(fitness_values) < 2:
-                return 0.0
-
-            # Calculate coefficient of variation
-            mean_fitness = statistics.mean(fitness_values)
-            std_fitness = statistics.stdev(fitness_values)
-
-            if mean_fitness == 0:
-                return 0.0
-
-            cv = std_fitness / abs(mean_fitness)
-            return min(1.0, cv)  # Normalize to [0, 1]
-
-        except Exception as e:
-            logger.error(f"Error calculating phenotypic diversity: {e}")
-            return 0.0
-
-    def _calculate_behavioral_diversity(self) -> float:
-        """Calculate behavioral diversity based on solution characteristics"""
-        # Placeholder implementation - requires solution evaluation
-        return 0.5
-
-    def _is_sufficiently_diverse(self, candidate: Chromosome) -> bool:
-        """Check if candidate is sufficiently diverse from existing population"""
-        try:
-            if not self.individuals:
-                return True
-
-            # Calculate minimum distance to existing individuals
-            min_distance = float("inf")
-            for individual in self.individuals:
-                distance = self._calculate_genetic_distance(candidate, individual)
-                min_distance = min(min_distance, distance)
-
-            return min_distance >= self.diversity_threshold_adaptive
-
-        except Exception as e:
-            logger.error(f"Error checking diversity: {e}")
-            return True  # Allow by default on error
-
-    def update_diversity_threshold(
-        self, generation: int, target_diversity: float
-    ) -> None:
-        """Adaptively update diversity threshold based on population state"""
-        try:
-            current_diversity = self.calculate_diversity()
-
-            # Adjust threshold to maintain target diversity
-            if current_diversity < target_diversity:
-                # Increase threshold to promote more diversity
-                self.diversity_threshold_adaptive *= 1.1
-            elif current_diversity > target_diversity * 1.5:
-                # Decrease threshold to allow more individuals
-                self.diversity_threshold_adaptive *= 0.9
-
-            # Keep threshold within reasonable bounds
-            self.diversity_threshold_adaptive = max(
-                0.01, min(0.5, self.diversity_threshold_adaptive)
-            )
-
-        except Exception as e:
-            logger.error(f"Error updating diversity threshold: {e}")
-
-    def get_statistics(self) -> PopulationStatistics:
-        """Get comprehensive population statistics"""
-        try:
-            if not self.individuals:
-                return PopulationStatistics(
-                    generation=self.generation,
-                    size=0,
-                    best_fitness=float("inf"),
-                    worst_fitness=float("inf"),
-                    average_fitness=float("inf"),
-                    fitness_variance=0.0,
-                    fitness_std=0.0,
-                    diversity_score=0.0,
-                    convergence_measure=0.0,
-                    unique_individuals=0,
-                    elite_proportion=0.0,
-                    stagnation_generations=self.stagnation_counter,
-                )
-
-            # Calculate fitness statistics
-            fitness_values = [
-                ind.fitness
-                for ind in self.individuals
-                if hasattr(ind, "fitness") and ind.fitness is not None
-            ]
-
-            if not fitness_values:
-                fitness_values = [float("inf")]
-
-            best_fitness = min(fitness_values)
-            worst_fitness = max(fitness_values)
-            avg_fitness = statistics.mean(fitness_values)
-            fitness_var = (
-                statistics.variance(fitness_values) if len(fitness_values) > 1 else 0.0
-            )
-            fitness_std = (
-                statistics.stdev(fitness_values) if len(fitness_values) > 1 else 0.0
-            )
-
-            # Calculate diversity
-            diversity_score = self.calculate_diversity()
-
-            # Calculate convergence measure
-            convergence_measure = self._calculate_convergence_measure()
-
-            # Count unique individuals
-            unique_count = self._count_unique_individuals()
-
-            # Calculate elite proportion
-            elite_threshold = avg_fitness * 0.9  # Top 10% by fitness
-            elite_count = sum(1 for f in fitness_values if f <= elite_threshold)
-            elite_proportion = (
-                elite_count / len(fitness_values) if fitness_values else 0.0
-            )
-
+    def calculate_statistics(self) -> PopulationStatistics:
+        """Calculate comprehensive population statistics with constraint awareness."""
+        if not self.individuals:
             return PopulationStatistics(
                 generation=self.generation,
-                size=len(self.individuals),
-                best_fitness=best_fitness,
-                worst_fitness=worst_fitness,
-                average_fitness=avg_fitness,
-                fitness_variance=fitness_var,
-                fitness_std=fitness_std,
-                diversity_score=diversity_score,
-                convergence_measure=convergence_measure,
-                unique_individuals=unique_count,
-                elite_proportion=elite_proportion,
-                stagnation_generations=self.stagnation_counter,
-            )
-
-        except Exception as e:
-            logger.error(f"Error getting population statistics: {e}")
-            return PopulationStatistics(
-                generation=self.generation,
-                size=len(self.individuals),
-                best_fitness=float("inf"),
-                worst_fitness=float("inf"),
-                average_fitness=float("inf"),
+                size=0,
+                best_fitness=0.0,
+                average_fitness=0.0,
+                worst_fitness=0.0,
                 fitness_variance=0.0,
-                fitness_std=0.0,
-                diversity_score=0.0,
-                convergence_measure=0.0,
-                unique_individuals=0,
-                elite_proportion=0.0,
-                stagnation_generations=self.stagnation_counter,
+                average_diversity=0.0,
+                constraint_violations=0,
+                critical_constraint_violations=0,
+                feasibility_rate=0.0,
+                convergence_metric=0.0,
+                constraint_satisfaction_rate=0.0,
+                pruning_efficiency=0.0,
             )
 
-    def _calculate_convergence_measure(self) -> float:
-        """Calculate how converged the population is"""
+        # Extract fitness values and constraint metrics
+        fitness_values = []
+        total_violations = 0
+        total_critical_violations = 0
+        feasible_count = 0
+        pruning_efficiencies = []
+
+        for ind in self.individuals:
+            fitness_val = safe_fitness_value(ind)
+            fitness_values.append(fitness_val)
+
+            violations = getattr(ind, "constraint_violations", 0)
+            critical_violations = getattr(ind, "critical_constraint_violations", 0)
+
+            total_violations += violations
+            total_critical_violations += critical_violations
+
+            if violations == 0:
+                feasible_count += 1
+
+            pruning_efficiency = getattr(ind, "pruning_efficiency", 0.0)
+            pruning_efficiencies.append(pruning_efficiency)
+
+        if not fitness_values:
+            fitness_values = [0.0]
+
+        # Calculate diversity (sample for efficiency)
+        diversity_sum = 0.0
+        diversity_count = 0
+        sample_size = min(20, len(self.individuals))
+        if sample_size > 1:
+            sample_indices = random.sample(range(len(self.individuals)), sample_size)
+            for i in range(sample_size):
+                for j in range(i + 1, sample_size):
+                    ind1 = self.individuals[sample_indices[i]]
+                    ind2 = self.individuals[sample_indices[j]]
+                    diversity = self._calculate_diversity_metric(ind1, ind2)
+                    diversity_sum += diversity
+                    diversity_count += 1
+
+        average_diversity = (
+            diversity_sum / diversity_count if diversity_count > 0 else 0.0
+        )
+
+        # Calculate convergence metric
+        mean_fitness = sum(fitness_values) / len(fitness_values)
+        fitness_std = safe_std_deviation(fitness_values)
+        convergence_metric = fitness_std / mean_fitness if mean_fitness > 0 else 0.0
+
+        # Constraint satisfaction rate
+        total_possible_violations = (
+            len(self.individuals) * 20
+        )  # Assume 20 constraints per individual
+        constraint_satisfaction_rate = max(
+            0.0,
+            1.0
+            - (total_violations + total_critical_violations * 2)
+            / max(1, total_possible_violations),
+        )
+
+        # Average pruning efficiency
+        avg_pruning_efficiency = (
+            float(np.mean(pruning_efficiencies)) if pruning_efficiencies else 0.0
+        )
+
+        self.statistics = PopulationStatistics(
+            generation=self.generation,
+            size=len(self.individuals),
+            best_fitness=max(fitness_values),
+            average_fitness=mean_fitness,
+            worst_fitness=min(fitness_values),
+            fitness_variance=safe_variance(fitness_values),  # FIX: Use safe variance
+            average_diversity=average_diversity,
+            constraint_violations=total_violations,
+            critical_constraint_violations=total_critical_violations,
+            feasibility_rate=feasible_count / len(self.individuals),
+            convergence_metric=convergence_metric,
+            constraint_satisfaction_rate=constraint_satisfaction_rate,
+            pruning_efficiency=avg_pruning_efficiency,
+        )
+
+        # Track constraint history
+        self.constraint_history.append(total_violations)
+        self.critical_constraint_history.append(total_critical_violations)
+        self.feasibility_history.append(feasible_count / len(self.individuals))
+
+        return self.statistics
+
+    def _calculate_diversity_metric(
+        self, ind1: "DEAPIndividual", ind2: "DEAPIndividual"
+    ) -> float:
+        """Calculate diversity metric between two individuals."""
         try:
-            if len(self.fitness_history) < 2:
-                return 0.0
+            return ind1.get_diversity_metric(ind2)
+        except Exception:
+            # Fallback calculation if method not available
+            if len(ind1) != len(ind2):
+                return 1.0
+            try:
+                diff = np.array(ind1) - np.array(ind2)
+                return float(np.sqrt(np.sum(diff**2)) / len(ind1))
+            except Exception:
+                return 0.5
 
-            # Look at recent fitness improvements
-            recent_generations = min(10, len(self.fitness_history))
-            recent_best = [
-                min(generation)
-                for generation in self.fitness_history[-recent_generations:]
-            ]
+    def update_ages(self):
+        """Update age of all individuals in population."""
+        for individual in self.individuals:
+            individual.age += 1
 
-            if len(recent_best) < 2:
-                return 0.0
+    def sort_by_constraint_aware_fitness(self, descending: bool = True):
+        """Sort population by constraint-aware fitness criteria."""
 
-            # Calculate improvement rate
-            first_fitness = recent_best[0]
-            last_fitness = recent_best[-1]
-
-            if first_fitness == 0:
-                return 1.0 if last_fitness == 0 else 0.0
-
-            improvement_rate = abs(last_fitness - first_fitness) / abs(first_fitness)
-
-            # Convert to convergence measure (less improvement = more converged)
-            convergence = max(0.0, 1.0 - improvement_rate * 10)  # Scale factor 10
-            return min(1.0, convergence)
-
-        except Exception as e:
-            logger.error(f"Error calculating convergence measure: {e}")
-            return 0.0
-
-    def _count_unique_individuals(self) -> int:
-        """Count unique individuals in population"""
-        try:
-            unique_hashes = set()
-            for individual in self.individuals:
-                # Create a simple hash based on chromosome structure
-                hash_value = hash(
-                    tuple(gene.priority_tree.to_string() for gene in individual.genes)
-                )
-                unique_hashes.add(hash_value)
-
-            return len(unique_hashes)
-
-        except Exception as e:
-            logger.error(f"Error counting unique individuals: {e}")
-            return len(self.individuals)
-
-    def advance_generation(self) -> None:
-        """Advance to next generation and update tracking"""
-        try:
-            self.generation += 1
-
-            # Record fitness history
-            current_fitness = [
-                ind.fitness
-                for ind in self.individuals
-                if hasattr(ind, "fitness") and ind.fitness is not None
-            ]
-            self.fitness_history.append(current_fitness)
-
-            # Record diversity history
-            diversity = self.calculate_diversity()
-            self.diversity_history.append(diversity)
-
-            # Update best ever individual
-            best_current = self.get_best_individual()
-            if best_current and best_current.fitness < self.best_ever_fitness:
-                self.best_ever_individual = best_current
-                self.best_ever_fitness = best_current.fitness
-                self.last_improvement_generation = self.generation
-                self.stagnation_counter = 0
-            else:
-                self.stagnation_counter += 1
-
-            # Maintain diversity archive
-            self._update_diversity_archive()
-
-            # Trim history if too long
-            max_history = 100
-            if len(self.fitness_history) > max_history:
-                self.fitness_history = self.fitness_history[-max_history:]
-            if len(self.diversity_history) > max_history:
-                self.diversity_history = self.diversity_history[-max_history:]
-
-        except Exception as e:
-            logger.error(f"Error advancing generation: {e}")
-
-    def _update_diversity_archive(self) -> None:
-        """Update archive of diverse individuals"""
-        try:
-            archive_size = 20  # Keep top 20 diverse individuals
-
-            # Add current best individuals to archive consideration
-            candidates = self.get_elite_individuals(10) + self.diversity_archive
-
-            # Remove duplicates
-            unique_candidates = []
-            seen_hashes = set()
-            for candidate in candidates:
-                hash_val = hash(
-                    tuple(gene.priority_tree.to_string() for gene in candidate.genes)
-                )
-                if hash_val not in seen_hashes:
-                    unique_candidates.append(candidate)
-                    seen_hashes.add(hash_val)
-
-            # Select most diverse individuals for archive
-            if len(unique_candidates) <= archive_size:
-                self.diversity_archive = unique_candidates
-            else:
-                # Greedily select diverse individuals
-                selected = [unique_candidates[0]]  # Start with first
-                remaining = unique_candidates[1:]
-
-                while len(selected) < archive_size and remaining:
-                    # Find individual with maximum minimum distance to selected
-                    best_candidate = None
-                    best_min_distance = -1
-
-                    for candidate in remaining:
-                        min_distance = min(
-                            self._calculate_genetic_distance(candidate, selected_ind)
-                            for selected_ind in selected
-                        )
-                        if min_distance > best_min_distance:
-                            best_min_distance = int(min_distance)
-                            best_candidate = candidate
-
-                    if best_candidate:
-                        selected.append(best_candidate)
-                        remaining.remove(best_candidate)
-                    else:
-                        break
-
-                self.diversity_archive = selected
-
-        except Exception as e:
-            logger.error(f"Error updating diversity archive: {e}")
-
-    def replace_worst_individuals(
-        self, new_individuals: List[Chromosome], count: int
-    ) -> List[Chromosome]:
-        """Replace worst individuals with new ones"""
-        try:
-            if not self.individuals or count <= 0:
-                return []
-
-            # Sort individuals by fitness (worst first)
-            evaluated_individuals = [
-                (i, ind)
-                for i, ind in enumerate(self.individuals)
-                if hasattr(ind, "fitness") and ind.fitness is not None
-            ]
-
-            if not evaluated_individuals:
-                return []
-
-            evaluated_individuals.sort(key=lambda x: x[1].fitness, reverse=True)
-
-            # Replace worst individuals
-            replaced = []
-            replacement_count = min(
-                count, len(new_individuals), len(evaluated_individuals)
-            )
-
-            for i in range(replacement_count):
-                if i < len(new_individuals):
-                    old_index = evaluated_individuals[i][0]
-                    old_individual = self.individuals[old_index]
-                    self.individuals[old_index] = new_individuals[i]
-                    replaced.append(old_individual)
-
-            return replaced
-
-        except Exception as e:
-            logger.error(f"Error replacing worst individuals: {e}")
-            return []
-
-    def maintain_diversity(self, target_diversity: float = 0.3) -> int:
-        """Maintain population diversity by removing similar individuals"""
-        try:
-            if len(self.individuals) < 2:
-                return 0
-
-            current_diversity = self.calculate_diversity()
-            if current_diversity >= target_diversity:
-                return 0
-
-            # Find pairs of similar individuals
-            similar_pairs = []
-            for i in range(len(self.individuals)):
-                for j in range(i + 1, len(self.individuals)):
-                    distance = self._calculate_genetic_distance(
-                        self.individuals[i], self.individuals[j]
-                    )
-                    if distance < self.diversity_threshold_adaptive:
-                        similar_pairs.append((i, j, distance))
-
-            # Sort by similarity (most similar first)
-            similar_pairs.sort(key=lambda x: x[2])
-
-            # Remove individuals from similar pairs (keep better one)
-            removed_indices = set()
-            removed_count = 0
-
-            for i, j, distance in similar_pairs:
-                if i in removed_indices or j in removed_indices:
-                    continue
-
-                # Keep the individual with better fitness
-                fitness_i = (
-                    self.individuals[i].fitness
-                    if hasattr(self.individuals[i], "fitness")
-                    else float("inf")
-                )
-                fitness_j = (
-                    self.individuals[j].fitness
-                    if hasattr(self.individuals[j], "fitness")
-                    else float("inf")
+        def sort_key(x):
+            if not x.fitness.valid:
+                return (
+                    float("inf"),
+                    float("inf"),
+                    float("-inf") if descending else float("inf"),
                 )
 
-                remove_index = i if fitness_i > fitness_j else j
-                removed_indices.add(remove_index)
-                removed_count += 1
+            critical_violations = getattr(x, "critical_constraint_violations", 0)
+            regular_violations = getattr(x, "constraint_violations", 0)
+            fitness = safe_fitness_value(x)
 
-                # Stop if we've removed enough
-                if (
-                    len(removed_indices) >= len(self.individuals) // 4
-                ):  # Don't remove more than 25%
-                    break
-
-            # Remove individuals (in reverse order to maintain indices)
-            for index in sorted(removed_indices, reverse=True):
-                self.individuals.pop(index)
-
-            return removed_count
-
-        except Exception as e:
-            logger.error(f"Error maintaining diversity: {e}")
-            return 0
-
-    def clear(self) -> None:
-        """Clear the population"""
-        self.individuals.clear()
-
-    def copy(self) -> "Population":
-        """Create a copy of the population"""
-        try:
-            copied_individuals = [ind.copy() for ind in self.individuals]
-            new_pop = Population(
-                copied_individuals, self.max_size, self.diversity_threshold
-            )
-            new_pop.generation = self.generation
-            new_pop.fitness_history = self.fitness_history.copy()
-            new_pop.diversity_history = self.diversity_history.copy()
-            new_pop.best_ever_fitness = self.best_ever_fitness
-            new_pop.last_improvement_generation = self.last_improvement_generation
-            new_pop.stagnation_counter = self.stagnation_counter
-            return new_pop
-        except Exception as e:
-            logger.error(f"Error copying population: {e}")
-            return Population()
-
-
-class PopulationManager:
-    """
-    High-level manager for population operations including initialization,
-    evolution, and maintenance strategies.
-    """
-
-    def __init__(
-        self,
-        population_size: int = 50,
-        problem: Optional[ExamSchedulingProblem] = None,
-        diversity_target: float = 0.3,
-    ):
-        self.population_size = population_size
-        self.problem = problem
-        self.diversity_target = diversity_target
-
-        # Create population
-        self.population = Population(max_size=population_size, diversity_threshold=0.1)
-
-        # Initialization strategies
-        self.init_strategies = {
-            PopulationInitStrategy.RANDOM: self._initialize_random,
-            PopulationInitStrategy.SEEDED: self._initialize_seeded,
-            PopulationInitStrategy.HYBRID: self._initialize_hybrid,
-            PopulationInitStrategy.PROBLEM_AWARE: self._initialize_problem_aware,
-        }
-
-    async def initialize_population(
-        self,
-        strategy: PopulationInitStrategy = PopulationInitStrategy.HYBRID,
-        seed_individual: Optional[Chromosome] = None,
-    ) -> None:
-        """Initialize population using specified strategy"""
-        try:
-            logger.info(
-                f"Initializing population of size {self.population_size} using {strategy.value} strategy"
+            return (
+                critical_violations,
+                regular_violations,
+                -fitness if descending else fitness,
             )
 
-            init_function = self.init_strategies.get(strategy)
-            if not init_function:
-                raise ValueError(f"Unknown initialization strategy: {strategy}")
+        self.individuals.sort(key=sort_key)
 
-            individuals = await init_function(seed_individual)
+    def update_hall_of_fame(self, k: int = 10):
+        """Update hall of fame with best constraint-aware individuals."""
+        if not self.hall_of_fame:
+            return
 
-            # Ensure we have the right population size
-            while len(individuals) < self.population_size:
-                random_individual = await self._create_random_individual()
-                individuals.append(random_individual)
+        # Prioritize feasible individuals
+        feasible_individuals = [
+            ind
+            for ind in self.individuals
+            if getattr(ind, "critical_constraint_violations", 0) == 0
+        ]
 
-            # Truncate if too many
-            individuals = individuals[: self.population_size]
+        if feasible_individuals:
+            try:
+                for ind in feasible_individuals:
+                    self.hall_of_fame.update([ind])
+            except Exception as e:
+                logger.debug(f"Hall of fame update failed: {e}")
+        else:
+            # If no feasible individuals, use best available
+            try:
+                self.hall_of_fame.update(self.individuals)
+            except Exception as e:
+                logger.debug(f"Hall of fame update failed: {e}")
 
-            # Set population
-            self.population.individuals = individuals
+    def record_statistics(self):
+        """Record generation statistics with constraint awareness."""
+        if not self.logbook:
+            return None
 
-            logger.info(f"Population initialized with {len(individuals)} individuals")
+        stats = self.calculate_statistics()
 
-        except Exception as e:
-            logger.error(f"Error initializing population: {e}")
-            raise
-
-    async def initialize_from_seed(
-        self,
-        seed_chromosome: Chromosome,
-        variation_rate: float = 0.3,
-        random_individuals: float = 0.2,
-    ) -> None:
-        """Initialize population from CP-SAT seed solution (research paper approach)"""
         try:
-            logger.info("Initializing population from CP-SAT seed solution")
-
-            individuals = []
-
-            # Add the seed individual
-            individuals.append(seed_chromosome)
-
-            # Create variations of the seed (research paper approach)
-            variation_count = int(self.population_size * variation_rate)
-            for _ in range(variation_count):
-                variation = await self._create_seed_variation(seed_chromosome)
-                individuals.append(variation)
-
-            # Create random individuals for diversity
-            random_count = int(self.population_size * random_individuals)
-            for _ in range(random_count):
-                random_individual = await self._create_random_individual()
-                individuals.append(random_individual)
-
-            # Fill remaining with hybrid approach
-            while len(individuals) < self.population_size:
-                if random.random() < 0.5:
-                    # Another seed variation
-                    variation = await self._create_seed_variation(seed_chromosome)
-                    individuals.append(variation)
-                else:
-                    # Random individual
-                    random_individual = await self._create_random_individual()
-                    individuals.append(random_individual)
-
-            # Set population
-            self.population.individuals = individuals[: self.population_size]
-
-            logger.info(
-                f"Population initialized from seed with {len(self.population.individuals)} individuals"
+            record = self.logbook.record(
+                gen=self.generation,
+                size=stats.size,
+                min=stats.worst_fitness,
+                avg=stats.average_fitness,
+                max=stats.best_fitness,
+                std=np.sqrt(stats.fitness_variance),
+                feasibility=stats.feasibility_rate,
+                diversity=stats.average_diversity,
+                convergence=stats.convergence_metric,
+                violations=stats.constraint_violations,
+                critical_violations=stats.critical_constraint_violations,
+                constraint_satisfaction=stats.constraint_satisfaction_rate,
+                pruning_efficiency=stats.pruning_efficiency,
             )
-
+            return record
         except Exception as e:
-            logger.error(f"Error initializing population from seed: {e}")
-            raise
+            logger.debug(f"Statistics recording failed: {e}")
+            return None
 
-    async def _initialize_random(
-        self, seed_individual: Optional[Chromosome] = None
-    ) -> List[Chromosome]:
-        """Initialize population with random individuals"""
-        try:
-            individuals = []
-            for _ in range(self.population_size):
-                individual = await self._create_random_individual()
-                individuals.append(individual)
-            return individuals
-        except Exception as e:
-            logger.error(f"Error in random initialization: {e}")
-            return []
-
-    async def _initialize_seeded(
-        self, seed_individual: Optional[Chromosome] = None
-    ) -> List[Chromosome]:
-        """Initialize population with seed individual and variations"""
-        try:
-            if not seed_individual:
-                return await self._initialize_random()
-
-            individuals = [seed_individual]
-
-            # Create variations of the seed
-            for _ in range(self.population_size - 1):
-                variation = await self._create_seed_variation(seed_individual)
-                individuals.append(variation)
-
-            return individuals
-        except Exception as e:
-            logger.error(f"Error in seeded initialization: {e}")
-            return []
-
-    async def _initialize_hybrid(
-        self, seed_individual: Optional[Chromosome] = None
-    ) -> List[Chromosome]:
-        """Initialize population with mix of seeded and random individuals"""
-        try:
-            individuals = []
-
-            if seed_individual:
-                # Add seed
-                individuals.append(seed_individual)
-
-                # Add seed variations (30% of population)
-                variation_count = max(1, self.population_size // 3)
-                for _ in range(variation_count):
-                    variation = await self._create_seed_variation(seed_individual)
-                    individuals.append(variation)
-
-            # Fill remaining with random individuals
-            while len(individuals) < self.population_size:
-                random_individual = await self._create_random_individual()
-                individuals.append(random_individual)
-
-            return individuals[: self.population_size]
-
-        except Exception as e:
-            logger.error(f"Error in hybrid initialization: {e}")
-            return []
-
-    async def _initialize_problem_aware(
-        self, seed_individual: Optional[Chromosome] = None
-    ) -> List[Chromosome]:
-        """Initialize population with problem-specific heuristics"""
-        try:
-            individuals = []
-
-            if seed_individual:
-                individuals.append(seed_individual)
-
-            # Create problem-aware individuals based on problem characteristics
-            if self.problem:
-                # Different strategies based on problem size
-                if len(self.problem.exams) > 100:
-                    # Large problems - focus on simple, efficient heuristics
-                    for _ in range(self.population_size // 3):
-                        individual = await self._create_simple_heuristic_individual()
-                        individuals.append(individual)
-
-                # Medium-complexity heuristics
-                for _ in range(self.population_size // 3):
-                    individual = await self._create_complex_heuristic_individual()
-                    individuals.append(individual)
-
-            # Fill remaining with random
-            while len(individuals) < self.population_size:
-                random_individual = await self._create_random_individual()
-                individuals.append(random_individual)
-
-            return individuals[: self.population_size]
-
-        except Exception as e:
-            logger.error(f"Error in problem-aware initialization: {e}")
-            return []
-
-    async def _create_random_individual(self) -> Chromosome:
-        """Create a random chromosome"""
-        try:
-            if self.problem is None:
-                raise ValueError("Problem must be set to create random individuals")
-
-            chromosome = Chromosome.create_random(self.problem)
-            return chromosome
-
-        except Exception as e:
-            logger.error(f"Error creating random individual: {e}")
-            # Return empty chromosome as fallback
-            return Chromosome()
-
-    async def _create_seed_variation(self, seed: Chromosome) -> Chromosome:
-        """Create a variation of the seed chromosome"""
-        try:
-            # Copy the seed
-            variation = seed.copy()
-
-            # Apply mutations to create variation
-            # This would need to be implemented based on your mutation operators
-            # For now, just return a copy
-            return variation
-
-        except Exception as e:
-            logger.error(f"Error creating seed variation: {e}")
-            return Chromosome()
-
-    async def _create_simple_heuristic_individual(self) -> Chromosome:
-        """Create individual with simple heuristic (for large problems)"""
-        try:
-            if self.problem is None:
-                raise ValueError("Problem must be set to create heuristic individuals")
-
-            # Create using random initialization for now
-            return await self._create_random_individual()
-
-        except Exception as e:
-            logger.error(f"Error creating simple heuristic individual: {e}")
-            return Chromosome()
-
-    async def _create_complex_heuristic_individual(self) -> Chromosome:
-        """Create individual with complex heuristic"""
-        try:
-            if self.problem is None:
-                raise ValueError("Problem must be set to create heuristic individuals")
-
-            # Create using random initialization for now
-            return await self._create_random_individual()
-
-        except Exception as e:
-            logger.error(f"Error creating complex heuristic individual: {e}")
-            return Chromosome()
-
-    async def create_random_individuals(self, count: int) -> List[Chromosome]:
-        """Create multiple random individuals"""
-        try:
-            individuals = []
-            for _ in range(count):
-                individual = await self._create_random_individual()
-                individuals.append(individual)
-            return individuals
-        except Exception as e:
-            logger.error(f"Error creating random individuals: {e}")
-            return []
-
-    def get_best_individual(self) -> Optional[Chromosome]:
-        """Get the best individual in population"""
-        return self.population.get_best_individual()
-
-    def get_worst_individual_index(self) -> int:
-        """Get index of worst individual"""
-        try:
-            worst = self.population.get_worst_individual()
-            if worst:
-                return self.population.individuals.index(worst)
-            return 0
-        except Exception as e:
-            logger.error(f"Error getting worst individual index: {e}")
-            return 0
-
-    def get_elite_individuals(self, count: int) -> List[Chromosome]:
-        """Get elite individuals"""
-        return self.population.get_elite_individuals(count)
-
-    async def replace_population(self, new_individuals: List[Chromosome]) -> None:
-        """Replace current population with new individuals"""
-        try:
-            self.population.individuals = new_individuals[: self.population_size]
-            self.population.advance_generation()
-        except Exception as e:
-            logger.error(f"Error replacing population: {e}")
-
-    def size(self) -> int:
-        """Get population size"""
-        return len(self.population)
-
-    def get_statistics(self) -> PopulationStatistics:
-        """Get population statistics"""
-        return self.population.get_statistics()
-
-    def calculate_diversity(self) -> float:
-        """Calculate population diversity"""
-        return self.population.calculate_diversity()
-
-    def maintain_diversity(self) -> int:
-        """Maintain population diversity"""
-        return self.population.maintain_diversity(self.diversity_target)
-
-    def advance_generation(self) -> None:
-        """Advance to next generation"""
-        self.population.advance_generation()
-
-    async def get_population_summary(self) -> Dict[str, Any]:
-        """Get comprehensive population summary"""
-        try:
-            stats = self.get_statistics()
-            diversity = self.calculate_diversity()
-
-            # Fitness distribution
-            fitness_values = [
-                ind.fitness
-                for ind in self.population.individuals
-                if hasattr(ind, "fitness") and ind.fitness is not None
-            ]
-
-            fitness_quartiles = []
-            if fitness_values:
-                sorted_fitness = sorted(fitness_values)
-                n = len(sorted_fitness)
-                fitness_quartiles = [
-                    sorted_fitness[0],  # Min
-                    sorted_fitness[n // 4] if n >= 4 else sorted_fitness[0],  # Q1
-                    sorted_fitness[n // 2] if n >= 2 else sorted_fitness[0],  # Median
-                    sorted_fitness[3 * n // 4] if n >= 4 else sorted_fitness[-1],  # Q3
-                    sorted_fitness[-1],  # Max
-                ]
-
+    def get_constraint_trends(self, window: int = 5) -> Dict[str, float]:
+        """Get recent trends in constraint satisfaction."""
+        if len(self.constraint_history) < window:
             return {
-                "generation": stats.generation,
-                "population_size": stats.size,
-                "fitness_statistics": {
-                    "best": stats.best_fitness,
-                    "worst": stats.worst_fitness,
-                    "average": stats.average_fitness,
-                    "std": stats.fitness_std,
-                    "quartiles": fitness_quartiles,
-                },
-                "diversity_metrics": {
-                    "overall_diversity": diversity,
-                    "unique_individuals": stats.unique_individuals,
-                    "diversity_target": self.diversity_target,
-                },
-                "population_composition": {
-                    "elite_proportion": stats.elite_proportion,
-                },
-                "evolution_progress": {
-                    "stagnation_generations": stats.stagnation_generations,
-                    "convergence_measure": stats.convergence_measure,
-                    "last_improvement": self.population.last_improvement_generation,
-                },
+                "violation_trend": 0.0,
+                "feasibility_trend": 0.0,
+                "critical_trend": 0.0,
             }
 
-        except Exception as e:
-            logger.error(f"Error getting population summary: {e}")
-            return {"error": str(e)}
+        recent_violations = self.constraint_history[-window:]
+        recent_critical = self.critical_constraint_history[-window:]
+        recent_feasibility = self.feasibility_history[-window:]
+
+        violation_trend = (recent_violations[-1] - recent_violations[0]) / max(
+            1, len(recent_violations) - 1
+        )
+        critical_trend = (recent_critical[-1] - recent_critical[0]) / max(
+            1, len(recent_critical) - 1
+        )
+        feasibility_trend = (recent_feasibility[-1] - recent_feasibility[0]) / max(
+            1, len(recent_feasibility) - 1
+        )
+
+        return {
+            "violation_trend": violation_trend,
+            "critical_trend": critical_trend,
+            "feasibility_trend": feasibility_trend,
+        }
+
+
+class DEAPPopulationManager:
+    """
+    FIXED DEAP-integrated population manager with constraint-aware operations.
+
+    Fixes:
+    - No circular imports
+    - Safe population initialization and management
+    - Constraint-aware replacement strategies
+    - Memory-efficient operations
+    """
+
+    def __init__(self, population_size: int, encoder: "ChromosomeEncoder"):
+        self.population_size = population_size
+        self.encoder = encoder
+
+        # Constraint-aware parameters
+        self.generation_history = []
+        self.min_feasible_ratio = 0.3
+        self.diversity_threshold = 0.1
+        self.constraint_pressure_adaptation = True
+
+    def create_population(
+        self,
+        random_ratio: float = 0.5,
+        constraint_aware_ratio: float = 0.3,
+    ) -> DEAPPopulation:
+        """Initialize constraint-aware population with diverse strategies."""
+        logger.info(
+            f"Initializing DEAP constraint-aware population of size {self.population_size}"
+        )
+
+        individuals = []
+        num_random = int(self.population_size * random_ratio)
+        num_constraint_aware = int(self.population_size * constraint_aware_ratio)
+        num_heuristic = self.population_size - num_random - num_constraint_aware
+
+        # Create random individuals
+        for i in range(num_random):
+            individual = self.encoder.create_random_individual()
+            individual.generation_created = 0
+            individuals.append(individual)
+
+        # Create constraint-priority individuals
+        for i in range(num_constraint_aware):
+            individual = self.encoder.create_heuristic_individual("constraint_priority")
+            individual.generation_created = 0
+            individuals.append(individual)
+
+        # Create other heuristic individuals
+        heuristic_types = [
+            "difficulty_first",
+            "capacity_utilization",
+            "time_distribution",
+        ]
+        for i in range(num_heuristic):
+            heuristic_type = heuristic_types[i % len(heuristic_types)]
+            individual = self.encoder.create_heuristic_individual(heuristic_type)
+            individual.generation_created = 0
+            individuals.append(individual)
+
+        population = DEAPPopulation(individuals)
+        population.generation = 0
+
+        logger.info(
+            f"Created constraint-aware DEAP population: {num_random} random, "
+            f"{num_constraint_aware} constraint-aware, {num_heuristic} heuristic individuals"
+        )
+
+        return population
+
+    def replace_population_constraint_aware(
+        self,
+        current_population: DEAPPopulation,
+        offspring: List["DEAPIndividual"],
+        strategy: str = "constraint_elitist",
+    ) -> DEAPPopulation:
+        """Replace population using constraint-aware strategies."""
+        if strategy == "constraint_elitist":
+            return self._constraint_elitist_replacement(current_population, offspring)
+        elif strategy == "constraint_steady_state":
+            return self._constraint_steady_state_replacement(
+                current_population, offspring
+            )
+        elif strategy == "constraint_generational":
+            return self._constraint_generational_replacement(
+                current_population, offspring
+            )
+        else:
+            logger.warning(f"Unknown strategy {strategy}, using constraint_elitist")
+            return self._constraint_elitist_replacement(current_population, offspring)
+
+    def _constraint_elitist_replacement(
+        self, current_population: DEAPPopulation, offspring: List["DEAPIndividual"]
+    ) -> DEAPPopulation:
+        """Constraint-aware elitist replacement preserving best constraint-satisfying individuals."""
+
+        # Separate feasible and infeasible individuals
+        current_feasible = [
+            ind
+            for ind in current_population.individuals
+            if getattr(ind, "critical_constraint_violations", 0) == 0
+        ]
+        current_infeasible = [
+            ind
+            for ind in current_population.individuals
+            if getattr(ind, "critical_constraint_violations", 0) > 0
+        ]
+
+        offspring_feasible = [
+            ind
+            for ind in offspring
+            if getattr(ind, "critical_constraint_violations", 0) == 0
+        ]
+        offspring_infeasible = [
+            ind
+            for ind in offspring
+            if getattr(ind, "critical_constraint_violations", 0) > 0
+        ]
+
+        # Sort each group
+        all_feasible = current_feasible + offspring_feasible
+        all_infeasible = current_infeasible + offspring_infeasible
+
+        all_feasible.sort(key=lambda x: safe_fitness_value(x), reverse=True)
+
+        def infeasible_sort_key(x):
+            violations = getattr(x, "constraint_violations", 0)
+            fitness = safe_fitness_value(x)
+            return (-violations, fitness)  # Fewer violations first, then higher fitness
+
+        all_infeasible.sort(key=infeasible_sort_key, reverse=True)
+
+        # Ensure minimum feasible ratio
+        min_feasible_count = max(1, int(self.population_size * self.min_feasible_ratio))
+        new_individuals = []
+
+        # Add feasible individuals first
+        feasible_to_add = min(len(all_feasible), min_feasible_count)
+        new_individuals.extend(all_feasible[:feasible_to_add])
+
+        # Fill remaining slots
+        remaining_slots = self.population_size - len(new_individuals)
+        if remaining_slots > 0:
+            # Add more feasible individuals if available
+            if feasible_to_add < len(all_feasible):
+                additional_feasible = min(
+                    remaining_slots, len(all_feasible) - feasible_to_add
+                )
+                new_individuals.extend(
+                    all_feasible[
+                        feasible_to_add : feasible_to_add + additional_feasible
+                    ]
+                )
+                remaining_slots -= additional_feasible
+
+            # Add best infeasible individuals if still needed
+            if remaining_slots > 0 and all_infeasible:
+                new_individuals.extend(all_infeasible[:remaining_slots])
+
+        new_population = DEAPPopulation(new_individuals[: self.population_size])
+        new_population.generation = current_population.generation + 1
+        new_population.hall_of_fame = current_population.hall_of_fame
+        new_population.logbook = current_population.logbook
+
+        feasible_count = len(
+            [
+                ind
+                for ind in new_individuals
+                if getattr(ind, "critical_constraint_violations", 0) == 0
+            ]
+        )
+        violation_count = len(
+            [
+                ind
+                for ind in new_individuals
+                if getattr(ind, "constraint_violations", 0) > 0
+            ]
+        )
+
+        logger.debug(
+            f"Constraint elitist replacement: {feasible_count} feasible, "
+            f"{violation_count} with violations"
+        )
+
+        return new_population
+
+    def _constraint_steady_state_replacement(
+        self, current_population: DEAPPopulation, offspring: List["DEAPIndividual"]
+    ) -> DEAPPopulation:
+        """Steady-state replacement with constraint awareness."""
+        combined = list(current_population.individuals) + offspring
+
+        def sort_key(x):
+            critical_violations = getattr(x, "critical_constraint_violations", 0)
+            regular_violations = getattr(x, "constraint_violations", 0)
+            fitness = safe_fitness_value(x)
+            return (critical_violations, regular_violations, -fitness)
+
+        combined.sort(key=sort_key)
+
+        new_population = DEAPPopulation(combined[: self.population_size])
+        new_population.generation = current_population.generation + 1
+        new_population.hall_of_fame = current_population.hall_of_fame
+        new_population.logbook = current_population.logbook
+
+        return new_population
+
+    def _constraint_generational_replacement(
+        self, current_population: DEAPPopulation, offspring: List["DEAPIndividual"]
+    ) -> DEAPPopulation:
+        """Generational replacement with constraint-aware elitism."""
+
+        # Keep some of the best constraint-satisfying individuals
+        elite_count = max(2, int(self.population_size * 0.1))
+        current_feasible = [
+            ind
+            for ind in current_population.individuals
+            if getattr(ind, "critical_constraint_violations", 0) == 0
+        ]
+        current_feasible.sort(key=lambda x: safe_fitness_value(x), reverse=True)
+        elite = current_feasible[: min(elite_count, len(current_feasible))]
+
+        # Fill remaining with best offspring
+        remaining_slots = self.population_size - len(elite)
+
+        def offspring_sort_key(x):
+            critical_violations = getattr(x, "critical_constraint_violations", 0)
+            regular_violations = getattr(x, "constraint_violations", 0)
+            fitness = safe_fitness_value(x)
+            return (critical_violations, regular_violations, -fitness)
+
+        offspring.sort(key=offspring_sort_key)
+
+        new_individuals = elite + offspring[:remaining_slots]
+        new_population = DEAPPopulation(new_individuals)
+        new_population.generation = current_population.generation + 1
+        new_population.hall_of_fame = current_population.hall_of_fame
+        new_population.logbook = current_population.logbook
+
+        return new_population
+
+    def maintain_constraint_aware_diversity(
+        self, population: DEAPPopulation, min_diversity: float = 0.1
+    ) -> DEAPPopulation:
+        """Maintain population diversity while preserving constraint satisfaction."""
+        if len(population) < 2:
+            return population
+
+        individuals_to_replace = []
+
+        # Check diversity within feasible individuals first
+        feasible = [
+            ind
+            for ind in population.individuals
+            if getattr(ind, "critical_constraint_violations", 0) == 0
+        ]
+        infeasible = [
+            ind
+            for ind in population.individuals
+            if getattr(ind, "critical_constraint_violations", 0) > 0
+        ]
+
+        for i in range(len(feasible)):
+            for j in range(i + 1, len(feasible)):
+                diversity = population._calculate_diversity_metric(
+                    feasible[i], feasible[j]
+                )
+                if diversity < min_diversity:
+                    # Keep the better individual
+                    if safe_fitness_value(feasible[i]) < safe_fitness_value(
+                        feasible[j]
+                    ):
+                        if j not in individuals_to_replace:
+                            individuals_to_replace.append(
+                                population.individuals.index(feasible[j])
+                            )
+                    else:
+                        if i not in individuals_to_replace:
+                            individuals_to_replace.append(
+                                population.individuals.index(feasible[i])
+                            )
+
+        # Replace low-diversity individuals, preferring to replace infeasible ones
+        if individuals_to_replace:
+            infeasible_indices = [
+                population.individuals.index(ind) for ind in infeasible
+            ]
+            for idx in individuals_to_replace[: len(infeasible_indices)]:
+                new_individual = self.encoder.create_heuristic_individual(
+                    "constraint_priority"
+                )
+                new_individual.generation_created = population.generation
+                population.individuals[idx] = new_individual
+
+            logger.info(
+                f"Replaced {len(individuals_to_replace)} individuals for diversity maintenance"
+            )
+
+        return population
+
+    def detect_constraint_aware_convergence(
+        self,
+        population: DEAPPopulation,
+        convergence_threshold: float = 0.01,
+        generations_to_check: int = 10,
+    ) -> bool:
+        """Detect convergence with constraint awareness."""
+        if len(self.generation_history) < generations_to_check:
+            return False
+
+        # Check fitness improvement over recent generations
+        recent_best_fitness = [
+            stats.best_fitness
+            for stats in self.generation_history[-generations_to_check:]
+        ]
+        recent_feasibility = [
+            stats.feasibility_rate
+            for stats in self.generation_history[-generations_to_check:]
+        ]
+        recent_critical_satisfaction = [
+            1.0 - (stats.critical_constraint_violations / max(1, stats.size))
+            for stats in self.generation_history[-generations_to_check:]
+        ]
+
+        # Current population characteristics
+        current_stats = population.calculate_statistics()
+
+        # Calculate improvement rates
+        fitness_improvement = (recent_best_fitness[-1] - recent_best_fitness[0]) / max(
+            1, generations_to_check - 1
+        )
+        feasibility_improvement = (
+            recent_feasibility[-1] - recent_feasibility[0]
+        ) / max(1, generations_to_check - 1)
+        critical_improvement = (
+            recent_critical_satisfaction[-1] - recent_critical_satisfaction[0]
+        ) / max(1, generations_to_check - 1)
+
+        # Convergence criteria
+        low_fitness_improvement = fitness_improvement < convergence_threshold
+        low_feasibility_improvement = feasibility_improvement < 0.05
+        low_critical_improvement = critical_improvement < 0.02
+        low_diversity = current_stats.average_diversity < 0.05
+        high_constraint_satisfaction = current_stats.constraint_satisfaction_rate > 0.9
+
+        # Convergence conditions
+        is_converged = (
+            low_fitness_improvement and high_constraint_satisfaction and low_diversity
+        ) or (
+            low_feasibility_improvement and low_critical_improvement and low_diversity
+        )
+
+        if is_converged:
+            logger.info(
+                f"Constraint-aware convergence detected: "
+                f"fitness_imp={fitness_improvement:.6f}, "
+                f"feasibility_imp={feasibility_improvement:.3f}, "
+                f"critical_imp={critical_improvement:.3f}, "
+                f"diversity={current_stats.average_diversity:.3f}, "
+                f"constraint_satisfaction={current_stats.constraint_satisfaction_rate:.3f}"
+            )
+
+        return is_converged
+
+    def update_generation_history(self, population: DEAPPopulation):
+        """Update generation history with constraint-aware statistics."""
+        stats = population.calculate_statistics()
+        self.generation_history.append(stats)
+
+        # Keep history manageable
+        if len(self.generation_history) > 100:
+            self.generation_history = self.generation_history[-50:]
+
+    def get_constraint_insights(self) -> Dict[str, Any]:
+        """Get insights about constraint satisfaction across generations."""
+        if not self.generation_history:
+            return {}
+
+        recent_stats = (
+            self.generation_history[-10:]
+            if len(self.generation_history) >= 10
+            else self.generation_history
+        )
+
+        insights = {
+            "constraint_satisfaction_trend": np.mean(
+                [s.constraint_satisfaction_rate for s in recent_stats]
+            ),
+            "feasibility_improvement": (
+                (recent_stats[-1].feasibility_rate - recent_stats[0].feasibility_rate)
+                if len(recent_stats) > 1
+                else 0
+            ),
+            "critical_violations_trend": np.mean(
+                [s.critical_constraint_violations for s in recent_stats]
+            ),
+            "pruning_efficiency_trend": np.mean(
+                [s.pruning_efficiency for s in recent_stats]
+            ),
+            "best_feasibility_rate": max([s.feasibility_rate for s in recent_stats]),
+            "generations_analyzed": len(recent_stats),
+        }
+
+        return insights

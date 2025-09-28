@@ -1,18 +1,6 @@
 # app/models/__init__.py
 
-from .base import Base, TimestampMixin
-
-from .users import (
-    User,
-    UserRole,
-    UserRoleAssignment,
-    UserNotification,
-    SystemConfiguration,
-    SystemEvent,
-)
-
-from .constraints import ConstraintCategory, ConstraintRule, ConfigurationConstraint
-
+from .base import Base
 from .academic import (
     AcademicSession,
     Department,
@@ -22,37 +10,51 @@ from .academic import (
     Student,
     CourseRegistration,
 )
-
-
-from .jobs import TimetableJob, TimetableVersion
-
-
-from .file_uploads import FileUploadSession, UploadedFile
-from .audit_logs import AuditLog
-from .timetable_edits import TimetableEdit
-from .infrastructure import Building, RoomType, Room, ExamRoom, ExamAllowedRoom
 from .scheduling import (
     Exam,
+    ExamDepartment,
     TimeSlot,
     Staff,
     ExamInvigilator,
     StaffUnavailability,
     TimetableAssignment,
-    ExamDepartment,
 )
+from .infrastructure import (
+    Building,
+    RoomType,
+    Room,
+    ExamAllowedRoom,
+    ExamRoom,
+)
+from .users import (
+    User,
+    UserRole,
+    UserRoleAssignment,
+    UserNotification,
+    SystemConfiguration,
+    SystemEvent,
+)
+from .jobs import TimetableJob
+from .versioning import (
+    TimetableVersion,
+    VersionMetadata,
+    VersionDependency,
+    SessionTemplate,
+)
+from .constraints import (
+    ConfigurationConstraint,
+    ConstraintRule,
+    ConstraintCategory,
+)
+from .audit_logs import AuditLog
+from .file_uploads import FileUploadSession, UploadedFile
+from .timetable_edits import TimetableEdit
 
+# Export all models for easy import
 __all__ = [
+    # Base
     "Base",
-    "TimestampMixin",
-    "User",
-    "UserRole",
-    "UserRoleAssignment",
-    "UserNotification",
-    "SystemConfiguration",
-    "SystemEvent",
-    "ConstraintCategory",
-    "ConstraintRule",
-    "ConfigurationConstraint",
+    # Academic models
     "AcademicSession",
     "Department",
     "Faculty",
@@ -60,22 +62,41 @@ __all__ = [
     "Course",
     "Student",
     "CourseRegistration",
-    "Building",
-    "RoomType",
-    "Room",
-    "ExamRoom",
-    "TimetableJob",
-    "TimetableVersion",
+    # Scheduling models
     "Exam",
+    "ExamDepartment",
     "TimeSlot",
     "Staff",
     "ExamInvigilator",
     "StaffUnavailability",
-    "FileUploadSession",
-    "AuditLog",
-    "TimetableEdit",
-    "ExamAllowedRoom",
     "TimetableAssignment",
-    "ExamDepartment",
+    # Infrastructure models
+    "Building",
+    "RoomType",
+    "Room",
+    "ExamAllowedRoom",
+    "ExamRoom",
+    # User and system models
+    "User",
+    "UserRole",
+    "UserRoleAssignment",
+    "UserNotification",
+    "SystemConfiguration",
+    "SystemEvent",
+    # Job models
+    "TimetableJob",
+    # NEW: Versioning models
+    "TimetableVersion",
+    "VersionMetadata",
+    "VersionDependency",
+    "SessionTemplate",
+    # Constraint models
+    "ConfigurationConstraint",
+    "ConstraintRule",
+    "ConstraintCategory",
+    # Audit and file models
+    "AuditLog",
+    "FileUploadSession",
     "UploadedFile",
+    "TimetableEdit",
 ]

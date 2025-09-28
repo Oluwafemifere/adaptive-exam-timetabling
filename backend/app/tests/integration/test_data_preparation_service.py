@@ -18,3 +18,6 @@ async def test_build_dataset(test_session, complete_test_data):
     assert isinstance(dataset.course_registrations, list)
     assert isinstance(dataset.indices, dict)
     assert isinstance(dataset.validations, dict)
+
+
+# backend.app.tests.integration.test_data_preparation_service

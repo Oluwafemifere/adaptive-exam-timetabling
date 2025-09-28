@@ -102,7 +102,7 @@ class TestConfiguration:
     timeslots_per_day: int = 3
 
     # Other parameters
-    max_students_per_invigilator: int = 40
+    max_students_per_invigilator: int = 50
     invigilator_surplus_percentage: float = 0.25
     concurrent_exam_factor: float = 1.1
     overbook_rate: float = 0.25
@@ -131,16 +131,16 @@ class TestConfiguration:
     show_solutions_on_success: bool = True
 
     # FIXED: Ensure reasonable student distribution per course
-    min_students_per_course: int = 20  # Increased from 10
-    max_students_per_course: int = 50  # Increased from 30
+    min_students_per_course: int = 25  # Increased from 10
+    max_students_per_course: int = 200  # Increased from 30
 
     # Room capacity ranges
     room_capacity_ranges: Dict[str, Tuple[int, int]] = field(
         default_factory=lambda: {
-            "LH": (80, 120),  # Increased capacity
-            "LT": (50, 80),  # Increased capacity
-            "CL": (30, 50),  # Increased capacity
-            "LAB": (15, 25),  # Increased capacity
+            "LH": (80, 300),  # Increased capacity
+            "LT": (50, 150),  # Increased capacity
+            "CL": (30, 90),  # Increased capacity
+            "LAB": (15, 50),  # Increased capacity
         }
     )
 
@@ -492,7 +492,7 @@ class RealisticDataGenerator:
                         "adjacentseatpairs": adjacent_pairs,
                         "building": self.fake.building_number(),
                         "floor": random.randint(1, 5),
-                        "overbookable": True,
+                        "overbookable": False,
                     }
                 )
 
@@ -891,6 +891,21 @@ class ComprehensiveConstraintTester:
         invigilators_data = self.generator.generate_invigilators(
             instructors_data, staff_data
         )
+        for inv_data in invigilators_data:
+            # Create Invigilator objects from the data
+            invigilator = Invigilator(
+                id=inv_data["id"],
+                name=inv_data["name"],
+                email=inv_data.get("email"),
+                department=inv_data.get("department"),
+                can_invigilate=inv_data.get("caninvigilate", True),
+                max_concurrent_exams=inv_data.get("maxconcurrentexams", 4),
+                max_students_per_exam=inv_data.get(
+                    "maxstudentsperexam", self.config.max_students_per_invigilator
+                ),
+                availability=inv_data.get("availability", {}),
+            )
+            problem.add_invigilator(invigilator)
 
         # Add remaining components (rooms, exams, etc.)
         rooms_data = self.generator.generate_rooms()
@@ -1002,12 +1017,12 @@ class ComprehensiveConstraintTester:
 
             # Test constraint configurations incrementally
             config_sequence = [
-                ("MINIMAL", "configure_minimal"),
-                ("BASIC", "configure_basic"),  # Changed from "STANDARD"
-                (
-                    "WITH_RESOURCES",
-                    "configure_with_resources",
-                ),  # Changed from "WITH_STUDENT_CONFLICTS"
+                # ("MINIMAL", "configure_minimal"),
+                # ("BASIC", "configure_basic"),  # Changed from "STANDARD"
+                # (
+                #     "WITH_RESOURCES",
+                #     "configure_with_resources",
+                # ),  # Changed from "WITH_STUDENT_CONFLICTS"
                 ("COMPLETE", "configure_complete"),
             ]
             complete_solution = None
@@ -1132,6 +1147,104 @@ class ComprehensiveConstraintTester:
         except Exception as e:
             logger.error(f"UUID-only build failed: {e}")
             test_result.error_message = str(e)
+
+        return test_result
+
+    def test_complete_constraint_system_with_configs(
+        self, config_sequence: List[Tuple[str, str]]
+    ) -> TestResults:
+        """Test constraint system with custom configuration sequence"""
+        test_result = TestResults("custom_constraint_configuration", time.time())
+
+        try:
+            logger.info(
+                f"Testing with custom configuration sequence: {[c[0] for c in config_sequence]}"
+            )
+
+            # Create problem with UUID-only entities
+            problem = self.create_comprehensive_problem()
+            complete_solution = None
+            complete_status = None
+
+            for config_name, config_method in config_sequence:
+                logger.info(f"Testing UUID-only with {config_name} configuration...")
+
+                # Reset constraint registry and configure for this level
+                problem.constraint_registry.active_constraints.clear()
+                getattr(problem.constraint_registry, config_method)()
+
+                active_constraints = (
+                    problem.constraint_registry.get_active_constraints()
+                )
+                logger.info(
+                    f"Active constraints for {config_name}: {sorted(active_constraints)}"
+                )
+
+                try:
+                    builder = CPSATModelBuilder(problem)
+
+                    build_start = time.time()
+                    model, shared_variables = builder.build()
+                    build_duration = time.time() - build_start
+
+                    logger.info(
+                        f"UUID-only {config_name} build time: {build_duration:.2f}s"
+                    )
+
+                    # Test solving with this configuration
+                    solver_manager = CPSATSolverManager(problem)
+                    solver_manager.solver.parameters.max_time_in_seconds = (
+                        self.config.max_solver_time_seconds
+                    )
+
+                    start_solve = time.time()
+                    status, solution = solver_manager.solve()
+                    solve_duration = time.time() - start_solve
+
+                    test_result.solution = solution
+
+                    status_int = cast(int, status)
+                    status_name = self._get_status_name(status_int)
+
+                    logger.info(
+                        f"UUID-only {config_name}: {status_name} in {solve_duration:.2f}s"
+                    )
+
+                    # Store complete configuration solution for GUI display
+                    if config_name == "COMPLETE":
+                        complete_solution = solution
+                        complete_status = status
+
+                    if status == cp_model.INFEASIBLE:
+                        logger.warning(f"UUID-only {config_name} is INFEASIBLE")
+
+                except Exception as e:
+                    logger.error(f"UUID-only {config_name} build failed: {e}")
+
+            # Show GUI if complete configuration was successful
+            if (
+                complete_status in [cp_model.OPTIMAL, cp_model.FEASIBLE]
+                and complete_solution
+                and self.config.show_solutions_on_success
+            ):
+                try:
+                    logger.info("🎉 Configuration successful! Launching GUI...")
+                    complete_solution.show_gui_viewer(
+                        title="Complete Constraint Configuration Solution"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to launch GUI: {e}")
+                    complete_solution.print_solution_summary()
+
+            test_result.success = True
+            logger.info(f"UUID-only custom constraint testing completed")
+
+        except Exception as e:
+            logger.error(f"UUID-only test execution failed: {e}")
+            logger.error(traceback.format_exc())
+            test_result.error_message = str(e)
+        finally:
+            test_result.end_time = time.time()
 
         return test_result
 

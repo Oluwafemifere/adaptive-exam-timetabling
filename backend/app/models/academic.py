@@ -1,22 +1,34 @@
 # C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\models\academic.py
+
 import uuid
+
 from typing import List, Optional, TYPE_CHECKING
 
 from sqlalchemy import Date, DateTime, String, Boolean, Integer, ForeignKey, Index, func
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
+
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from .base import Base, TimestampMixin
+
 from sqlalchemy import Date, UniqueConstraint
+
 from datetime import date
+
 from sqlalchemy import ARRAY
+
 from sqlalchemy.ext.associationproxy import association_proxy
 
 # Remove direct imports that cause circular dependencies
+
 # Use TYPE_CHECKING for type hints only
+
 if TYPE_CHECKING:
     from .scheduling import Exam, StaffUnavailability, Staff, ExamDepartment
     from .jobs import TimetableJob
     from .file_uploads import FileUploadSession
+    from .versioning import SessionTemplate
 
 
 class AcademicSession(Base, TimestampMixin):
@@ -25,6 +37,7 @@ class AcademicSession(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     semester_system: Mapped[str] = mapped_column(String, nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -32,6 +45,13 @@ class AcademicSession(Base, TimestampMixin):
     is_active: Mapped[Optional[bool]] = mapped_column(
         Boolean, default=False, nullable=True
     )
+
+    # NEW FIELDS for template support and multi-semester functionality
+    template_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("session_templates.id"), nullable=True
+    )
+    archived_at: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
+    session_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # Use string references to avoid circular imports
     exams: Mapped[List["Exam"]] = relationship("Exam", back_populates="session")
@@ -48,6 +68,23 @@ class AcademicSession(Base, TimestampMixin):
         "FileUploadSession", back_populates="session"
     )
 
+    # NEW RELATIONSHIPS for template functionality
+    template: Mapped["SessionTemplate"] = relationship(
+        "SessionTemplate", foreign_keys=[template_id], back_populates="sessions"
+    )
+    session_templates: Mapped[List["SessionTemplate"]] = relationship(
+        "SessionTemplate",
+        foreign_keys="SessionTemplate.source_session_id",
+        back_populates="source_session",
+    )
+
+    # Add indexes for performance
+    __table_args__ = (
+        Index("idx_academic_sessions_template_id", "template_id"),
+        Index("idx_academic_sessions_active", "is_active"),
+        Index("idx_academic_sessions_archived_at", "archived_at"),
+    )
+
 
 class Department(Base, TimestampMixin):
     __tablename__ = "departments"
@@ -55,6 +92,7 @@ class Department(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     faculty_id: Mapped[uuid.UUID] = mapped_column(
@@ -84,6 +122,7 @@ class Faculty(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     is_active: Mapped[Optional[bool]] = mapped_column(
@@ -101,6 +140,7 @@ class Programme(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     name: Mapped[str] = mapped_column(String, nullable=False)
     code: Mapped[str] = mapped_column(String, nullable=False)
     degree_type: Mapped[str] = mapped_column(String, nullable=False)
@@ -126,6 +166,7 @@ class Course(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     credit_units: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -156,13 +197,18 @@ class Course(Base):
     )
 
 
+# Add these fields to the Student model
 class Student(Base, TimestampMixin):
     __tablename__ = "students"
 
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     matric_number: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    # MISSING FIELDS
+    first_name: Mapped[str] = mapped_column(String, nullable=False)
+    last_name: Mapped[str] = mapped_column(String, nullable=False)
     entry_year: Mapped[int] = mapped_column(Integer, nullable=False)
     current_level: Mapped[int] = mapped_column(Integer, nullable=False)
     student_type: Mapped[str] = mapped_column(String, default="regular", nullable=True)
@@ -190,6 +236,7 @@ class CourseRegistration(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     student_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("students.id"), nullable=False
     )

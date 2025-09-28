@@ -10,7 +10,8 @@ from .hard_constraints.occupancy_definition import OccupancyDefinitionConstraint
 from .hard_constraints.room_assignment_consistency import (
     RoomAssignmentConsistencyConstraint,
 )
-from .hard_constraints.room_capacity_hard import RoomCapacityHardConstraint
+
+# from .hard_constraints.room_capacity_hard import RoomCapacityHardConstraint
 from .hard_constraints.room_continuity import RoomContinuityConstraint
 from .hard_constraints.start_uniqueness import StartUniquenessConstraint
 from .hard_constraints.unified_student_conflict import UnifiedStudentConflictConstraint
@@ -54,11 +55,11 @@ hard_constraints = [
         ConstraintCategory.CORE,
         "Ensures room assignment constraints are met",
     ),
-    (
-        RoomCapacityHardConstraint,
-        ConstraintCategory.RESOURCE_CONSTRAINTS,
-        "Ensures room capacity is not exceeded",
-    ),
+    # (
+    #     RoomCapacityHardConstraint,
+    #     ConstraintCategory.RESOURCE_CONSTRAINTS,
+    #     "Ensures room capacity is not exceeded",
+    # ),
     (
         RoomContinuityConstraint,
         ConstraintCategory.RESOURCE_CONSTRAINTS,

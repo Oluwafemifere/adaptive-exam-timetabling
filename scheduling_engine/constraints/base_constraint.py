@@ -416,6 +416,9 @@ class CPSATBaseConstraint(ABC):
         try:
             self.log_constraint_creation_start()
 
+            # Add soft constraint specific logging
+            if self.constraint_category == "SOFT_CONSTRAINTS":
+                logger.info(f"🟡 Starting SOFT constraint: {self.constraint_id}")
             # Pre-validation with graceful handling
             if not self.validate_constraint_data():
                 logger.warning(
@@ -457,10 +460,16 @@ class CPSATBaseConstraint(ABC):
                     logger.warning(f"⚠️ {message}")
 
             self.log_constraint_creation_end()
+            if self.constraint_category == "SOFT_CONSTRAINTS":
+                logger.info(
+                    f"🟢 Finished SOFT constraint: {self.constraint_id} - {self.constraint_count} constraints"
+                )
 
         except Exception as e:
             logger.error(f"❌ {self.constraint_id}: Constraint creation failed: {e}")
 
+            if self.constraint_category == "SOFT_CONSTRAINTS":
+                logger.error(f"🔴 SOFT constraint {self.constraint_id} failed: {e}")
             if getattr(self, "is_critical", False):
                 # Even for critical constraints, check if zero constraints might be valid
                 if self._zero_constraints_valid():

@@ -17,12 +17,12 @@ class InvigilatorSinglePresenceConstraint(CPSATBaseConstraint):
 
     Constraint Logic:
     - For each invigilator I and time slot T:
-      - Sum of all u(I, exam, room, T) variables <= 1
+    - Sum of all u(I, exam, room, T) variables <= 1
     - This prevents an invigilator from being assigned to multiple rooms simultaneously
     """
 
     dependencies = ["MinimumInvigilatorsConstraint"]
-    constraint_category = "INVIGILATORCONSTRAINTS"
+    constraint_category = "INVIGILATOR_CONSTRAINTS"
     is_critical = True  # CRITICAL - must be applied
     min_expected_constraints = 0  # May be 0 if no invigilators
 
@@ -110,11 +110,6 @@ class InvigilatorSinglePresenceConstraint(CPSATBaseConstraint):
             for i, ((invid, slotid), assignments) in enumerate(sample_conflicts):
                 if len(assignments) > 1:
                     logger.info(f"  Sample {i+1}: Invigilator {invid} in slot {slotid}")
-                    logger.info(
-                        f"    -> Prevented from being in {len(assignments)} places simultaneously"
-                    )
-                    logger.info(f"    -> Exams: {[a['examid'] for a in assignments]}")
-                    logger.info(f"    -> Rooms: {[a['roomid'] for a in assignments]}")
         else:
             logger.info(
                 f"{self.constraint_id}: No conflicts detected - all invigilators have unique assignments"
@@ -160,7 +155,6 @@ class InvigilatorSinglePresenceConstraint(CPSATBaseConstraint):
                     logger.error(
                         f"  -> Invigilator {invid} assigned to {len(assignments)} locations in slot {slot}"
                     )
-                    logger.error(f"  -> Assignments: {assignments}")
 
         if conflicts_found == 0:
             logger.info(

@@ -11,7 +11,10 @@ from .admin_configuration_manager import (
     ConfigurationValidationResult,
     AdminConfigurationManager,
 )
-from .data_preparation_service import PreparedDataset, DataPreparationService
+from .data_preparation_service import (
+    ProblemModelCompatibleDataset,
+    ExactDataFlowService,
+)
 from .faculty_partitioning_service import (
     PartitionStrategy,
     DependencyType,
@@ -45,8 +48,8 @@ __all__ = [
     "ConfigurationValidationResult",
     "AdminConfigurationManager",
     # From data_preparation_service
-    "PreparedDataset",
-    "DataPreparationService",
+    "ProblemModelCompatibleDataset",
+    "ExactDataFlowService",
     # From faculty_partitioning_service
     "PartitionStrategy",
     "DependencyType",
