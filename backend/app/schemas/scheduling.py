@@ -8,6 +8,65 @@ from datetime import date, time, datetime
 MODEL_CONFIG = ConfigDict(from_attributes=True)
 
 
+# --- Base Schemas ---
+
+
+class ExamBase(BaseModel):
+    course_id: UUID
+    session_id: UUID
+    duration_minutes: int
+    expected_students: int
+    requires_special_arrangements: bool = False
+    status: str = "pending"
+    notes: Optional[str] = None
+    is_practical: bool = False
+    requires_projector: bool = False
+    is_common: bool = False
+    morning_only: bool = False
+    instructor_id: Optional[UUID] = None
+
+
+class ExamCreate(ExamBase):
+    pass
+
+
+class ExamUpdate(BaseModel):
+    course_id: Optional[UUID] = None
+    session_id: Optional[UUID] = None
+    duration_minutes: Optional[int] = None
+    expected_students: Optional[int] = None
+    requires_special_arrangements: Optional[bool] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    is_practical: Optional[bool] = None
+    requires_projector: Optional[bool] = None
+    is_common: Optional[bool] = None
+    morning_only: Optional[bool] = None
+    instructor_id: Optional[UUID] = None
+
+
+class TimeSlotBase(BaseModel):
+    name: str
+    day_of_week: str
+    start_time: time
+    end_time: time
+    period_type: str
+    is_active: bool = True
+
+
+class TimeSlotCreate(TimeSlotBase):
+    pass
+
+
+class TimeSlotUpdate(BaseModel):
+    name: Optional[str] = None
+    day_of_week: Optional[str] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    period_type: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class TimetableAssignmentRead(BaseModel):
     model_config = MODEL_CONFIG
 
@@ -25,22 +84,9 @@ class TimetableAssignmentRead(BaseModel):
     invigilator_ids: List[UUID] = Field(alias="invigilators", default_factory=list)
 
 
-class ExamRead(BaseModel):
+class ExamRead(ExamBase):
     model_config = MODEL_CONFIG
-
     id: UUID
-    course_id: UUID
-    session_id: UUID
-    duration_minutes: int
-    expected_students: int
-    requires_special_arrangements: bool = False
-    status: str
-    notes: Optional[str] = None
-    is_practical: bool = False
-    requires_projector: bool = False
-    is_common: bool = False
-    morning_only: bool = False
-    instructor_id: Optional[UUID] = None
     timetable_assignment_ids: List[UUID] = Field(
         alias="timetable_assignments", default_factory=list
     )

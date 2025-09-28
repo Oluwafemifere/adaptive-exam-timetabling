@@ -16,6 +16,7 @@ from .websocket_manager import (
     notify_job_completed,
     notify_job_error,
 )
+from .notification_orchestration_service import NotificationOrchestrationService
 
 __all__ = [
     # Email service
@@ -32,4 +33,6 @@ __all__ = [
     "notify_job_cancelled",
     "notify_job_completed",
     "notify_job_error",
+    # Orchestration service
+    "NotificationOrchestrationService",
 ]

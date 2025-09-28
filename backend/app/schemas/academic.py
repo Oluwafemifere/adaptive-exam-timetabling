@@ -11,6 +11,46 @@ from datetime import date, datetime
 MODEL_CONFIG = ConfigDict(from_attributes=True)
 
 
+# --- Base Schemas ---
+class CourseBase(BaseModel):
+    code: str
+    title: str
+    credit_units: int
+    course_level: int
+    semester: Optional[int] = None
+    department_id: UUID
+    exam_duration_minutes: int = 180
+    is_practical: bool = False
+    morning_only: bool = False
+    is_active: bool = True
+
+
+class CourseCreate(CourseBase):
+    pass
+
+
+class CourseUpdate(BaseModel):
+    code: Optional[str] = None
+    title: Optional[str] = None
+    credit_units: Optional[int] = None
+    course_level: Optional[int] = None
+    semester: Optional[int] = None
+    department_id: Optional[UUID] = None
+    exam_duration_minutes: Optional[int] = None
+    is_practical: Optional[bool] = None
+    morning_only: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+
+class CourseRead(CourseBase):
+    model_config = MODEL_CONFIG
+    id: UUID
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    registration_ids: List[UUID] = Field(default_factory=list)
+    exam_ids: List[UUID] = Field(default_factory=list)
+
+
 class AcademicSessionRead(BaseModel):
     model_config = MODEL_CONFIG
 
@@ -77,26 +117,6 @@ class ProgrammeRead(BaseModel):
     is_active: bool = True
     created_at: Optional[datetime] = None
     student_ids: List[UUID] = Field(default_factory=list)
-
-
-class CourseRead(BaseModel):
-    model_config = MODEL_CONFIG
-
-    id: Optional[UUID] = None
-    code: str
-    title: str
-    credit_units: int
-    course_level: int
-    semester: Optional[int] = None
-    department_id: UUID
-    exam_duration_minutes: int = 180
-    is_practical: bool = False
-    morning_only: bool = False
-    is_active: bool = True
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    registration_ids: List[UUID] = Field(default_factory=list)
-    exam_ids: List[UUID] = Field(default_factory=list)
 
 
 class StudentRead(BaseModel):

@@ -1,7 +1,7 @@
 # backend/app/services/data_retrieval/unified_data_retrieval.py
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from uuid import UUID
 import json
 
@@ -39,23 +39,27 @@ class UnifiedDataService:
             f"Executing PostgreSQL function '{function_name}' with params: {params}"
         )
         try:
-            # Construct the SQL query to call the function with named parameters
+            # Convert dict/list params to JSON strings for JSON/JSONB function arguments
+            for key, value in params.items():
+                if isinstance(value, (dict, list)):
+                    params[key] = json.dumps(value)
+
             query = text(
                 f"SELECT exam_system.{function_name}({', '.join(':' + k for k in params.keys())})"
             )
             result = await self.session.execute(query, params)
 
-            # The function returns a single row with a single column containing the JSONB
             raw_data = result.scalar_one_or_none()
 
             if raw_data is None:
                 logger.warning(f"PostgreSQL function '{function_name}' returned NULL.")
                 return None
 
-            # asyncpg automatically decodes JSONB to a Python dict/list.
-            # If it's a string, it needs parsing (fallback).
             if isinstance(raw_data, str):
-                return json.loads(raw_data)
+                try:
+                    return json.loads(raw_data)
+                except json.JSONDecodeError:
+                    return raw_data  # Return as-is if not JSON
 
             return raw_data
 
@@ -65,6 +69,70 @@ class UnifiedDataService:
                 exc_info=True,
             )
             raise
+
+    # --- START OF MODIFICATION ---
+
+    async def get_paginated_entities(
+        self,
+        entity_type: str,
+        page: int = 1,
+        page_size: int = 20,
+        filters: Optional[Dict[str, Any]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves a paginated list of entities with filtering and sorting.
+
+        Args:
+            entity_type: The type of entity to retrieve (e.g., 'courses', 'rooms').
+            page: The page number to retrieve.
+            page_size: The number of items per page.
+            filters: A dictionary of filters to apply.
+            sort_by: The field to sort by.
+            sort_order: The sort order ('asc' or 'desc').
+
+        Returns:
+            A dictionary containing paginated results and metadata.
+        """
+        params = {
+            "p_entity_type": entity_type,
+            "p_page": page,
+            "p_page_size": page_size,
+            "p_filters": filters or {},
+            "p_sort_by": sort_by,
+            "p_sort_order": sort_order,
+        }
+        data = await self._execute_pg_function("get_paginated_entities", params)
+        if data:
+            logger.info(
+                f"Successfully retrieved page {page} for entity '{entity_type}'"
+            )
+        return data
+
+    async def get_entity_by_id(
+        self, entity_type: str, entity_id: UUID
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves a single entity by its ID.
+
+        Args:
+            entity_type: The type of entity (e.g., 'course', 'room').
+            entity_id: The UUID of the entity.
+
+        Returns:
+            A dictionary representing the entity, or None if not found.
+        """
+        params = {
+            "p_entity_type": entity_type,
+            "p_entity_id": entity_id,
+        }
+        data = await self._execute_pg_function("get_entity_by_id", params)
+        if data:
+            logger.info(f"Successfully retrieved {entity_type} with ID {entity_id}")
+        return data
+
+    # --- END OF MODIFICATION ---
 
     async def get_scheduling_dataset(self, session_id: UUID) -> Dict[str, Any]:
         """
@@ -80,7 +148,6 @@ class UnifiedDataService:
                 f"PostgreSQL function returned no data for session {session_id}."
             )
 
-        # Validate the structure of the returned dataset
         critical_components = ["exams", "rooms", "students", "invigilators"]
         missing_components = [
             comp for comp in critical_components if not dataset.get(comp)
