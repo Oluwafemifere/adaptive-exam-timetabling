@@ -1,19 +1,18 @@
 # services/data_validation/data_mapper.py
 """
-Data Mapper Module for the Adaptive Exam Timetabling System.
-Maps external data formats to internal database models with relationship handling.
-All database interactions are async and require an AsyncSession.
+MODIFIED Data Mapper Module for the Adaptive Exam Timetabling System.
+This module now focuses on mapping and transforming data into a clean JSON format
+for the database seeding function, without performing database lookups itself.
 """
 
 import re
 import logging
 import inspect
-from typing import Dict, List, Optional, TypedDict, Any, Union
+from typing import Dict, List, Optional, Any, Union
 from datetime import datetime, date, time
 from decimal import Decimal
 import uuid
 from dataclasses import dataclass, field
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -35,25 +34,20 @@ class DataMappingError(Exception):
     pass
 
 
-class ValidationResult(TypedDict):
-    valid: bool
-    errors: List[str]
-    warnings: List[str]
-
-
 class DataMapper:
-    """Maps external data to internal database models with validation and transformation."""
+    """
+    Maps external data to a JSON format suitable for the database seeding function.
+    It handles transformations but delegates foreign key resolution to the database.
+    """
 
     def __init__(self, db_session: AsyncSession):
+        # db_session is kept for potential future use or complex validation, but not for lookups.
         self.db_session = db_session
         self.entity_schemas: Dict[str, Dict[str, Any]] = {}
-        # Allow cached values to be either uuid.UUID or raw str
-        self.lookup_caches: Dict[str, Dict[str, Union[uuid.UUID, str]]] = {}
-        self._table_exists_cache: Dict[str, bool] = {}
         self._initialize_schemas()
 
     def _initialize_schemas(self) -> None:
-        """Initialize entity mapping schemas."""
+        """Initialize entity mapping schemas for JSON preparation."""
 
         # Academic Sessions Schema
         self.entity_schemas["academic_sessions"] = {
@@ -67,13 +61,14 @@ class DataMapper:
                 "semester_type": "semester_system",
             },
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "start_date": self._transform_date,
                 "end_date": self._transform_date,
                 "is_active": self._transform_boolean,
                 "name": self._transform_string,
             },
             "validators": {
-                "name": self._validate_unique_session_name,
+                "name": self._validate_required,
                 "start_date": self._validate_date_range,
                 "end_date": self._validate_date_range,
             },
@@ -85,48 +80,49 @@ class DataMapper:
             "required_fields": ["name", "code"],
             "field_mappings": {"faculty_name": "name", "faculty_code": "code"},
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "name": self._transform_string,
                 "code": self._transform_code,
                 "is_active": self._transform_boolean,
             },
             "validators": {
                 "name": self._validate_required,
-                "code": self._validate_unique_faculty_code,
+                "code": self._validate_required,
             },
         }
 
-        # Departments Schema
+        # Departments Schema - now uses faculty_code instead of faculty_id lookup
         self.entity_schemas["departments"] = {
             "table_name": "departments",
-            "required_fields": ["name", "code", "faculty_id"],
+            "required_fields": ["name", "code", "faculty_code"],
             "field_mappings": {
                 "department_name": "name",
                 "dept_name": "name",
                 "department_code": "code",
                 "dept_code": "code",
-                "faculty_name": "faculty_lookup",
-                "faculty_code": "faculty_lookup",
+                "faculty_name": "faculty_code",
             },
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "name": self._transform_string,
                 "code": self._transform_code,
+                "faculty_code": self._transform_code,
                 "is_active": self._transform_boolean,
             },
             "validators": {
                 "name": self._validate_required,
-                "code": self._validate_unique_department_code,
-                "faculty_id": self._validate_required,
+                "code": self._validate_required,
+                "faculty_code": self._validate_required,
             },
-            "lookups": {"faculty_id": self._lookup_faculty},
         }
 
-        # Programmes Schema
+        # Programmes Schema - now uses department_code instead of department_id
         self.entity_schemas["programmes"] = {
             "table_name": "programmes",
             "required_fields": [
                 "name",
                 "code",
-                "department_id",
+                "department_code",
                 "degree_type",
                 "duration_years",
             ],
@@ -135,26 +131,27 @@ class DataMapper:
                 "program_name": "name",
                 "programme_code": "code",
                 "program_code": "code",
-                "department_name": "department_lookup",
-                "department_code": "department_lookup",
+                "department_name": "department_code",
                 "degree": "degree_type",
             },
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "name": self._transform_string,
                 "code": self._transform_code,
+                "department_code": self._transform_code,
                 "duration_years": self._transform_integer,
                 "degree_type": self._transform_string,
                 "is_active": self._transform_boolean,
             },
             "validators": {
                 "name": self._validate_required,
-                "code": self._validate_unique_programme_code,
+                "code": self._validate_required,
+                "department_code": self._validate_required,
                 "duration_years": self._validate_positive_integer,
             },
-            "lookups": {"department_id": self._lookup_department},
         }
 
-        # Courses Schema
+        # Courses Schema - now uses department_code instead of department_id
         self.entity_schemas["courses"] = {
             "table_name": "courses",
             "required_fields": [
@@ -162,7 +159,7 @@ class DataMapper:
                 "title",
                 "credit_units",
                 "course_level",
-                "department_id",
+                "department_code",
             ],
             "field_mappings": {
                 "course_code": "code",
@@ -172,15 +169,16 @@ class DataMapper:
                 "units": "credit_units",
                 "level": "course_level",
                 "year": "course_level",
-                "department_name": "department_lookup",
-                "department_code": "department_lookup",
+                "department_name": "department_code",
                 "exam_duration": "exam_duration_minutes",
             },
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "code": self._transform_code,
                 "title": self._transform_string,
                 "credit_units": self._transform_integer,
                 "course_level": self._transform_integer,
+                "department_code": self._transform_code,
                 "exam_duration_minutes": self._transform_integer,
                 "semester": self._transform_integer,
                 "is_practical": self._transform_boolean,
@@ -188,65 +186,71 @@ class DataMapper:
                 "is_active": self._transform_boolean,
             },
             "validators": {
-                "code": self._validate_unique_course_code,
+                "code": self._validate_required,
                 "title": self._validate_required,
                 "credit_units": self._validate_positive_integer,
                 "course_level": self._validate_course_level,
+                "department_code": self._validate_required,
             },
-            "lookups": {"department_id": self._lookup_department},
         }
 
-        # Students Schema
+        # Students Schema - now uses programme_code instead of programme_id
         self.entity_schemas["students"] = {
             "table_name": "students",
             "required_fields": [
                 "matric_number",
-                "programme_id",
-                "current_level",
+                "first_name",
+                "last_name",
+                "programme_code",
                 "entry_year",
             ],
             "field_mappings": {
                 "matric_no": "matric_number",
                 "registration_number": "matric_number",
                 "reg_no": "matric_number",
-                "programme_name": "programme_lookup",
-                "programme_code": "programme_lookup",
-                "program_name": "programme_lookup",
+                "programme_name": "programme_code",
                 "level": "current_level",
                 "year_of_entry": "entry_year",
                 "admission_year": "entry_year",
             },
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "matric_number": self._transform_matric_number,
+                "first_name": self._transform_string,
+                "last_name": self._transform_string,
                 "current_level": self._transform_integer,
                 "entry_year": self._transform_integer,
+                "programme_code": self._transform_code,
                 "student_type": self._transform_string,
                 "is_active": self._transform_boolean,
                 "special_needs": self._transform_array,
             },
             "validators": {
-                "matric_number": self._validate_unique_matric_number,
+                "matric_number": self._validate_required,
+                "first_name": self._validate_required,
+                "last_name": self._validate_required,
+                "programme_code": self._validate_required,
                 "current_level": self._validate_positive_integer,
                 "entry_year": self._validate_entry_year,
             },
-            "lookups": {"programme_id": self._lookup_programme},
         }
 
-        # Staff Schema
+        # Staff Schema - now uses department_code instead of department_id
         self.entity_schemas["staff"] = {
             "table_name": "staff",
-            "required_fields": ["staff_number", "staff_type"],
+            "required_fields": ["staff_number", "staff_type", "department_code"],
             "field_mappings": {
                 "staff_no": "staff_number",
                 "employee_id": "staff_number",
                 "emp_id": "staff_number",
                 "type": "staff_type",
-                "department_name": "department_lookup",
-                "department_code": "department_lookup",
+                "department_name": "department_code",
             },
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "staff_number": self._transform_staff_number,
                 "staff_type": self._transform_string,
+                "department_code": self._transform_code,
                 "position": self._transform_string,
                 "can_invigilate": self._transform_boolean,
                 "max_daily_sessions": self._transform_integer,
@@ -254,10 +258,10 @@ class DataMapper:
                 "is_active": self._transform_boolean,
             },
             "validators": {
-                "staff_number": self._validate_unique_staff_number,
+                "staff_number": self._validate_required,
                 "staff_type": self._validate_staff_type,
+                "department_code": self._validate_required,
             },
-            "lookups": {"department_id": self._lookup_department},
         }
 
         # Buildings Schema
@@ -266,13 +270,14 @@ class DataMapper:
             "required_fields": ["name", "code"],
             "field_mappings": {"building_name": "name", "building_code": "code"},
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "name": self._transform_string,
                 "code": self._transform_code,
                 "is_active": self._transform_boolean,
             },
             "validators": {
                 "name": self._validate_required,
-                "code": self._validate_unique_building_code,
+                "code": self._validate_required,
             },
         }
 
@@ -282,6 +287,7 @@ class DataMapper:
             "required_fields": ["name"],
             "field_mappings": {"type_name": "name", "room_type_name": "name"},
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "name": self._transform_string,
                 "description": self._transform_string,
                 "is_active": self._transform_boolean,
@@ -289,24 +295,23 @@ class DataMapper:
             "validators": {"name": self._validate_required},
         }
 
-        # Rooms Schema
+        # Rooms Schema - now uses building_code and room_type_name instead of IDs
         self.entity_schemas["rooms"] = {
             "table_name": "rooms",
             "required_fields": [
                 "code",
                 "name",
                 "capacity",
-                "building_id",
-                "room_type_id",
+                "building_code",
+                "room_type_name",
             ],
             "field_mappings": {
                 "room_code": "code",
                 "room_name": "name",
                 "room_capacity": "capacity",
-                "building_name": "building_lookup",
-                "building_code": "building_lookup",
-                "room_type_name": "room_type_lookup",
-                "type": "room_type_lookup",
+                "building_name": "building_code",
+                "room_type_name": "room_type_name",
+                "type": "room_type_name",
                 "floor": "floor_number",
                 "air_conditioning": "has_ac",
                 "ac": "has_ac",
@@ -314,9 +319,12 @@ class DataMapper:
                 "projector": "has_projector",
             },
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "code": self._transform_code,
                 "name": self._transform_string,
                 "capacity": self._transform_integer,
+                "building_code": self._transform_code,
+                "room_type_name": self._transform_string,
                 "exam_capacity": self._transform_integer,
                 "floor_number": self._transform_integer,
                 "has_ac": self._transform_boolean,
@@ -327,12 +335,10 @@ class DataMapper:
                 "notes": self._transform_string,
             },
             "validators": {
-                "code": self._validate_unique_room_code,
+                "code": self._validate_required,
                 "capacity": self._validate_positive_integer,
-            },
-            "lookups": {
-                "building_id": self._lookup_building,
-                "room_type_id": self._lookup_room_type,
+                "building_code": self._validate_required,
+                "room_type_name": self._validate_required,
             },
         }
 
@@ -348,6 +354,7 @@ class DataMapper:
                 "duration": "duration_minutes",
             },
             "transformers": {
+                "id": lambda x: str(uuid.uuid4()),
                 "name": self._transform_string,
                 "start_time": self._transform_time,
                 "end_time": self._transform_time,
@@ -361,90 +368,13 @@ class DataMapper:
             },
         }
 
-        logger.info(f"Initialized {len(self.entity_schemas)} entity schemas")
-
-    async def _table_exists(self, table_name: str) -> bool:
-        """Check if a table exists in the database."""
-        if table_name in self._table_exists_cache:
-            return self._table_exists_cache[table_name]
-
-        try:
-            query = text(
-                """
-                SELECT COUNT(*) 
-                FROM information_schema.tables 
-                WHERE table_name = :table_name
-                AND table_schema = current_database()
-            """
-            )
-            result = await self.db_session.execute(query, {"table_name": table_name})
-            count = result.scalar()
-            exists = count > 0 if count is not None else False
-            self._table_exists_cache[table_name] = exists
-            return exists
-        except Exception as e:
-            logger.warning(f"Could not check if table {table_name} exists: {e}")
-            # Assume table exists to avoid blocking functionality
-            self._table_exists_cache[table_name] = True
-            return True
-
-    async def _execute_lookup_query(
-        self, table_name: str, field_name: str, value: Any
-    ) -> Optional[str]:
-        """Execute a generic lookup query."""
-        if not await self._table_exists(table_name):
-            logger.warning(f"Table {table_name} does not exist, skipping lookup")
-            return None
-
-        try:
-            query = text(
-                f"""
-                SELECT id FROM {table_name} 
-                WHERE {field_name} = :value 
-                LIMIT 1
-            """
-            )
-            result = await self.db_session.execute(query, {"value": value})
-            row = result.first()
-            return str(row[0]) if row else None
-        except Exception as e:
-            logger.warning(
-                f"Lookup query failed for {table_name}.{field_name} = {value}: {e}"
-            )
-            return None
-
-    async def _execute_uniqueness_check(
-        self, table_name: str, field_name: str, value: Any
-    ) -> bool:
-        """Execute a generic uniqueness check."""
-        if not await self._table_exists(table_name):
-            logger.warning(
-                f"Table {table_name} does not exist, assuming value is unique"
-            )
-            return True
-
-        try:
-            query = text(
-                f"""
-                SELECT COUNT(*) FROM {table_name} 
-                WHERE {field_name} = :value
-            """
-            )
-            result = await self.db_session.execute(query, {"value": value})
-            count = result.scalar()
-            return count == 0 if count is not None else True
-        except Exception as e:
-            logger.warning(
-                f"Uniqueness check failed for {table_name}.{field_name} = {value}: {e}"
-            )
-            # Assume unique to avoid blocking
-            return True
+        logger.info(f"Initialized {len(self.entity_schemas)} simplified entity schemas")
 
     async def map_data(
         self, raw_data: List[Dict[str, Any]], entity_type: str
     ) -> Dict[str, Any]:
         """
-        Map raw data to database format.
+        Map raw data to JSON format for database seeding.
 
         Args:
             raw_data: List of raw data dictionaries
@@ -470,7 +400,8 @@ class DataMapper:
 
         for idx, record in enumerate(raw_data):
             try:
-                mapping_result = await self._map_single_record(record, schema, idx + 1)
+                # Use synchronous mapping since we don't do DB lookups anymore
+                mapping_result = self._map_single_record_sync(record, schema, idx + 1)
 
                 if mapping_result.success:
                     result["mapped_data"].append(mapping_result.data)
@@ -504,10 +435,10 @@ class DataMapper:
 
         return result
 
-    async def _map_single_record(
+    def _map_single_record_sync(
         self, record: Dict[str, Any], schema: Dict[str, Any], record_number: int
     ) -> MappingResult:
-        """Map a single record using the schema."""
+        """Map a single record using the schema synchronously."""
         result = MappingResult(success=False)
         mapped_data: Dict[str, Any] = {}
 
@@ -515,17 +446,8 @@ class DataMapper:
             # Apply field mappings
             normalized_record = self._apply_field_mappings(record, schema)
 
-            # Handle lookups first
-            lookup_results = await self._handle_lookups(normalized_record, schema)
-            mapped_data.update(lookup_results.get("data", {}))
-            result.errors.extend(lookup_results.get("errors", []))
-            result.warnings.extend(lookup_results.get("warnings", []))
-
             # Transform fields
             for field, value in normalized_record.items():
-                if field.endswith("_lookup"):
-                    continue  # Skip lookup fields, already handled
-
                 transformers = schema.get("transformers", {})
 
                 if field in transformers:
@@ -539,23 +461,22 @@ class DataMapper:
                 else:
                     mapped_data[field] = value
 
+            # Generate UUID if not already present
+            if "id" not in mapped_data:
+                mapped_data["id"] = str(uuid.uuid4())
+
             # Validate required fields
             required_fields = schema.get("required_fields", [])
             for field in required_fields:
                 if field not in mapped_data or mapped_data[field] is None:
                     result.errors.append(f"Missing required field: {field}")
 
-            # Run validators (support sync or async validators)
+            # Run validators
             validators = schema.get("validators", {})
             for field, validator in validators.items():
                 if field in mapped_data:
                     try:
-                        validation_raw = validator(mapped_data[field], mapped_data)
-                        validation_result = (
-                            await validation_raw
-                            if inspect.isawaitable(validation_raw)
-                            else validation_raw
-                        )
+                        validation_result = validator(mapped_data[field], mapped_data)
 
                         if not validation_result.get("is_valid", True):
                             error_msg = validation_result.get(
@@ -567,13 +488,6 @@ class DataMapper:
                         result.warnings.append(
                             f"Field '{field}': Validation error: {e}"
                         )
-
-            # Add metadata
-            mapped_data["_metadata"] = {
-                "record_number": record_number,
-                "mapped_at": datetime.utcnow().isoformat(),
-                "entity_type": schema["table_name"],
-            }
 
             if not result.errors:
                 result.success = True
@@ -606,54 +520,7 @@ class DataMapper:
 
         return normalized
 
-    async def _handle_lookups(
-        self, record: Dict[str, Any], schema: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Handle foreign key lookups."""
-        lookup_result: Dict[str, Any] = {"data": {}, "errors": [], "warnings": []}
-
-        lookups = schema.get("lookups", {})
-
-        for target_field, lookup_func in lookups.items():
-            lookup_value = None
-
-            # Find lookup value
-            lookup_field = target_field.replace("_id", "_lookup")
-
-            # If record already carries a resolved id field, use it directly
-            if target_field in record:
-                lookup_result["data"][target_field] = record[target_field]
-                continue
-
-            # Otherwise, attempt lookup when a lookup key is present
-            if lookup_field in record:
-                lookup_value = record[lookup_field]
-
-            if lookup_value:
-                try:
-                    # Call lookup func. It may return an awaitable or direct value.
-                    lookup_raw = lookup_func(lookup_value)
-                    resolved_id = (
-                        await lookup_raw
-                        if inspect.isawaitable(lookup_raw)
-                        else lookup_raw
-                    )
-
-                    if resolved_id:
-                        lookup_result["data"][target_field] = resolved_id
-                    else:
-                        lookup_result["errors"].append(
-                            f"Could not resolve {target_field} for value: {lookup_value}"
-                        )
-
-                except Exception as e:
-                    lookup_result["errors"].append(
-                        f"Lookup error for {target_field}: {e}"
-                    )
-
-        return lookup_result
-
-    # Transformation methods
+    # Transformation methods (keep as is)
     def _transform_string(self, value: Any) -> Optional[str]:
         """Transform value to string."""
         if value is None or value == "":
@@ -738,7 +605,6 @@ class DataMapper:
 
         if isinstance(value, str):
             try:
-                # Import dateutil parser locally to avoid stub issues
                 from dateutil import parser
 
                 return parser.parse(value.strip()).date()
@@ -760,7 +626,6 @@ class DataMapper:
 
         if isinstance(value, str):
             try:
-                # Import dateutil parser locally to avoid stub issues
                 from dateutil import parser
 
                 return parser.parse(value.strip()).time()
@@ -803,10 +668,8 @@ class DataMapper:
 
         return str(value).strip().upper()
 
-    # Validation methods
-    async def _validate_required(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    # Validation methods (keep as is, remove database-dependent ones)
+    def _validate_required(self, value: Any, record: Dict[str, Any]) -> Dict[str, Any]:
         """Validate required field."""
         is_valid = value is not None and value != ""
 
@@ -815,7 +678,7 @@ class DataMapper:
             "error": "Field is required" if not is_valid else None,
         }
 
-    async def _validate_positive_integer(
+    def _validate_positive_integer(
         self, value: Any, record: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Validate positive integer."""
@@ -833,7 +696,7 @@ class DataMapper:
         except (TypeError, ValueError):
             return {"is_valid": False, "error": "Must be a valid integer"}
 
-    async def _validate_course_level(
+    def _validate_course_level(
         self, value: Any, record: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Validate course level."""
@@ -853,7 +716,7 @@ class DataMapper:
         except (TypeError, ValueError):
             return {"is_valid": False, "error": "Course level must be a valid integer"}
 
-    async def _validate_entry_year(
+    def _validate_entry_year(
         self, value: Any, record: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Validate entry year."""
@@ -876,7 +739,7 @@ class DataMapper:
         except (TypeError, ValueError):
             return {"is_valid": False, "error": "Entry year must be a valid integer"}
 
-    async def _validate_staff_type(
+    def _validate_staff_type(
         self, value: Any, record: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Validate staff type."""
@@ -894,152 +757,7 @@ class DataMapper:
             ),
         }
 
-    # Uniqueness validation methods using direct SQL queries
-    async def _validate_unique_session_name(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate unique session name."""
-        if not value:
-            return {"is_valid": False, "error": "Session name is required"}
-
-        is_unique = await self._execute_uniqueness_check(
-            "academic_sessions", "name", value
-        )
-
-        return {
-            "is_valid": is_unique,
-            "error": (
-                f'Session name "{value}" already exists' if not is_unique else None
-            ),
-        }
-
-    async def _validate_unique_faculty_code(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate unique faculty code."""
-        if not value:
-            return {"is_valid": False, "error": "Faculty code is required"}
-
-        is_unique = await self._execute_uniqueness_check("faculties", "code", value)
-
-        return {
-            "is_valid": is_unique,
-            "error": (
-                f'Faculty code "{value}" already exists' if not is_unique else None
-            ),
-        }
-
-    async def _validate_unique_department_code(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate unique department code."""
-        if not value:
-            return {"is_valid": False, "error": "Department code is required"}
-
-        is_unique = await self._execute_uniqueness_check("departments", "code", value)
-
-        return {
-            "is_valid": is_unique,
-            "error": (
-                f'Department code "{value}" already exists' if not is_unique else None
-            ),
-        }
-
-    async def _validate_unique_programme_code(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate unique programme code."""
-        if not value:
-            return {"is_valid": False, "error": "Programme code is required"}
-
-        is_unique = await self._execute_uniqueness_check("programmes", "code", value)
-
-        return {
-            "is_valid": is_unique,
-            "error": (
-                f'Programme code "{value}" already exists' if not is_unique else None
-            ),
-        }
-
-    async def _validate_unique_course_code(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate unique course code."""
-        if not value:
-            return {"is_valid": False, "error": "Course code is required"}
-
-        is_unique = await self._execute_uniqueness_check("courses", "code", value)
-
-        return {
-            "is_valid": is_unique,
-            "error": f'Course code "{value}" already exists' if not is_unique else None,
-        }
-
-    async def _validate_unique_matric_number(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate unique matric number."""
-        if not value:
-            return {"is_valid": False, "error": "Matric number is required"}
-
-        is_unique = await self._execute_uniqueness_check(
-            "students", "matric_number", value
-        )
-
-        return {
-            "is_valid": is_unique,
-            "error": (
-                f'Matric number "{value}" already exists' if not is_unique else None
-            ),
-        }
-
-    async def _validate_unique_staff_number(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate unique staff number."""
-        if not value:
-            return {"is_valid": False, "error": "Staff number is required"}
-
-        is_unique = await self._execute_uniqueness_check("staff", "staff_number", value)
-
-        return {
-            "is_valid": is_unique,
-            "error": (
-                f'Staff number "{value}" already exists' if not is_unique else None
-            ),
-        }
-
-    async def _validate_unique_building_code(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate unique building code."""
-        if not value:
-            return {"is_valid": False, "error": "Building code is required"}
-
-        is_unique = await self._execute_uniqueness_check("buildings", "code", value)
-
-        return {
-            "is_valid": is_unique,
-            "error": (
-                f'Building code "{value}" already exists' if not is_unique else None
-            ),
-        }
-
-    async def _validate_unique_room_code(
-        self, value: Any, record: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate unique room code."""
-        if not value:
-            return {"is_valid": False, "error": "Room code is required"}
-
-        is_unique = await self._execute_uniqueness_check("rooms", "code", value)
-
-        return {
-            "is_valid": is_unique,
-            "error": f'Room code "{value}" already exists' if not is_unique else None,
-        }
-
-    async def _validate_date_range(
+    def _validate_date_range(
         self, value: Any, record: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Validate date range."""
@@ -1075,263 +793,6 @@ class DataMapper:
             }
         except Exception as e:
             return {"is_valid": False, "error": f"Invalid date format: {e}"}
-
-    # Lookup methods using direct SQL queries with caching
-    async def _lookup_faculty(self, value: Any) -> Optional[str]:
-        """Look up faculty by name or code."""
-        if not value:
-            return None
-
-        # Check cache first
-        cache_key = f"faculty_{str(value).lower()}"
-        if cache_key in self.lookup_caches.get("faculties", {}):
-            return str(self.lookup_caches["faculties"][cache_key])
-
-        # Try lookup by code first
-        result = await self._execute_lookup_query(
-            "faculties", "code", str(value).upper()
-        )
-
-        # If not found by code, try by name (case-insensitive)
-        if not result:
-            try:
-                if await self._table_exists("faculties"):
-                    query = text(
-                        """
-                        SELECT id FROM faculties 
-                        WHERE LOWER(name) LIKE LOWER(:value) 
-                        LIMIT 1
-                    """
-                    )
-                    db_result = await self.db_session.execute(
-                        query, {"value": f"%{value}%"}
-                    )
-                    row = db_result.first()
-                    result = str(row[0]) if row else None
-            except Exception as e:
-                logger.warning(f"Faculty name lookup error for '{value}': {e}")
-
-        # Cache the result if found
-        if result:
-            try:
-                # prefer storing uuid.UUID when possible
-                parsed = uuid.UUID(result)
-                self.lookup_caches.setdefault("faculties", {})[cache_key] = parsed
-            except Exception:
-                # fall back to raw string when not a valid UUID
-                self.lookup_caches.setdefault("faculties", {})[cache_key] = result
-
-        return result
-
-    async def _lookup_department(self, value: Any) -> Optional[str]:
-        """Look up department by name or code."""
-        if not value:
-            return None
-
-        # Check cache first
-        cache_key = f"department_{str(value).lower()}"
-        if cache_key in self.lookup_caches.get("departments", {}):
-            return str(self.lookup_caches["departments"][cache_key])
-
-        # Try lookup by code first
-        result = await self._execute_lookup_query(
-            "departments", "code", str(value).upper()
-        )
-
-        # If not found by code, try by name (case-insensitive)
-        if not result:
-            try:
-                if await self._table_exists("departments"):
-                    query = text(
-                        """
-                        SELECT id FROM departments 
-                        WHERE LOWER(name) LIKE LOWER(:value) 
-                        LIMIT 1
-                    """
-                    )
-                    db_result = await self.db_session.execute(
-                        query, {"value": f"%{value}%"}
-                    )
-                    row = db_result.first()
-                    result = str(row[0]) if row else None
-            except Exception as e:
-                logger.warning(f"Department name lookup error for '{value}': {e}")
-
-        # Cache the result if found
-        if result:
-            try:
-                parsed = uuid.UUID(result)
-                self.lookup_caches.setdefault("departments", {})[cache_key] = parsed
-            except Exception:
-                self.lookup_caches.setdefault("departments", {})[cache_key] = result
-
-        return result
-
-    async def _lookup_programme(self, value: Any) -> Optional[str]:
-        """Look up programme by name or code."""
-        if not value:
-            return None
-
-        # Check cache first
-        cache_key = f"programme_{str(value).lower()}"
-        if cache_key in self.lookup_caches.get("programmes", {}):
-            return str(self.lookup_caches["programmes"][cache_key])
-
-        # Try lookup by code first
-        result = await self._execute_lookup_query(
-            "programmes", "code", str(value).upper()
-        )
-
-        # If not found by code, try by name (case-insensitive)
-        if not result:
-            try:
-                if await self._table_exists("programmes"):
-                    query = text(
-                        """
-                        SELECT id FROM programmes 
-                        WHERE LOWER(name) LIKE LOWER(:value) 
-                        LIMIT 1
-                    """
-                    )
-                    db_result = await self.db_session.execute(
-                        query, {"value": f"%{value}%"}
-                    )
-                    row = db_result.first()
-                    result = str(row[0]) if row else None
-            except Exception as e:
-                logger.warning(f"Programme name lookup error for '{value}': {e}")
-
-        # Cache the result if found
-        if result:
-            try:
-                parsed = uuid.UUID(result)
-                self.lookup_caches.setdefault("programmes", {})[cache_key] = parsed
-            except Exception:
-                self.lookup_caches.setdefault("programmes", {})[cache_key] = result
-
-        return result
-
-    async def _lookup_building(self, value: Any) -> Optional[str]:
-        """Look up building by name or code."""
-        if not value:
-            return None
-
-        # Check cache first
-        cache_key = f"building_{str(value).lower()}"
-        if cache_key in self.lookup_caches.get("buildings", {}):
-            return str(self.lookup_caches["buildings"][cache_key])
-
-        # Try lookup by code first
-        result = await self._execute_lookup_query(
-            "buildings", "code", str(value).upper()
-        )
-
-        # If not found by code, try by name (case-insensitive)
-        if not result:
-            try:
-                if await self._table_exists("buildings"):
-                    query = text(
-                        """
-                        SELECT id FROM buildings 
-                        WHERE LOWER(name) LIKE LOWER(:value) 
-                        LIMIT 1
-                    """
-                    )
-                    db_result = await self.db_session.execute(
-                        query, {"value": f"%{value}%"}
-                    )
-                    row = db_result.first()
-                    result = str(row[0]) if row else None
-            except Exception as e:
-                logger.warning(f"Building name lookup error for '{value}': {e}")
-
-        # Cache the result if found
-        if result:
-            try:
-                parsed = uuid.UUID(result)
-                self.lookup_caches.setdefault("buildings", {})[cache_key] = parsed
-            except Exception:
-                self.lookup_caches.setdefault("buildings", {})[cache_key] = result
-
-        return result
-
-    async def _lookup_room_type(self, value: Any) -> Optional[str]:
-        """Look up room type by name."""
-        if not value:
-            return None
-
-        # Check cache first
-        cache_key = f"room_type_{str(value).lower()}"
-        if cache_key in self.lookup_caches.get("room_types", {}):
-            return str(self.lookup_caches["room_types"][cache_key])
-
-        # Look up by name (case-insensitive)
-        try:
-            if await self._table_exists("room_types"):
-                query = text(
-                    """
-                    SELECT id FROM room_types 
-                    WHERE LOWER(name) LIKE LOWER(:value) 
-                    LIMIT 1
-                """
-                )
-                db_result = await self.db_session.execute(
-                    query, {"value": f"%{value}%"}
-                )
-                row = db_result.first()
-                result = str(row[0]) if row else None
-            else:
-                result = None
-        except Exception as e:
-            logger.warning(f"Room type lookup error for '{value}': {e}")
-            return None
-
-        # Cache the result if found
-        if result:
-            try:
-                parsed = uuid.UUID(result)
-                self.lookup_caches.setdefault("room_types", {})[cache_key] = parsed
-            except Exception:
-                self.lookup_caches.setdefault("room_types", {})[cache_key] = result
-
-        return result
-
-    def clear_cache(self) -> None:
-        """Clear all lookup caches."""
-        self.lookup_caches.clear()
-        self._table_exists_cache.clear()
-        logger.info("All caches cleared")
-
-    def get_cache_stats(self) -> Dict[str, int]:
-        """Get cache statistics."""
-        stats = {
-            entity_type: len(cache) for entity_type, cache in self.lookup_caches.items()
-        }
-        stats["table_exists_cache"] = len(self._table_exists_cache)
-        return stats
-
-    async def validate_schema(self, entity_type: str) -> ValidationResult:
-        """Validate that the schema can be used with the current database."""
-        if entity_type not in self.entity_schemas:
-            return {
-                "valid": False,
-                "errors": [f"Unknown entity type: {entity_type}"],
-                "warnings": [],
-            }
-
-        schema = self.entity_schemas[entity_type]
-        table_name = schema["table_name"]
-
-        result: ValidationResult = {
-            "valid": True,
-            "errors": [],
-            "warnings": [],
-        }
-
-        if not await self._table_exists(table_name):
-            result["warnings"].append(f"Table {table_name} does not exist")
-
-        return result
 
 
 # Export main components

@@ -1,7 +1,7 @@
 # app/schemas/jobs.py
 from __future__ import annotations
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Any
+from typing import Optional, Any, List
 from uuid import UUID
 from datetime import datetime
 
@@ -38,3 +38,4 @@ class TimetableJobRead(TimetableJobBase):
     result_data: Optional[dict[str, Any]] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    version_ids: List[UUID] = Field(alias="versions", default_factory=list)

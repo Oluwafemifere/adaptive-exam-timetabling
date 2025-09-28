@@ -8,23 +8,21 @@ from datetime import date, time, datetime
 MODEL_CONFIG = ConfigDict(from_attributes=True)
 
 
-class TimeSlotRead(BaseModel):
+class TimetableAssignmentRead(BaseModel):
     model_config = MODEL_CONFIG
 
     id: UUID
-    name: str
-    start_time: time
-    end_time: time
-    duration_minutes: int
-    is_active: bool
-
-
-class RoomAssignment(BaseModel):
-    model_config = MODEL_CONFIG
-
+    exam_id: UUID
     room_id: UUID
+    exam_date: date
+    time_slot_period: str
+    student_count: int
+    is_confirmed: bool
+    version_id: Optional[UUID] = None
     allocated_capacity: int
     is_primary: bool
+    seating_arrangement: Optional[Dict[str, Any]] = None
+    invigilator_ids: List[UUID] = Field(alias="invigilators", default_factory=list)
 
 
 class ExamRead(BaseModel):
@@ -33,14 +31,23 @@ class ExamRead(BaseModel):
     id: UUID
     course_id: UUID
     session_id: UUID
-    time_slot_id: Optional[UUID] = None
-    exam_date: Optional[date] = None
     duration_minutes: int
     expected_students: int
     requires_special_arrangements: bool = False
     status: str
     notes: Optional[str] = None
-    room_assignments: List[RoomAssignment] = Field(default_factory=list)
+    is_practical: bool = False
+    requires_projector: bool = False
+    is_common: bool = False
+    morning_only: bool = False
+    instructor_id: Optional[UUID] = None
+    timetable_assignment_ids: List[UUID] = Field(
+        alias="timetable_assignments", default_factory=list
+    )
+    prerequisite_ids: List[UUID] = Field(alias="prerequisites", default_factory=list)
+    dependent_exam_ids: List[UUID] = Field(
+        alias="dependent_exams", default_factory=list
+    )
 
 
 class StaffRead(BaseModel):
@@ -48,12 +55,18 @@ class StaffRead(BaseModel):
 
     id: UUID
     staff_number: str
+    first_name: str
+    last_name: str
     staff_type: str
     position: Optional[str] = None
     department_id: Optional[UUID] = None
     can_invigilate: bool = False
     max_daily_sessions: int = 2
     max_consecutive_sessions: int = 2
+    max_concurrent_exams: int = 1
+    max_students_per_invigilator: int = 50
+    generic_availability_preferences: Optional[Dict[str, Any]] = None
+    user_id: Optional[UUID] = None
     is_active: bool = True
 
 
@@ -64,7 +77,7 @@ class StaffUnavailabilityRead(BaseModel):
     staff_id: UUID
     session_id: UUID
     unavailable_date: date
-    time_slot_id: Optional[UUID] = None
+    time_slot_period: Optional[str] = None
     reason: Optional[str] = None
 
 

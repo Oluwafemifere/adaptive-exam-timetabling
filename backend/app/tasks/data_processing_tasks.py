@@ -8,6 +8,7 @@ data validation, transformation, and bulk operations.
 import asyncio
 import logging
 import os
+import json  # <-- Import json
 from typing import Dict, Any, List, Optional
 from uuid import UUID
 from datetime import datetime
@@ -41,206 +42,166 @@ async def _async_process_csv_upload(
     user_id: str,
     options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Async implementation of CSV upload processing"""
+    """
+    MODIFIED Async implementation of CSV upload processing.
+    This version uses a dedicated database function for seeding.
+    """
     from celery import current_task
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from sqlalchemy.pool import NullPool
     from ..core.config import settings
 
     task = current_task._get_current_object()
-    if task and task.request.id == task_id:
-        update_state_func = task.update_state
-    else:
+    update_state_func = (
+        task.update_state
+        if task and task.request.id == task_id
+        else lambda *args, **kwargs: None
+    )
 
-        def update_state_func(*args, **kwargs):
-            pass
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool, echo=False)
+    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    engine = None
-    try:
-        engine = create_async_engine(
-            settings.DATABASE_URL, poolclass=NullPool, echo=False
-        )
-        async_session = async_sessionmaker(engine, expire_on_commit=False)
-
-        async with async_session() as session:
-            try:
-                csv_processor = CSVProcessor()
-                data_mapper = DataMapper(session)
-                # REMOVED: audit_data = AuditData(session)
-
-                upload_uuid = UUID(upload_session_id)
-                user_uuid = UUID(user_id)
-
-                update_state_func(
-                    state="PROGRESS",
-                    meta={
-                        "current": 10,
-                        "total": 100,
-                        "phase": "validating_structure",
-                        "message": "Validating CSV structure...",
-                    },
-                )
-
-                validation_result = csv_processor.validate_csv_structure(
-                    file_path, entity_type
-                )
-
-                if not validation_result["is_valid"]:
-                    await _update_upload_session_failed(
-                        session, upload_uuid, validation_result["errors"]
-                    )
-                    raise DataProcessingError(
-                        f"CSV validation failed: {validation_result['errors']}",
-                        phase="validation",
-                        entity_type=entity_type,
-                        validation_errors=validation_result["errors"],
-                    )
-
-                update_state_func(
-                    state="PROGRESS",
-                    meta={
-                        "current": 30,
-                        "total": 100,
-                        "phase": "processing_data",
-                        "message": "Processing CSV data...",
-                    },
-                )
-
-                processing_result = csv_processor.process_csv_file(
-                    file_path,
-                    entity_type,
-                    validate_data=True,
-                    chunk_size=options.get("chunk_size", 1000) if options else 1000,
-                )
-
-                if not processing_result["success"]:
-                    await _update_upload_session_failed(
-                        session, upload_uuid, processing_result["errors"]
-                    )
-                    raise DataProcessingError(
-                        f"CSV processing failed: {processing_result['errors']}",
-                        phase="processing",
-                        entity_type=entity_type,
-                        validation_errors=processing_result["errors"],
-                    )
-
-                update_state_func(
-                    state="PROGRESS",
-                    meta={
-                        "current": 60,
-                        "total": 100,
-                        "phase": "mapping_data",
-                        "message": "Mapping data to database format...",
-                    },
-                )
-
-                mapping_result = await data_mapper.map_data(
-                    processing_result["data"], entity_type
-                )
-
-                if not mapping_result["success"]:
-                    await _update_upload_session_failed(
-                        session, upload_uuid, mapping_result["errors"]
-                    )
-                    raise DataProcessingError(
-                        f"Data mapping failed: {mapping_result['errors']}",
-                        phase="mapping",
-                        entity_type=entity_type,
-                        validation_errors=mapping_result["errors"],
-                    )
-
-                update_state_func(
-                    state="PROGRESS",
-                    meta={
-                        "current": 80,
-                        "total": 100,
-                        "phase": "saving_results",
-                        "message": "Saving processed data...",
-                    },
-                )
-
-                await _update_upload_session_completed(
-                    session,
-                    upload_uuid,
-                    {
-                        "processing_result": processing_result,
-                        "mapping_result": mapping_result,
-                        "total_records": processing_result["total_rows"],
-                        "processed_records": mapping_result["processed_records"],
-                        "validation_errors": processing_result.get(
-                            "validation_errors", []
-                        ),
-                    },
-                )
-
-                try:
-                    # MODIFIED: Call the database function to log audit activity
-                    await session.execute(
-                        text(
-                            """
-                            SELECT exam_system.log_audit_activity(
-                                p_user_id => :user_id,
-                                p_action => :action,
-                                p_entity_type => :entity_type,
-                                p_notes => :notes,
-                                p_session_id => :session_id
-                            );
-                            """
-                        ),
-                        {
-                            "user_id": user_uuid,
-                            "action": "data_import",
-                            "entity_type": entity_type,
-                            "notes": f"CSV upload processed {mapping_result['processed_records']} records for {entity_type}",
-                            "session_id": upload_session_id,
-                        },
-                    )
-                    await session.commit()
-                except Exception as e:
-                    logger.warning(f"Failed to create audit log: {e}")
-
-                update_state_func(
-                    state="SUCCESS",
-                    meta={
-                        "current": 100,
-                        "total": 100,
-                        "phase": "completed",
-                        "message": f'Successfully processed {mapping_result["processed_records"]} records',
-                    },
-                )
-
-                try:
-                    os.unlink(file_path)
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to clean up temporary file {file_path}: {e}"
-                    )
-
-                return {
-                    "success": True,
-                    "upload_session_id": upload_session_id,
-                    "entity_type": entity_type,
-                    "total_records": processing_result["total_rows"],
-                    "processed_records": mapping_result["processed_records"],
-                    "mapped_data": mapping_result["mapped_data"][:100],
-                    "validation_errors": processing_result.get("validation_errors", []),
-                    "warnings": processing_result.get("warnings", [])
-                    + mapping_result.get("warnings", []),
-                }
-
-            except Exception as e:
-                logger.error(f"Error in CSV processing: {e}")
+    async with async_session_factory() as session:
+        try:
+            # 1. Process and Validate CSV Structure
+            update_state_func(
+                state="PROGRESS", meta={"current": 10, "phase": "validating_structure"}
+            )
+            csv_processor = CSVProcessor()
+            processing_result = csv_processor.process_csv_file(
+                file_path, entity_type, validate_data=True
+            )
+            if not processing_result["success"]:
                 await _update_upload_session_failed(
-                    session, UUID(upload_session_id), [str(e)]
+                    session, UUID(upload_session_id), processing_result["errors"]
                 )
-                raise DataProcessingError(f"CSV processing failed: {e}").with_context(
-                    upload_session_id=upload_session_id,
-                    entity_type=entity_type,
+                raise DataProcessingError(
+                    f"CSV processing failed: {processing_result['errors']}"
                 )
 
-    finally:
-        if engine:
-            await engine.dispose()
+            # 2. Map data to the target JSON format
+            update_state_func(
+                state="PROGRESS", meta={"current": 40, "phase": "mapping_data"}
+            )
+            data_mapper = DataMapper(session)
+            mapping_result = await data_mapper.map_data(
+                processing_result["data"], entity_type
+            )
+            if not mapping_result["success"]:
+                await _update_upload_session_failed(
+                    session, UUID(upload_session_id), mapping_result["errors"]
+                )
+                raise DataProcessingError(
+                    f"Data mapping failed: {mapping_result['errors']}"
+                )
+
+            # 3. Call the database function to seed the data
+            update_state_func(
+                state="PROGRESS", meta={"current": 70, "phase": "seeding_database"}
+            )
+
+            # Serialize the mapped data to a JSON string
+            jsonb_payload = json.dumps(mapping_result["mapped_data"])
+
+            # Execute the database function
+            db_func_result = await session.execute(
+                text(
+                    "SELECT exam_system.seed_data_from_jsonb(:entity_type, :data::jsonb)"
+                ),
+                {"entity_type": entity_type, "data": jsonb_payload},
+            )
+            seeding_response = db_func_result.scalar_one()
+
+            if not seeding_response.get("success"):
+                # Extract errors from the DB function response and fail the session
+                db_errors = [
+                    f"Record: {err.get('record', '{}')}, Error: {err.get('error', 'Unknown DB error')}"
+                    for err in seeding_response.get("errors", [])
+                ]
+                await _update_upload_session_failed(
+                    session, UUID(upload_session_id), db_errors
+                )
+                validation_errors = [
+                    {"error": error, "record": "unknown"} for error in db_errors
+                ]
+                raise DataProcessingError(
+                    f"Database seeding failed: {seeding_response.get('message', 'Check logs')}",
+                    validation_errors=validation_errors,
+                )
+
+            # 4. Update session as complete
+            update_state_func(
+                state="PROGRESS", meta={"current": 90, "phase": "finalizing"}
+            )
+            final_results = {
+                "total_records": processing_result["total_rows"],
+                "processed_records": seeding_response.get("inserted", 0)
+                + seeding_response.get("updated", 0),
+                "db_inserted": seeding_response.get("inserted", 0),
+                "db_updated": seeding_response.get("updated", 0),
+                "db_failed": seeding_response.get("failed", 0),
+                "validation_errors": processing_result.get("validation_errors", [])
+                + mapping_result.get("errors", []),
+            }
+            await _update_upload_session_completed(
+                session, UUID(upload_session_id), final_results
+            )
+
+            # Log audit activity
+            try:
+                user_uuid = UUID(user_id)
+                await session.execute(
+                    text(
+                        """
+                        SELECT exam_system.log_audit_activity(
+                            p_user_id => :user_id,
+                            p_action => :action,
+                            p_entity_type => :entity_type,
+                            p_notes => :notes,
+                            p_session_id => :session_id
+                        );
+                        """
+                    ),
+                    {
+                        "user_id": user_uuid,
+                        "action": "data_import",
+                        "entity_type": entity_type,
+                        "notes": f"CSV upload processed {final_results['processed_records']} records for {entity_type}",
+                        "session_id": upload_session_id,
+                    },
+                )
+                await session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to create audit log: {e}")
+
+            update_state_func(
+                state="SUCCESS", meta={"current": 100, "phase": "completed"}
+            )
+
+            # Clean up the file
+            try:
+                os.unlink(file_path)
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary file {file_path}: {e}")
+
+            return {
+                "success": True,
+                "upload_session_id": upload_session_id,
+                **final_results,
+            }
+
+        except Exception as e:
+            logger.error(
+                f"Error in CSV processing task for {upload_session_id}: {e}",
+                exc_info=True,
+            )
+            await _update_upload_session_failed(
+                session, UUID(upload_session_id), [str(e)]
+            )
+            raise
+        finally:
+            if engine:
+                await engine.dispose()
 
 
 @celery_app.task(bind=True, name="process_csv_upload")

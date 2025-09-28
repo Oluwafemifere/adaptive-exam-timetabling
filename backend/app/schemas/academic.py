@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import date, datetime
 
@@ -20,14 +20,21 @@ class AcademicSessionRead(BaseModel):
     start_date: date
     end_date: date
     is_active: bool = False
+    template_id: Optional[UUID] = None
+    archived_at: Optional[datetime] = None
+    session_config: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     # avoid deep circular nesting; expose related ids
     exam_ids: List[UUID] = Field(default_factory=list)
     registration_ids: List[UUID] = Field(default_factory=list)
-    timetable_job_ids: List[UUID] = Field(default_factory=list)
+    timetable_job_ids: List[UUID] = Field(alias="jobs", default_factory=list)
     staff_unavailability_ids: List[UUID] = Field(default_factory=list)
+    student_enrollment_ids: List[UUID] = Field(
+        alias="student_enrollments", default_factory=list
+    )
+    file_upload_ids: List[UUID] = Field(alias="file_uploads", default_factory=list)
 
 
 class FacultyRead(BaseModel):
@@ -55,6 +62,7 @@ class DepartmentRead(BaseModel):
     programme_ids: List[UUID] = Field(default_factory=list)
     course_ids: List[UUID] = Field(default_factory=list)
     staff_ids: List[UUID] = Field(default_factory=list)
+    exam_ids: List[UUID] = Field(default_factory=list)
 
 
 class ProgrammeRead(BaseModel):
@@ -96,35 +104,25 @@ class StudentRead(BaseModel):
 
     id: Optional[UUID] = None
     matric_number: str
+    first_name: str
+    last_name: str
     programme_id: UUID
-    current_level: int
     entry_year: int
-    student_type: str = "regular"
     special_needs: Optional[List[str]] = None
-    user_id: Optional[UUID] = None
-    is_active: bool = True
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     registration_ids: List[UUID] = Field(default_factory=list)
+    enrollment_ids: List[UUID] = Field(alias="enrollments", default_factory=list)
 
 
-class StaffRead(BaseModel):
+class StudentEnrollmentRead(BaseModel):
     model_config = MODEL_CONFIG
-
-    id: Optional[UUID] = None
-    staff_number: str
-    staff_type: str
-    position: Optional[str] = None
-    department_id: Optional[UUID] = None
-    can_invigilate: bool = False
-    max_daily_sessions: int = 2
-    max_consecutive_sessions: int = 2
-    user_id: Optional[UUID] = None
-    is_active: bool = True
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    unavailability_ids: List[UUID] = Field(default_factory=list)
-    invigilator_assignment_ids: List[UUID] = Field(default_factory=list)
+    id: UUID
+    student_id: UUID
+    session_id: UUID
+    level: int
+    student_type: Optional[str] = "regular"
+    is_active: Optional[bool] = True
 
 
 class CourseRegistrationRead(BaseModel):
@@ -136,15 +134,3 @@ class CourseRegistrationRead(BaseModel):
     session_id: UUID
     registration_type: str = "regular"
     registered_at: Optional[datetime] = None
-
-
-class StaffUnavailabilityRead(BaseModel):
-    model_config = MODEL_CONFIG
-
-    id: Optional[UUID] = None
-    staff_id: UUID
-    session_id: UUID
-    unavailable_date: date
-    time_slot_id: Optional[UUID] = None
-    reason: Optional[str] = None
-    created_at: Optional[datetime] = None

@@ -16,13 +16,8 @@ import argparse
 from backend.app.tasks import generate_timetable_task, celery_app
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-# --- START OF FIX ---
+
 from sqlalchemy import select, func, and_, text
-
-# --- END OF FIX ---
-
-# (setup_production_logging, create_database_sessionmaker, ensure_user_exists, get_or_create_academic_session, get_end_date_by_weekdays functions remain the same)
-# ...
 
 
 def setup_production_logging(log_level: str = "INFO") -> logging.Logger:

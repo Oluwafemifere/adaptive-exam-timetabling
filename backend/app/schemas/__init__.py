@@ -1,17 +1,28 @@
 # app/schemas/__init__.py
 """Expose schema modules and primary Pydantic models for convenient imports."""
 
-from . import auth, academic, jobs, scheduling, uploads
+from . import auth, academic, jobs, scheduling, uploads, versioning
 
 # Re-export commonly used classes for direct import
 from .auth import TokenData, Token
+from .academic import (
+    AcademicSessionRead,
+    FacultyRead,
+    DepartmentRead,
+    ProgrammeRead,
+    CourseRead,
+    StudentRead,
+    StudentEnrollmentRead,
+    CourseRegistrationRead,
+)
 from .jobs import TimetableJobBase, TimetableJobCreate, TimetableJobRead
 from .scheduling import (
-    TimeSlotRead,
-    RoomAssignment,
+    TimetableAssignmentRead,
     ExamRead,
     StaffRead,
     StaffUnavailabilityRead,
+    TimetableGenerationRequest,
+    TimetableGenerationResponse,
 )
 from .uploads import (
     UploadedFileBase,
@@ -21,6 +32,8 @@ from .uploads import (
     FileUploadSessionCreate,
     FileUploadSessionRead,
 )
+from .versioning import TimetableVersionRead, SessionTemplateRead
+
 
 __all__ = [
     # modules
@@ -29,19 +42,30 @@ __all__ = [
     "jobs",
     "scheduling",
     "uploads",
+    "versioning",
     # auth
     "TokenData",
     "Token",
+    # academic
+    "AcademicSessionRead",
+    "FacultyRead",
+    "DepartmentRead",
+    "ProgrammeRead",
+    "CourseRead",
+    "StudentRead",
+    "StudentEnrollmentRead",
+    "CourseRegistrationRead",
     # jobs
     "TimetableJobBase",
     "TimetableJobCreate",
     "TimetableJobRead",
     # scheduling
-    "TimeSlotRead",
-    "RoomAssignment",
+    "TimetableAssignmentRead",
     "ExamRead",
     "StaffRead",
     "StaffUnavailabilityRead",
+    "TimetableGenerationRequest",
+    "TimetableGenerationResponse",
     # uploads
     "UploadedFileBase",
     "UploadedFileCreate",
@@ -49,4 +73,7 @@ __all__ = [
     "FileUploadSessionBase",
     "FileUploadSessionCreate",
     "FileUploadSessionRead",
+    # versioning
+    "TimetableVersionRead",
+    "SessionTemplateRead",
 ]
