@@ -13,8 +13,8 @@ from sqlalchemy.orm import selectinload
 
 from ...models.jobs import (
     TimetableJob,
-    TimetableVersion,
 )
+from ...models.versioning import TimetableVersion
 
 
 class JobData:

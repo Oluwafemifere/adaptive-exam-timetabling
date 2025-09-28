@@ -21,7 +21,7 @@ class MinimumInvigilatorsConstraint(CPSATBaseConstraint):
     """Ensure sufficient invigilators are assigned to each exam with room-based allocation"""
 
     dependencies = ["MaxExamsPerDayConstraint"]
-    constraint_category = "INVIGILATOR"
+    constraint_category = "INVIGILATOR_CONSTRAINTS"
     is_critical = True
     min_expected_constraints = 0  # May be 0 if no invigilator data
 

@@ -27,11 +27,12 @@ class ConstraintCategory(Enum):
     RESOURCE_CONSTRAINTS = "resource_constraints"
     INVIGILATOR_CONSTRAINTS = "invigilator_constraints"
     TEMPORAL_CONSTRAINTS = "temporal_constraints"
-
+    SOFT_CONSTRAINTS = "soft_constraints"
     ACADEMIC_POLICIES = "academic_policies"
     OPTIMIZATION_CONSTRAINTS = "optimization_constraints"
     CONVENIENCE_CONSTRAINTS = "convenience_constraints"
     WORKLOAD_BALANCE = "workload_balance"
+    OTHER = "other"  # Add this line
 
 
 class ConstraintSeverity(Enum):

@@ -136,7 +136,8 @@ class TimetableGUIViewer:
 
         # Create tabs
         self.create_calendar_tab()
-        self.create_individual_schedules_tab()  # NEW: Individual schedules tab
+        self.create_individual_schedules_tab()
+        self.create_soft_constraints_tab()
         self.create_details_tab()
         self.create_conflicts_tab()
         self.create_statistics_tab()
@@ -839,8 +840,8 @@ class TimetableGUIViewer:
         # Method 4: Registration data lookup
         if hasattr(self.problem, "course_students") and exam:
             course_id = exam.course_id
-            if course_id in self.problem._course_students:
-                students.update(self.problem._course_students[course_id])
+            if course_id in self.problem.course_students:
+                students.update(self.problem.course_students[course_id])
 
         return students
 
@@ -1487,6 +1488,138 @@ class TimetableGUIViewer:
         ttk.Label(
             self.details_frame, text="Select an exam from the list to view details"
         ).pack(pady=20)
+
+    def create_soft_constraints_tab(self):
+        """Create the soft constraints performance tab"""
+        soft_constraints_frame = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(soft_constraints_frame, text="📊 Soft Constraints")
+
+        # Title
+        ttk.Label(
+            soft_constraints_frame,
+            text="Soft Constraints Performance",
+            font=("Arial", 16, "bold"),
+        ).pack(pady=(0, 15))
+
+        # Update soft constraint metrics if not already calculated
+        if not self.solution.soft_constraint_penalties:
+            self.solution.update_soft_constraint_metrics(self.problem)
+
+        # Create performance visualization
+        self.create_soft_constraints_performance(soft_constraints_frame)
+
+        # Create detailed breakdown
+        self.create_soft_constraints_breakdown(soft_constraints_frame)
+
+    def create_soft_constraints_performance(self, parent):
+        """Create overall soft constraints performance visualization"""
+        performance_frame = ttk.LabelFrame(
+            parent, text="Overall Performance", padding="15"
+        )
+        performance_frame.pack(fill="x", pady=(0, 15))
+
+        # Calculate overall satisfaction
+        if self.solution.soft_constraint_satisfaction:
+            avg_satisfaction = sum(
+                self.solution.soft_constraint_satisfaction.values()
+            ) / len(self.solution.soft_constraint_satisfaction)
+        else:
+            avg_satisfaction = 0
+
+        # Overall satisfaction gauge
+        ttk.Label(
+            performance_frame,
+            text=f"Average Soft Constraint Satisfaction: {avg_satisfaction:.1f}%",
+            font=("Arial", 12, "bold"),
+            foreground=self.get_performance_color(avg_satisfaction),
+        ).pack(anchor="w", pady=(0, 10))
+
+        # Total penalty
+        total_penalty = sum(self.solution.soft_constraint_penalties.values())
+        ttk.Label(
+            performance_frame,
+            text=f"Total Soft Constraint Penalty: {total_penalty:.2f}",
+            font=("Arial", 12),
+        ).pack(anchor="w")
+
+    def create_soft_constraints_breakdown(self, parent):
+        """Create detailed breakdown of soft constraint performance"""
+        breakdown_frame = ttk.LabelFrame(
+            parent, text="Constraint Breakdown", padding="15"
+        )
+        breakdown_frame.pack(fill="both", expand=True)
+
+        # Create treeview for detailed constraints
+        columns = ("Constraint", "Penalty", "Satisfaction", "Weight")
+        tree = ttk.Treeview(
+            breakdown_frame, columns=columns, show="headings", height=10
+        )
+
+        # Configure columns
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=120)
+
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(
+            breakdown_frame, orient="vertical", command=tree.yview
+        )
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        # Pack tree and scrollbar
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Add constraint data
+        for constraint_id, penalty in self.solution.soft_constraint_penalties.items():
+            satisfaction = self.solution.soft_constraint_satisfaction.get(
+                constraint_id, 0
+            )
+
+            # Get constraint weight (you might need to add this to your constraint definitions)
+            weight = self.get_constraint_weight(constraint_id)
+
+            # Format constraint name for display
+            display_name = constraint_id.replace("Constraint", "").replace("_", " ")
+
+            tree.insert(
+                "",
+                "end",
+                values=(display_name, f"{penalty:.2f}", f"{satisfaction:.1f}%", weight),
+                tags=(constraint_id,),
+            )
+
+            # Color code based on satisfaction
+            if satisfaction >= 80:
+                tree.tag_configure(constraint_id, background="#d4edda")  # Green
+            elif satisfaction >= 60:
+                tree.tag_configure(constraint_id, background="#fff3cd")  # Yellow
+            else:
+                tree.tag_configure(constraint_id, background="#f8d7da")  # Red
+
+    def get_constraint_weight(self, constraint_id: str) -> int:
+        """Get weight for a constraint"""
+        # You might want to store weights in your constraint definitions
+        weights = {
+            "OverbookingPenaltyConstraint": 1000,
+            "PreferenceSlotsConstraint": 500,
+            "StudentGapPenaltyConstraint": 2000,
+            "InvigilatorLoadBalanceConstraint": 300,
+            "RoomContinuityConstraint": 800,
+            "InvigilatorAvailabilityConstraint": 1500,
+            "DailyWorkloadBalanceConstraint": 200,
+            "UnusedSeatsConstraint": 50,
+        }
+        return weights.get(constraint_id, 0)
+
+    def get_performance_color(self, percentage: float) -> str:
+        """Get color based on performance percentage"""
+        if percentage >= 80:
+            return "green"
+        elif percentage >= 60:
+            return "orange"
+        else:
+            return "red"
 
     def populate_exam_list(self):
         """Populate the exam list treeview with FIXED conflict status handling"""

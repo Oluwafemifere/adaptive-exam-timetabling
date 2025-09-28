@@ -23,7 +23,7 @@ class MaxExamsPerStudentPerDayConstraint(CPSATBaseConstraint):
     """H6: Max exams per student per day constraint"""
 
     dependencies = ["StartUniquenessConstraint"]
-    constraint_category = "STUDENT_LIMITS"
+    constraint_category = "STUDENT_CONSTRAINTS"
     is_critical = True
     min_expected_constraints = 0  # May be 0 if no students or single-exam students
 

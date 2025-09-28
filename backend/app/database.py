@@ -324,11 +324,24 @@ async def init_db(
     database_url: Optional[str] = None,
     create_tables: bool = False,
     schema: str = "exam_system",
+    config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Initialize the async database with schema support.
     """
-    await db_manager.initialize(database_url=database_url, schema=schema)
+    if config is None:
+        from .config import get_settings
+
+        settings = get_settings()
+        config = settings.database_config
+
+    # Ensure schema is not duplicated in config
+    config = config.copy() if config else {}
+    if "schema" in config:
+        # Use the schema from config, override the parameter
+        schema = config.pop("schema")
+
+    await db_manager.initialize(database_url=database_url, schema=schema, **config)
 
     if create_tables:
         await db_manager.ensure_schema_exists(schema)

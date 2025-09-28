@@ -1,6 +1,9 @@
 # backend\app\models\scheduling.py
+
 import uuid
+
 from typing import List, Optional, TYPE_CHECKING
+
 from sqlalchemy import (
     String,
     Integer,
@@ -13,10 +16,10 @@ from sqlalchemy import (
     func,
     Index,
 )
+
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.ext.associationproxy import association_proxy
-
 
 from .base import Base, TimestampMixin
 
@@ -24,6 +27,8 @@ from .base import Base, TimestampMixin
 if TYPE_CHECKING:
     from .academic import AcademicSession, Course, Department
     from .infrastructure import ExamRoom, Room, ExamAllowedRoom
+    from .versioning import TimetableVersion
+    from .users import User
 
 
 class Exam(Base):
@@ -32,6 +37,7 @@ class Exam(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     course_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("courses.id"), nullable=False
     )
@@ -54,6 +60,7 @@ class Exam(Base):
         Boolean, default=False, nullable=False
     )
     is_common: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # Use string references to avoid circular imports
     course: Mapped["Course"] = relationship("Course", back_populates="exams")
     session: Mapped["AcademicSession"] = relationship(
@@ -127,6 +134,9 @@ class Staff(Base, TimestampMixin):
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     staff_number: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    # ADDED: First name and last name fields
+    first_name: Mapped[str] = mapped_column(String, nullable=False)
+    last_name: Mapped[str] = mapped_column(String, nullable=False)
     department_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True
     )
@@ -149,7 +159,10 @@ class Staff(Base, TimestampMixin):
         "StaffUnavailability", back_populates="staff"
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, unique=True
+    )
+    user: Mapped[Optional["User"]] = relationship(
+        "User", back_populates="staff", uselist=False
     )
 
 
@@ -231,6 +244,23 @@ class TimetableAssignment(Base):
     student_count: Mapped[int] = mapped_column(Integer, nullable=False)
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # NEW FIELD: Add version reference
+    version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("timetable_versions.id"), nullable=True
+    )
+
     exam: Mapped["Exam"] = relationship(back_populates="timetable_assignments")
     room: Mapped["Room"] = relationship()
     time_slot: Mapped["TimeSlot"] = relationship()
+
+    # NEW RELATIONSHIP: Link to version
+    version: Mapped["TimetableVersion"] = relationship(
+        "TimetableVersion", back_populates="timetable_assignments"
+    )
+
+    # Add indexes for performance
+    __table_args__ = (
+        Index("idx_timetable_assignments_version_id", "version_id"),
+        Index("idx_timetable_assignments_exam_id", "exam_id"),
+        Index("idx_timetable_assignments_day_time_slot", "day", "time_slot_id"),
+    )

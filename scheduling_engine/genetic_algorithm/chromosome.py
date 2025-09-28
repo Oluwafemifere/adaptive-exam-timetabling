@@ -1,427 +1,788 @@
-# scheduling_engine/genetic_algorithm/chromosome.py
-
-"""
-Chromosome representation for variable selectors.
-Based on the research paper's GP representation for evolving priority functions.
 """
 
-from typing import Dict, List, Optional, Any, Union, Callable
-from uuid import UUID, uuid4
-from dataclasses import dataclass, field
-from abc import ABC, abstractmethod
+Safe Chromosome Module - DEAP-Integrated chromosome with recursion-safe copying.
+
+This module fixes the infinite recursion issues in DEAPIndividual.copy() and
+
+implements constraint-aware chromosome operations without circular dependencies.
+
+"""
+
+import numpy as np
+
+import logging
+
+from typing import Dict, List, Set, Tuple, Optional, Any, Union, cast
+
+from uuid import UUID
+
 import random
-import copy
-import math
 
-from ..config import get_logger, GP_TERMINAL_SET, GP_FUNCTION_SET
-from ..core.problem_model import ExamSchedulingProblem
+# Safe imports to prevent circular dependencies
 
-logger = get_logger("ga.chromosome")
+from .deap_setup import get_deap_fitness_max, is_deap_available
 
+from .types import (
+    SchedulingPreferences,
+    PruningDecisions,
+    safe_copy_dict,
+    safe_copy_set,
+    safe_fitness_value,
+)
 
-class GPNode(ABC):
-    """Abstract base class for GP tree nodes"""
-
-    def __init__(self, node_id: Optional[UUID] = None):
-        self.id = node_id or uuid4()
-        self.parent: Optional["GPNode"] = None
-        self.depth: int = 0
-
-    @abstractmethod
-    def evaluate(self, terminals: Dict[str, float]) -> float:
-        """Evaluate node with given terminal values"""
-        pass
-
-    @abstractmethod
-    def get_subtree_size(self) -> int:
-        """Get size of subtree rooted at this node"""
-        pass
-
-    @abstractmethod
-    def copy(self) -> "GPNode":
-        """Create deep copy of subtree"""
-        pass
-
-    @abstractmethod
-    def to_string(self) -> str:
-        """Convert to readable string representation"""
-        pass
+logger = logging.getLogger(__name__)
 
 
-class TerminalNode(GPNode):
-    """Terminal node representing a GP terminal (ES, PT, W, etc.)"""
+# Type definitions for DEAP fitness to help Pylance
+class DEAPFitness:
+    """Type stub for DEAP fitness objects to help with type checking."""
 
-    def __init__(self, terminal: str, node_id: Optional[UUID] = None):
-        super().__init__(node_id)
-        if terminal not in GP_TERMINAL_SET:
-            raise ValueError(f"Invalid terminal: {terminal}")
-        self.terminal = terminal
+    values: Tuple[float, ...]
+    valid: bool
+    wvalues: property  # This is a property in DEAP that returns weighted values
 
-    def evaluate(self, terminals: Dict[str, float]) -> float:
-        """Return terminal value"""
-        return terminals.get(self.terminal, 0.0)
-
-    def get_subtree_size(self) -> int:
-        return 1
-
-    def copy(self) -> "TerminalNode":
-        return TerminalNode(self.terminal, uuid4())
-
-    def to_string(self) -> str:
-        return self.terminal
+    def __init__(self) -> None:
+        self.values = ()
+        self.valid = False
 
 
-class FunctionNode(GPNode):
-    """Function node representing a GP function (+, -, *, etc.)"""
+class DEAPIndividual(list):
+    """
+    FIXED: DEAP-based individual class with recursion-safe operations.
 
-    def __init__(
-        self,
-        function: str,
-        children: Optional[List[GPNode]] = None,
-        node_id: Optional[UUID] = None,
-    ):
-        super().__init__(node_id)
-        if function not in GP_FUNCTION_SET:
-            raise ValueError(f"Invalid function: {function}")
+    Key fixes:
+    - Safe copying without infinite recursion
+    - Manual field copying instead of deep copy
+    - Circular reference detection and breaking
+    - GENE LENGTH VALIDATION added
+    """
 
-        self.function = function
-        self.children: List[GPNode] = children or []
-        self.arity = self._get_function_arity(function)
-
-        # Set parent relationships
-        for child in self.children:
-            child.parent = self
-
-    def _get_function_arity(self, function: str) -> int:
-        """Get number of arguments for function"""
-        binary_functions = ["+", "-", "*", "%", "max", "min"]
-        if function in binary_functions:
-            return 2
-        return 2  # Default to binary
-
-    def evaluate(self, terminals: Dict[str, float]) -> float:
-        """Evaluate function with children"""
-        if len(self.children) != self.arity:
-            return 0.0
-
-        child_values = [child.evaluate(terminals) for child in self.children]
-
-        try:
-            if self.function == "+":
-                return child_values[0] + child_values[1]
-            elif self.function == "-":
-                return child_values[0] - child_values[1]
-            elif self.function == "*":
-                return child_values[0] * child_values[1]
-            elif self.function == "%":
-                # Protected division to avoid division by zero
-                if abs(child_values[1]) < 1e-10:
-                    return 1.0
-                return child_values[0] / child_values[1]
-            elif self.function == "max":
-                return max(child_values[0], child_values[1])
-            elif self.function == "min":
-                return min(child_values[0], child_values[1])
-            else:
-                return 0.0
-        except (ZeroDivisionError, OverflowError, ValueError):
-            return 0.0
-
-    def get_subtree_size(self) -> int:
-        return 1 + sum(child.get_subtree_size() for child in self.children)
-
-    def copy(self) -> "FunctionNode":
-        copied_children = [child.copy() for child in self.children]
-        return FunctionNode(self.function, copied_children, uuid4())
-
-    def to_string(self) -> str:
-        if len(self.children) == 2:
-            return f"({self.children[0].to_string()} {self.function} {self.children[1].to_string()})"
+    def __init__(self, genes=None):
+        if genes is not None:
+            super().__init__(genes)
         else:
-            child_strs = [child.to_string() for child in self.children]
-            return f"{self.function}({', '.join(child_strs)})"
+            super().__init__()
 
+        # Initialize DEAP fitness safely with proper typing
+        fitness_class = get_deap_fitness_max()
+        if fitness_class:
+            self.fitness = fitness_class()
+            # Cast to our type stub for better type checking
+            self.fitness = cast(DEAPFitness, self.fitness)
+        else:
+            # Fallback fitness implementation with proper attributes
+            class FallbackFitness:
+                def __init__(self):
+                    self.values: Tuple[float, ...] = ()
+                    self.valid = False
 
-@dataclass
-class ExamPriorityGene:
-    """
-    Gene representing priority calculation for a specific exam.
-    Contains GP tree for calculating exam priority.
-    """
+                @property
+                def wvalues(self) -> Tuple[float, ...]:
+                    return self.values
 
-    exam_id: UUID
-    priority_tree: GPNode
-    cached_priority: Optional[float] = None
+            self.fitness = FallbackFitness()
 
-    def calculate_priority(self, terminals: Dict[str, float]) -> float:
-        """Calculate priority for exam using GP tree"""
+        # Chromosome-specific attributes
+        self.preferences: Optional[SchedulingPreferences] = None
+        self.pruning_decisions: Optional[PruningDecisions] = None
+        self.age = 0
+        self.generation_created = 0
+
+        # Performance metrics
+        self.cp_sat_solve_time = 0.0
+        self.objective_value = float("inf")
+        self.feasibility_score = 0.0
+        self.constraint_violations = 0.0
+        self.solver_hints: List[Any] = []
+
+        # Constraint-aware tracking
+        self.constraint_satisfaction_rate = 0.0
+        self.critical_constraint_violations = 0
+        self.pruning_efficiency = 0.0
+
+    def copy(self):
+        """
+        FIXED: Create a safe copy without infinite recursion.
+
+        Uses manual field copying and avoids deep copy operations
+        that can cause recursion with complex nested objects.
+        """
+        # FIXED: Validate gene length during copy
+        if len(self) == 0:
+            logger.warning(
+                "Attempting to copy individual with 0 genes, creating minimal valid individual"
+            )
+            # Create minimal valid individual instead of empty one
+            minimal_genes = [0.5] * 16  # Default minimal gene length
+            new_individual = DEAPIndividual(minimal_genes)
+        else:
+            # Create new individual with same genes (shallow copy of list)
+            new_individual = DEAPIndividual(list(self))
+
+        # Safe fitness copying with type-aware access
         try:
-            priority = self.priority_tree.evaluate(terminals)
-            # Ensure finite priority value
-            if math.isnan(priority) or math.isinf(priority):
-                priority = 0.0
-            self.cached_priority = priority
-            return priority
+            if hasattr(self, "fitness") and getattr(self.fitness, "valid", False):
+                fitness_values = getattr(self.fitness, "values", ())
+                new_individual.fitness.values = fitness_values
+
         except Exception as e:
-            logger.warning(f"Error calculating priority for exam {self.exam_id}: {e}")
-            self.cached_priority = 0.0
-            return 0.0
+            logger.debug(f"Fitness copy failed, using defaults: {e}")
+            new_individual.fitness.values = ()
 
-    def copy(self) -> "ExamPriorityGene":
-        """Create deep copy of gene"""
-        return ExamPriorityGene(
-            exam_id=self.exam_id,
-            priority_tree=self.priority_tree.copy(),
-            cached_priority=None,
+        # Safe preferences copying - avoid deep copy recursion
+        if self.preferences is not None:
+            try:
+                new_individual.preferences = SchedulingPreferences(
+                    exam_priorities=safe_copy_dict(self.preferences.exam_priorities),
+                    room_preferences={
+                        k: safe_copy_dict(v)
+                        for k, v in self.preferences.room_preferences.items()
+                    },
+                    time_preferences={
+                        k: safe_copy_dict(v)
+                        for k, v in self.preferences.time_preferences.items()
+                    },
+                    invigilator_preferences=safe_copy_dict(
+                        self.preferences.invigilator_preferences
+                    ),
+                )
+            except Exception as e:
+                logger.debug(f"Preferences copy failed: {e}")
+                new_individual.preferences = None
+
+        # Safe pruning decisions copying
+        if self.pruning_decisions is not None:
+            try:
+                new_individual.pruning_decisions = PruningDecisions(
+                    pruned_x_vars=safe_copy_set(self.pruning_decisions.pruned_x_vars),
+                    pruned_y_vars=safe_copy_set(self.pruning_decisions.pruned_y_vars),
+                    pruned_u_vars=safe_copy_set(self.pruning_decisions.pruned_u_vars),
+                    constraint_relaxations=safe_copy_dict(
+                        self.pruning_decisions.constraint_relaxations
+                    ),
+                    critical_x_vars=safe_copy_set(
+                        self.pruning_decisions.critical_x_vars
+                    ),
+                    critical_y_vars=safe_copy_set(
+                        self.pruning_decisions.critical_y_vars
+                    ),
+                    critical_u_vars=safe_copy_set(
+                        self.pruning_decisions.critical_u_vars
+                    ),
+                )
+            except Exception as e:
+                logger.debug(f"Pruning decisions copy failed: {e}")
+                new_individual.pruning_decisions = None
+
+        # Copy simple attributes safely (no deep copy needed)
+        new_individual.age = 0  # Reset age for new individual
+        new_individual.generation_created = self.generation_created
+        new_individual.objective_value = self.objective_value
+        new_individual.feasibility_score = self.feasibility_score
+        new_individual.constraint_violations = self.constraint_violations
+        new_individual.constraint_satisfaction_rate = self.constraint_satisfaction_rate
+        new_individual.critical_constraint_violations = (
+            self.critical_constraint_violations
+        )
+        new_individual.pruning_efficiency = self.pruning_efficiency
+        new_individual.cp_sat_solve_time = self.cp_sat_solve_time
+
+        # Safe solver hints copying
+        try:
+            if hasattr(self, "solver_hints") and self.solver_hints:
+                # Shallow copy of hints to avoid recursion
+                new_individual.solver_hints = [
+                    list(hint) if isinstance(hint, (list, tuple)) else hint
+                    for hint in self.solver_hints[:50]  # Limit to prevent memory issues
+                ]
+            else:
+                new_individual.solver_hints = []
+        except Exception as e:
+            logger.debug(f"Solver hints copy failed: {e}")
+            new_individual.solver_hints = []
+
+        return new_individual
+
+    def dominates(self, other) -> bool:
+        """Check if this individual dominates another (Pareto dominance)."""
+        # Use getattr for safe attribute access
+        self_valid = getattr(self.fitness, "valid", False)
+        other_valid = getattr(other.fitness, "valid", False)
+
+        if not (self_valid and other_valid):
+            return False
+
+        self_values = getattr(self.fitness, "values", ())
+        other_values = getattr(other.fitness, "values", ())
+
+        # For single objective
+        if len(self_values) == 1 and len(other_values) == 1:
+            return self_values[0] > other_values[0]
+
+        # For multi-objective (Pareto dominance)
+        return all(s >= o for s, o in zip(self_values, other_values)) and any(
+            s > o for s, o in zip(self_values, other_values)
         )
 
+    def get_diversity_metric(self, other) -> float:
+        """Calculate diversity metric between two individuals."""
+        if len(self) != len(other):
+            return 1.0
 
-class VariableSelectorChromosome:
-    """
-    Chromosome representing a variable selector for CP-SAT.
-    Based on research paper's variable ordering representation.
+        # Euclidean distance in gene space
+        try:
+            diff = np.array(self) - np.array(other)
+            return float(np.sqrt(np.sum(diff**2)) / len(self))
+        except Exception:
+            return 0.5  # Default diversity if calculation fails
 
-    Contains GP trees for calculating priorities of decision variables (exams).
-    """
+    def violates_critical_constraints(self) -> bool:
+        """Check if individual violates any critical constraints."""
+        return self.critical_constraint_violations > 0
 
-    def __init__(
-        self,
-        chromosome_id: Optional[UUID] = None,
-        genes: Optional[List[ExamPriorityGene]] = None,
-    ):
-        self.id = chromosome_id or uuid4()
-        self.genes: List[ExamPriorityGene] = genes or []
+    def get_constraint_priority_score(self) -> float:
+        """Calculate priority score based on constraint satisfaction."""
+        if self.constraint_violations == 0:
+            return 1.0
 
-        # Fitness and evaluation
-        self.fitness: float = 0.0
-        self.objective_value: float = float("inf")
-        self.evaluation_count: int = 0
+        # Higher weight for critical constraint violations
+        critical_penalty = self.critical_constraint_violations * 10.0
+        regular_penalty = (
+            self.constraint_violations - self.critical_constraint_violations
+        ) * 1.0
+        total_penalty = critical_penalty + regular_penalty
 
-        # GA metadata
-        self.generation: int = 0
-        self.parent_ids: List[UUID] = []
-        self.mutation_history: List[str] = []
+        return max(0.0, 1.0 / (1.0 + total_penalty))
 
-        # Performance tracking
-        self.solving_time: float = 0.0
-        self.solution_quality: float = 0.0
-        self.source: str
-        logger.debug(f"Created chromosome {self.id} with {len(self.genes)} genes")
 
-    def add_gene(self, gene: ExamPriorityGene) -> None:
-        """Add gene to chromosome"""
-        self.genes.append(gene)
+class ChromosomeEncoder:
+    """Encodes problem instance into DEAP-compatible chromosome structure."""
 
-    def get_gene_for_exam(self, exam_id: UUID) -> Optional[ExamPriorityGene]:
-        """Get gene for specific exam"""
-        for gene in self.genes:
-            if gene.exam_id == exam_id:
-                return gene
-        return None
+    def __init__(self, problem, constraint_manager=None):
+        self.problem = problem
+        self.constraint_manager = constraint_manager
+        self.structure_info = self._build_structure_info()
 
-    def calculate_exam_priorities(
-        self, problem: ExamSchedulingProblem
-    ) -> Dict[UUID, float]:
-        """
-        Calculate priorities for all exams using GP trees.
-        This is the core variable selector functionality.
-        """
-        priorities = {}
+    def _build_structure_info(self) -> Dict:
+        """Build structure information needed for chromosome encoding/decoding."""
+        return {
+            "exam_ids": list(self.problem.exams.keys()),
+            "room_ids": list(self.problem.rooms.keys()),
+            "slot_ids": list(self.problem.timeslots.keys()),
+            "invigilator_ids": list(getattr(self.problem, "invigilators", {}).keys()),
+            "num_exams": len(self.problem.exams),
+            "num_rooms": len(self.problem.rooms),
+            "num_slots": len(self.problem.timeslots),
+            "num_invigilators": len(getattr(self.problem, "invigilators", {})),
+        }
 
-        for gene in self.genes:
-            exam = problem.exams.get(gene.exam_id)
-            if not exam:
-                continue
+    def create_random_individual(self) -> DEAPIndividual:
+        """FIXED: Create a random individual with valid structure and constraint awareness."""
+        gene_length = self._calculate_gene_length()
 
-            # Extract GP terminals for this exam
-            terminals = problem.extract_gp_terminals(gene.exam_id)
+        # CRITICAL FIX: Validate gene length
+        if gene_length <= 0:
+            logger.error(f"Invalid gene length calculated: {gene_length}")
+            # Use minimal safe gene length
+            gene_length = max(16, len(self.structure_info["exam_ids"]) * 4)
+            logger.warning(f"Using fallback gene length: {gene_length}")
 
-            # Calculate priority using GP tree
-            priority = gene.calculate_priority(terminals)
-            priorities[gene.exam_id] = priority
+        genes = [random.uniform(0.0, 1.0) for _ in range(gene_length)]
+        individual = DEAPIndividual(genes)
 
-        return priorities
-
-    def get_variable_ordering(
-        self, problem: ExamSchedulingProblem, descending: bool = True
-    ) -> List[UUID]:
-        """
-        Get ordered list of exam IDs based on calculated priorities.
-        This determines the variable selection order for CP-SAT.
-        """
-        priorities = self.calculate_exam_priorities(problem)
-
-        # Sort exams by priority
-        sorted_exams = sorted(
-            priorities.items(), key=lambda x: x[1], reverse=descending
-        )
-
-        return [exam_id for exam_id, _ in sorted_exams]
-
-    def get_tree_statistics(self) -> Dict[str, Any]:
-        """Get statistics about GP trees in chromosome"""
-        total_nodes = sum(gene.priority_tree.get_subtree_size() for gene in self.genes)
-
-        # Count node types
-        terminal_counts = {terminal: 0 for terminal in GP_TERMINAL_SET}
-        function_counts = {function: 0 for function in GP_FUNCTION_SET}
-
-        for gene in self.genes:
-            self._count_nodes_recursive(
-                gene.priority_tree, terminal_counts, function_counts
+        # CRITICAL FIX: Validate individual length
+        if len(individual) != gene_length:
+            logger.error(
+                f"Individual length mismatch: {len(individual)} != {gene_length}"
+            )
+            raise ValueError(
+                f"Individual length mismatch: {len(individual)} != {gene_length}"
             )
 
-        return {
-            "total_genes": len(self.genes),
-            "total_nodes": total_nodes,
-            "average_tree_size": total_nodes / max(len(self.genes), 1),
-            "terminal_usage": terminal_counts,
-            "function_usage": function_counts,
-        }
+        if len(individual) == 0:
+            logger.error("Created individual with 0 genes - this should never happen")
+            raise ValueError("Cannot create individual with 0 genes")
 
-    def _count_nodes_recursive(
-        self,
-        node: GPNode,
-        terminal_counts: Dict[str, int],
-        function_counts: Dict[str, int],
-    ) -> None:
-        """Recursively count nodes in GP tree"""
-        if isinstance(node, TerminalNode):
-            terminal_counts[node.terminal] += 1
-        elif isinstance(node, FunctionNode):
-            function_counts[node.function] += 1
-            for child in node.children:
-                self._count_nodes_recursive(child, terminal_counts, function_counts)
+        # Create preferences and constraint-aware pruning decisions
+        individual.preferences = self._genes_to_preferences(individual)
+        individual.pruning_decisions = self._create_constraint_aware_pruning(individual)
 
-    def validate_chromosome(self) -> Dict[str, List[str]]:
-        """Validate chromosome structure"""
-        errors = []
-        warnings = []
+        return individual
 
-        if not self.genes:
-            errors.append("Chromosome has no genes")
+    def create_heuristic_individual(
+        self, heuristic_type: str = "constraint_priority"
+    ) -> DEAPIndividual:
+        """Create individual using constraint-aware domain-specific heuristics."""
+        if heuristic_type == "constraint_priority":
+            return self._create_constraint_priority_individual()
+        elif heuristic_type == "difficulty_first":
+            return self._create_difficulty_first_individual()
+        elif heuristic_type == "capacity_utilization":
+            return self._create_capacity_utilization_individual()
+        elif heuristic_type == "time_distribution":
+            return self._create_time_distribution_individual()
+        else:
+            return self.create_random_individual()
 
-        # Check for duplicate exam IDs
-        exam_ids = [gene.exam_id for gene in self.genes]
-        if len(set(exam_ids)) != len(exam_ids):
-            errors.append("Chromosome has duplicate exam genes")
-
-        # Validate GP trees
-        for i, gene in enumerate(self.genes):
-            if not gene.priority_tree:
-                errors.append(f"Gene {i} has no priority tree")
-                continue
-
-            tree_size = gene.priority_tree.get_subtree_size()
-            if tree_size > 50:  # Arbitrary limit
-                warnings.append(f"Gene {i} has large tree (size {tree_size})")
-
-        return {"errors": errors, "warnings": warnings}
-
-    def copy(self) -> "VariableSelectorChromosome":
-        """Create deep copy of chromosome"""
-        copied_genes = [gene.copy() for gene in self.genes]
-
-        new_chromosome = VariableSelectorChromosome(
-            chromosome_id=uuid4(), genes=copied_genes
+    def _calculate_gene_length(self) -> int:
+        """FIXED: Calculate the required gene length for the chromosome."""
+        base_length = (
+            self.structure_info["num_exams"]  # exam priorities
+            + self.structure_info["num_exams"]
+            * self.structure_info["num_rooms"]  # room prefs
+            + self.structure_info["num_exams"]
+            * self.structure_info["num_slots"]  # time prefs
+            + self.structure_info["num_invigilators"]  # invigilator prefs
         )
 
-        # Copy metadata (but not fitness - that needs to be re-evaluated)
-        new_chromosome.generation = self.generation
-        new_chromosome.parent_ids = self.parent_ids.copy()
-        new_chromosome.mutation_history = self.mutation_history.copy()
+        # CRITICAL FIX: Ensure minimum gene length
+        min_length = 16  # Absolute minimum
+        calculated_length = max(min_length, base_length)
 
-        return new_chromosome
+        logger.debug(
+            f"Calculated gene length: {calculated_length} (base: {base_length}, min: {min_length})"
+        )
+        return calculated_length
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert chromosome to dictionary for serialization"""
-        return {
-            "id": str(self.id),
-            "fitness": self.fitness,
-            "objective_value": self.objective_value,
-            "evaluation_count": self.evaluation_count,
-            "generation": self.generation,
-            "parent_ids": [str(pid) for pid in self.parent_ids],
-            "mutation_history": self.mutation_history,
-            "solving_time": self.solving_time,
-            "solution_quality": self.solution_quality,
-            "gene_count": len(self.genes),
-            "tree_statistics": self.get_tree_statistics(),
-            "genes": [
-                {
-                    "exam_id": str(gene.exam_id),
-                    "priority_tree": gene.priority_tree.to_string(),
-                    "cached_priority": gene.cached_priority,
-                    "tree_size": gene.priority_tree.get_subtree_size(),
-                }
-                for gene in self.genes
-            ],
-        }
+    def _genes_to_preferences(
+        self, individual: DEAPIndividual
+    ) -> SchedulingPreferences:
+        """Convert gene array to scheduling preferences."""
+        genes = list(individual)
+        idx = 0
 
-    @classmethod
-    def create_random(
-        cls, problem: ExamSchedulingProblem, max_tree_depth: int = 5
-    ) -> "VariableSelectorChromosome":
-        """
-        Create random chromosome with GP trees for all exams.
-        Uses ramped half-and-half initialization as in research paper.
-        """
-        chromosome = cls()
+        # FIXED: Add length validation
+        if len(genes) == 0:
+            logger.warning("Empty gene array in _genes_to_preferences")
+            return SchedulingPreferences({}, {}, {}, {})
 
-        for exam_id in problem.exams.keys():
-            # Create random GP tree for this exam
-            priority_tree = cls._create_random_tree(max_tree_depth)
+        # Exam priorities
+        exam_priorities = {}
+        for exam_id in self.structure_info["exam_ids"]:
+            exam_priorities[exam_id] = genes[idx] if idx < len(genes) else 0.5
+            idx += 1
 
-            gene = ExamPriorityGene(exam_id=exam_id, priority_tree=priority_tree)
+        # Room preferences
+        room_preferences = {}
+        for exam_id in self.structure_info["exam_ids"]:
+            room_preferences[exam_id] = {}
+            for room_id in self.structure_info["room_ids"]:
+                room_preferences[exam_id][room_id] = (
+                    genes[idx] if idx < len(genes) else 0.5
+                )
+                idx += 1
 
-            chromosome.add_gene(gene)
+        # Time preferences
+        time_preferences = {}
+        for exam_id in self.structure_info["exam_ids"]:
+            time_preferences[exam_id] = {}
+            for slot_id in self.structure_info["slot_ids"]:
+                time_preferences[exam_id][slot_id] = (
+                    genes[idx] if idx < len(genes) else 0.5
+                )
+                idx += 1
 
-        logger.debug(f"Created random chromosome with {len(chromosome.genes)} genes")
-        return chromosome
+        # Invigilator preferences
+        invigilator_preferences = {}
+        for inv_id in self.structure_info["invigilator_ids"]:
+            invigilator_preferences[inv_id] = genes[idx] if idx < len(genes) else 0.5
+            idx += 1
 
-    @classmethod
-    def _create_random_tree(cls, max_depth: int, current_depth: int = 0) -> GPNode:
-        """Create random GP tree using ramped half-and-half"""
+        return SchedulingPreferences(
+            exam_priorities=exam_priorities,
+            room_preferences=room_preferences,
+            time_preferences=time_preferences,
+            invigilator_preferences=invigilator_preferences,
+        )
 
-        # If at max depth or random terminal selection, create terminal
-        if current_depth >= max_depth or (current_depth > 0 and random.random() < 0.3):
-            terminal = random.choice(GP_TERMINAL_SET)
-            return TerminalNode(terminal)
+    def _create_constraint_aware_pruning(
+        self, individual: DEAPIndividual
+    ) -> PruningDecisions:
+        """Create constraint-aware pruning decisions that preserve critical variables."""
+        preferences = (
+            individual.preferences
+            if individual.preferences
+            else self._genes_to_preferences(individual)
+        )
 
-        # Create function node
-        function = random.choice(GP_FUNCTION_SET)
-        function_node = FunctionNode(function)
+        pruning_decisions = PruningDecisions()
 
-        # Create children
-        arity = function_node.arity
-        for _ in range(arity):
-            child = cls._create_random_tree(max_depth, current_depth + 1)
-            child.parent = function_node
-            child.depth = current_depth + 1
-            function_node.children.append(child)
+        # Identify critical variables that must never be pruned
+        self._identify_critical_variables(pruning_decisions)
 
-        return function_node
+        # Conservative pruning of low-preference combinations
+        if (
+            preferences
+            and preferences.room_preferences
+            and preferences.time_preferences
+        ):
+            for exam_id in preferences.room_preferences:
+                exam_room_prefs = preferences.room_preferences[exam_id]
+                exam_time_prefs = preferences.time_preferences.get(exam_id, {})
 
-    def get_complexity_measure(self) -> float:
-        """Calculate complexity measure for chromosome"""
-        total_complexity = 0.0
+                for room_id, room_pref in exam_room_prefs.items():
+                    for slot_id, time_pref in exam_time_prefs.items():
+                        combined_pref = (room_pref + time_pref) / 2.0
+                        var_key = (exam_id, room_id, slot_id)
 
-        for gene in self.genes:
-            tree_size = gene.priority_tree.get_subtree_size()
-            depth = self._calculate_tree_depth(gene.priority_tree)
+                        # Very conservative pruning threshold for constraint safety
+                        if (
+                            combined_pref < 0.15
+                            and pruning_decisions.is_safe_to_prune("y", var_key)
+                            and self._can_prune_safely(var_key)
+                        ):
+                            pruning_decisions.pruned_y_vars.add(var_key)
 
-            # Complexity based on size and depth
-            gene_complexity = tree_size * (1.0 + depth * 0.1)
-            total_complexity += gene_complexity
+        return pruning_decisions
 
-        return total_complexity / max(len(self.genes), 1)
+    def _identify_critical_variables(self, pruning_decisions: PruningDecisions):
+        """Identify variables that are critical for constraint satisfaction."""
+        MIN_START_OPTIONS = 3
+        MIN_ROOM_OPTIONS = 2
 
-    def _calculate_tree_depth(self, node: GPNode) -> int:
-        """Calculate maximum depth of GP tree"""
-        if isinstance(node, TerminalNode):
-            return 1
-        elif isinstance(node, FunctionNode):
-            if not node.children:
-                return 1
-            return 1 + max(self._calculate_tree_depth(child) for child in node.children)
-        return 1
+        # For each exam, ensure it has viable start options
+        for exam_id in self.structure_info["exam_ids"]:
+            viable_starts = []
+            for slot_id in self.structure_info["slot_ids"]:
+                # Check if this start time could work
+                if self._has_feasible_rooms_for_slot(exam_id, slot_id):
+                    viable_starts.append((exam_id, slot_id))
+
+            # Mark top viable starts as critical
+            for start_var in viable_starts[:MIN_START_OPTIONS]:
+                pruning_decisions.critical_x_vars.add(start_var)
+
+        # For each exam, ensure it has viable room options per time slot
+        for exam_id in self.structure_info["exam_ids"]:
+            for slot_id in self.structure_info["slot_ids"]:
+                viable_rooms = []
+                for room_id in self.structure_info["room_ids"]:
+                    if self._is_feasible_assignment(exam_id, room_id, slot_id):
+                        viable_rooms.append((exam_id, room_id, slot_id))
+
+                # Mark viable room assignments as critical
+                for room_var in viable_rooms[:MIN_ROOM_OPTIONS]:
+                    pruning_decisions.critical_y_vars.add(room_var)
+
+    def _has_feasible_rooms_for_slot(self, exam_id: UUID, slot_id: UUID) -> bool:
+        """Check if exam has at least one feasible room for the given slot."""
+        for room_id in self.structure_info["room_ids"]:
+            if self._is_feasible_assignment(exam_id, room_id, slot_id):
+                return True
+        return False
+
+    def _is_feasible_assignment(
+        self, exam_id: UUID, room_id: UUID, slot_id: UUID
+    ) -> bool:
+        """Check if an exam-room-slot assignment is basically feasible."""
+        exam = self.problem.exams.get(exam_id)
+        room = self.problem.rooms.get(room_id)
+
+        if not exam or not room:
+            return False
+
+        # Check capacity
+        enrollment = getattr(exam, "expected_students", 0)
+        capacity = getattr(room, "exam_capacity", getattr(room, "capacity", 0))
+
+        if enrollment > capacity * 1.15:  # Allow 15% overbooking
+            return False
+
+        return True
+
+    def _can_prune_safely(self, var_key: Tuple) -> bool:
+        """Check if variable can be pruned without violating constraint requirements."""
+        exam_id, room_id, slot_id = var_key
+
+        # Count remaining feasible options for this exam
+        remaining_options = 0
+        for r_id in self.problem.rooms:
+            for s_id in self.problem.timeslots:
+                if r_id != room_id or s_id != slot_id:
+                    if self._is_feasible_assignment(exam_id, r_id, s_id):
+                        remaining_options += 1
+
+        return remaining_options >= 10  # Conservative threshold
+
+    # Heuristic individual creation methods
+    def _create_constraint_priority_individual(self) -> DEAPIndividual:
+        """Create individual that prioritizes constraint satisfaction."""
+        gene_length = self._calculate_gene_length()
+        genes = []
+
+        # Exam priorities based on constraint criticality
+        for exam_id in self.structure_info["exam_ids"]:
+            exam = self.problem.exams[exam_id]
+            enrollment = getattr(exam, "expected_students", 1)
+            duration = getattr(exam, "duration_minutes", 180)
+            conflict_count = self._estimate_exam_conflicts(exam_id)
+
+            # Higher priority for more constrained exams
+            criticality = min(1.0, (enrollment * duration * conflict_count) / 50000.0)
+            priority = 0.3 + 0.7 * criticality
+            genes.append(priority)
+
+        # Room preferences based on constraint compatibility
+        for exam_id in self.structure_info["exam_ids"]:
+            exam = self.problem.exams[exam_id]
+            enrollment = getattr(exam, "expected_students", 1)
+
+            for room_id in self.structure_info["room_ids"]:
+                room = self.problem.rooms[room_id]
+                capacity = getattr(room, "exam_capacity", getattr(room, "capacity", 1))
+
+                if capacity >= enrollment:
+                    utilization = enrollment / capacity
+                    preference = max(0.1, 1.0 - abs(0.8 - utilization))
+                else:
+                    preference = 0.05  # Very low for impossible assignments
+                genes.append(preference)
+
+        # Time preferences based on constraint conflicts
+        for exam_id in self.structure_info["exam_ids"]:
+            for slot_id in self.structure_info["slot_ids"]:
+                conflict_potential = self._calculate_slot_conflict_potential(
+                    exam_id, slot_id
+                )
+                preference = max(0.1, 1.0 - conflict_potential)
+                genes.append(preference)
+
+        # Balanced invigilator utilization
+        for _ in self.structure_info["invigilator_ids"]:
+            genes.append(0.5 + random.random() * 0.3)
+
+        # FIXED: Ensure we have the right gene length
+        while len(genes) < gene_length:
+            genes.append(0.5)
+        genes = genes[:gene_length]  # Trim if too long
+
+        individual = DEAPIndividual(genes)
+        individual.preferences = self._genes_to_preferences(individual)
+        individual.pruning_decisions = self._create_constraint_aware_pruning(individual)
+
+        return individual
+
+    def _create_difficulty_first_individual(self) -> DEAPIndividual:
+        """Create individual that prioritizes difficult exams first."""
+        return self._create_constraint_priority_individual()  # Simplified for now
+
+    def _create_capacity_utilization_individual(self) -> DEAPIndividual:
+        """Create individual focused on optimal capacity utilization."""
+        return self._create_constraint_priority_individual()  # Simplified for now
+
+    def _create_time_distribution_individual(self) -> DEAPIndividual:
+        """Create individual for balanced time distribution."""
+        return self._create_constraint_priority_individual()  # Simplified for now
+
+    def _estimate_exam_conflicts(self, exam_id: UUID) -> int:
+        """Estimate number of conflicts for an exam."""
+        return random.randint(1, 5)  # Placeholder
+
+    def _calculate_slot_conflict_potential(self, exam_id: UUID, slot_id: UUID) -> float:
+        """Calculate conflict potential for exam in specific slot."""
+        return random.random() * 0.3  # Placeholder
+
+
+class ChromosomeDecoder:
+    """FIXED Decodes chromosomes to constraint-aware solver hints and pruning decisions."""
+
+    def __init__(self, problem, constraint_encoder=None):
+        self.problem = problem
+        self.constraint_encoder = constraint_encoder
+
+    def decode_to_search_hints(self, individual) -> List[Tuple]:
+        """Generate constraint-aware search hints for CP-SAT solver."""
+        if not individual.preferences:
+            return []
+
+        hints = []
+        preferences = individual.preferences
+
+        try:
+            # Generate high-confidence Y variable hints
+            for exam_id, exam_priority in preferences.exam_priorities.items():
+                if exam_priority < 0.3:  # Skip low-priority exams
+                    continue
+
+                room_prefs = preferences.room_preferences.get(exam_id, {})
+                time_prefs = preferences.time_preferences.get(exam_id, {})
+
+                for room_id, room_pref in room_prefs.items():
+                    if room_pref < 0.6:  # Only high-preference rooms
+                        continue
+                    for slot_id, time_pref in time_prefs.items():
+                        if time_pref < 0.6:  # Only high-preference times
+                            continue
+
+                        var_key = (exam_id, room_id, slot_id)
+                        confidence = min(0.95, exam_priority + room_pref + time_pref)
+                        if confidence > 0.5:
+                            hints.append((var_key, 1, confidence))
+
+            # Sort hints by confidence and return top ones
+            hints.sort(key=lambda x: x[2], reverse=True)
+            logger.debug(f"Generated {len(hints)} search hints from individual")
+            return hints[:100]  # Return top 100 hints
+
+        except Exception as e:
+            logger.error(f"Error decoding search hints: {e}")
+            return []
+
+    def decode_to_pruning_decisions(self, individual) -> PruningDecisions:
+        """FIXED Generate constraint-aware variable pruning decisions."""
+        try:
+            preferences = (
+                individual.preferences
+                if individual.preferences
+                else SchedulingPreferences()
+            )
+
+            # Create proper PruningDecisions object with all required attributes
+            pruning_decisions = PruningDecisions()
+
+            # FIXED: Populate critical variables to prevent attribute errors
+            self._identify_critical_variables(pruning_decisions, preferences)
+
+            # Add some pruning decisions based on preferences
+            if preferences.room_preferences and preferences.time_preferences:
+                for exam_id in preferences.room_preferences:
+                    exam_room_prefs = preferences.room_preferences[exam_id]
+                    exam_time_prefs = preferences.time_preferences.get(exam_id, {})
+
+                    for room_id, room_pref in exam_room_prefs.items():
+                        for slot_id, time_pref in exam_time_prefs.items():
+                            combined_pref = (room_pref + time_pref) / 2.0
+                            var_key = (exam_id, room_id, slot_id)
+
+                            # Conservative pruning of low-preference combinations
+                            if (
+                                combined_pref < 0.15
+                                and pruning_decisions.is_safe_to_prune("y", var_key)
+                                and self._can_prune_safely(var_key)
+                            ):
+                                pruning_decisions.pruned_y_vars.add(var_key)
+
+            logger.debug(
+                f"Created pruning decisions: {pruning_decisions.get_total_pruned()} variables to prune"
+            )
+            return pruning_decisions
+
+        except Exception as e:
+            logger.error(f"Error in decode_to_pruning_decisions: {e}")
+            # Return a minimal but valid PruningDecisions object
+            return PruningDecisions()
+
+    def _identify_critical_variables(
+        self, pruning_decisions: PruningDecisions, preferences: SchedulingPreferences
+    ):
+        """FIXED Identify variables that are critical for constraint satisfaction."""
+        MIN_START_OPTIONS = 3
+        MIN_ROOM_OPTIONS = 2
+
+        try:
+            # Get structure info safely
+            exam_ids = list(getattr(self.problem, "exams", {}).keys())[
+                :10
+            ]  # Limit for performance
+            room_ids = list(getattr(self.problem, "rooms", {}).keys())[:10]
+            slot_ids = list(getattr(self.problem, "timeslots", {}).keys())[:10]
+
+            # For each exam, ensure it has viable start options
+            for exam_id in exam_ids:
+                viable_starts = []
+                for slot_id in slot_ids:
+                    if self._has_feasible_rooms_for_slot(exam_id, slot_id):
+                        viable_starts.append((exam_id, slot_id))
+
+                # Mark top viable starts as critical
+                for start_var in viable_starts[:MIN_START_OPTIONS]:
+                    pruning_decisions.critical_x_vars.add(start_var)
+                    pruning_decisions.criticalxvars.add(
+                        start_var
+                    )  # Backward compatibility
+
+            # For each exam, ensure it has viable room options per time slot
+            for exam_id in exam_ids:
+                for slot_id in slot_ids:
+                    viable_rooms = []
+                    for room_id in room_ids:
+                        if self._is_feasible_assignment(exam_id, room_id, slot_id):
+                            viable_rooms.append((exam_id, room_id, slot_id))
+
+                    # Mark viable room assignments as critical
+                    for room_var in viable_rooms[:MIN_ROOM_OPTIONS]:
+                        pruning_decisions.critical_y_vars.add(room_var)
+                        pruning_decisions.criticalyvars.add(
+                            room_var
+                        )  # Backward compatibility
+
+            logger.debug(
+                f"Identified {len(pruning_decisions.critical_x_vars)} critical X vars, "
+                f"{len(pruning_decisions.critical_y_vars)} critical Y vars"
+            )
+
+        except Exception as e:
+            logger.error(f"Error identifying critical variables: {e}")
+            # Ensure we have empty sets at minimum
+            if not hasattr(pruning_decisions, "critical_x_vars"):
+                pruning_decisions.critical_x_vars = set()
+                pruning_decisions.criticalxvars = set()
+            if not hasattr(pruning_decisions, "critical_y_vars"):
+                pruning_decisions.critical_y_vars = set()
+                pruning_decisions.criticalyvars = set()
+            if not hasattr(pruning_decisions, "critical_u_vars"):
+                pruning_decisions.critical_u_vars = set()
+                pruning_decisions.criticaluvars = set()
+
+    def _has_feasible_rooms_for_slot(self, exam_id: UUID, slot_id: UUID) -> bool:
+        """Check if exam has at least one feasible room for the given slot."""
+        try:
+            room_ids = list(getattr(self.problem, "rooms", {}).keys())
+            for room_id in room_ids:
+                if self._is_feasible_assignment(exam_id, room_id, slot_id):
+                    return True
+            return False
+        except Exception:
+            return True  # Conservative - assume feasible if we can't check
+
+    def _is_feasible_assignment(
+        self, exam_id: UUID, room_id: UUID, slot_id: UUID
+    ) -> bool:
+        """Check if an exam-room-slot assignment is basically feasible."""
+        try:
+            exam = getattr(self.problem, "exams", {}).get(exam_id)
+            room = getattr(self.problem, "rooms", {}).get(room_id)
+
+            if not exam or not room:
+                return False
+
+            # Check capacity
+            enrollment = getattr(exam, "expected_students", 0)
+            capacity = getattr(room, "exam_capacity", getattr(room, "capacity", 0))
+
+            if enrollment > capacity * 1.15:  # Allow 15% overbooking
+                return False
+
+            return True
+        except Exception:
+            return True  # Conservative - assume feasible if we can't check
+
+    def _can_prune_safely(self, var_key: Tuple) -> bool:
+        """Check if variable can be pruned without violating constraint requirements."""
+        try:
+            exam_id, room_id, slot_id = var_key
+
+            # Count remaining feasible options for this exam
+            remaining_options = 0
+            rooms = getattr(self.problem, "rooms", {})
+            timeslots = getattr(self.problem, "timeslots", {})
+
+            for r_id in rooms:
+                for s_id in timeslots:
+                    if r_id != room_id or s_id != slot_id:
+                        if self._is_feasible_assignment(exam_id, r_id, s_id):
+                            remaining_options += 1
+
+            return remaining_options >= 10  # Conservative threshold
+        except Exception:
+            return False  # Conservative - don't prune if we can't check

@@ -1,15 +1,21 @@
 # app/models/infrastructure.py
+
 import uuid
+
 from typing import List, Optional, TYPE_CHECKING
+
 from sqlalchemy import String, Boolean, Integer, ForeignKey, ARRAY, Text, Index
+
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import JSONB
+
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from .base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from .scheduling import Exam
+    from .versioning import TimetableVersion
 
 
 class Building(Base, TimestampMixin):
@@ -18,6 +24,7 @@ class Building(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -31,6 +38,7 @@ class RoomType(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -44,6 +52,7 @@ class Room(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+
     code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     building_id: Mapped[uuid.UUID] = mapped_column(
@@ -62,6 +71,7 @@ class Room(Base, TimestampMixin):
         ARRAY(String), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
     # NEW FIELDS
     overbookable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     max_inv_per_room: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
@@ -104,5 +114,22 @@ class ExamRoom(Base):
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     seating_arrangement: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # NEW FIELD: Add version reference
+    version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("timetable_versions.id"), nullable=True
+    )
+
     exam: Mapped["Exam"] = relationship(back_populates="exam_rooms")
     room: Mapped["Room"] = relationship(back_populates="exam_rooms")
+
+    # NEW RELATIONSHIP: Link to version
+    version: Mapped["TimetableVersion"] = relationship(
+        "TimetableVersion", back_populates="exam_rooms"
+    )
+
+    # Add indexes for performance
+    __table_args__ = (
+        Index("idx_exam_rooms_version_id", "version_id"),
+        Index("idx_exam_rooms_exam_id", "exam_id"),
+        Index("idx_exam_rooms_room_id", "room_id"),
+    )

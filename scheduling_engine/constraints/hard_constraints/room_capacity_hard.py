@@ -10,6 +10,7 @@ This fixes the original implementation to:
 1. Only apply to non-overbookable rooms
 2. Remove artificial buffering
 3. Use exact capacity limits as specified
+4. Enforce capacity solely based on expected students
 """
 
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
@@ -23,7 +24,7 @@ class RoomCapacityHardConstraint(CPSATBaseConstraint):
     """H8: Room capacity hard constraint for non-overbookable rooms only"""
 
     dependencies = ["RoomAssignmentConsistencyConstraint"]
-    constraint_category = "ROOM_CAPACITY"
+    constraint_category = "RESOURCE_CONSTRAINTS"
     is_critical = False
     min_expected_constraints = 0
 
@@ -35,45 +36,27 @@ class RoomCapacityHardConstraint(CPSATBaseConstraint):
         """Add room capacity constraints for non-overbookable rooms only"""
         constraints_added = 0
 
-        rooms = self.problem.rooms
-        timeslots = self.problem.timeslots
-        exams = self.problem.exams
-
-        # Group y variables by (room_id, slot_id)
-        room_slot_assignments = defaultdict(list)
-        for (exam_id, room_id, slot_id), var in self.y.items():
-            room_slot_assignments[(room_id, slot_id)].append((exam_id, var))
-
-        # Track rooms for reporting
-        total_rooms = len(rooms)
-        non_overbookable_rooms = 0
-        capacity_constrained_rooms = 0
-
-        for room_id, room in rooms.items():
+        for room_id, room in self._rooms.items():
             # H8: Only apply to non-overbookable rooms (overbookable_r = 0)
             is_overbookable = getattr(room, "overbookable", False)
             if is_overbookable:
                 continue  # Skip overbookable rooms per H8 specification
 
-            non_overbookable_rooms += 1
             capacity = getattr(room, "exam_capacity", getattr(room, "capacity", 0))
-
             if capacity <= 0:
                 continue
 
-            capacity_constrained_rooms += 1
-
             # Add constraint for each slot
-            for slot_id in timeslots:
-                key = (room_id, slot_id)
-                if key not in room_slot_assignments:
-                    continue
-
+            for slot_id in self._timeslots:
                 capacity_terms = []
-                for exam_id, var in room_slot_assignments[key]:
-                    enrollment = self._get_safe_enrollment(exams[exam_id])
-                    if enrollment > 0:
-                        capacity_terms.append(enrollment * var)
+                for exam_id in self._exams:
+                    # Check if this exam-room-slot combination exists
+                    y_key = (exam_id, room_id, slot_id)
+                    if y_key in self.y:
+                        exam = self._exams[exam_id]
+                        enrollment = self._get_expected_students(exam)
+                        if enrollment > 0:
+                            capacity_terms.append(enrollment * self.y[y_key])
 
                 if capacity_terms:
                     # H8: ∑ enrol_e * y[e,r,s] ≤ cap_r (exact capacity, no buffering)
@@ -81,39 +64,10 @@ class RoomCapacityHardConstraint(CPSATBaseConstraint):
                     constraints_added += 1
 
         self.constraint_count = constraints_added
+        logger.info(f"Added {constraints_added} hard capacity constraints")
 
-        # Enhanced reporting
-        logger.info(
-            f"✅ {self.constraint_id}: Added {constraints_added} hard capacity constraints"
-        )
-        logger.info(
-            f" • Total rooms: {total_rooms}, Non-overbookable: {non_overbookable_rooms}, "
-            f"Capacity-constrained: {capacity_constrained_rooms}"
-        )
-
-        if constraints_added == 0:
-            if non_overbookable_rooms == 0:
-                logger.info(
-                    f"{self.constraint_id}: No constraints needed (all rooms are overbookable)"
-                )
-            else:
-                logger.warning(
-                    f"⚠️ {self.constraint_id}: No capacity constraints created despite non-overbookable rooms"
-                )
-
-    def _get_safe_enrollment(self, exam):
-        """Get enrollment with fallbacks and safety checks"""
-        enrollment_attrs = [
-            "actual_enrollment",
-            "enrollment",
-            "expected_students",
-            "student_count",
-        ]
-
-        for attr in enrollment_attrs:
-            if hasattr(exam, attr):
-                value = getattr(exam, attr)
-                if isinstance(value, int) and value > 0:
-                    return value
-
-        return 30  # Conservative default
+    def _get_expected_students(self, exam):
+        """Get expected students for the exam, fallback to 0 if not available"""
+        return getattr(
+            exam, "expected_students", 0
+        )  # Use 0 if expected_students is missing

@@ -518,7 +518,10 @@ class CPSATConstraintManager:
     ):
         """Validate individual module constraint generation"""
         category = self._module_categories.get(module_id, "UNKNOWN")
-
+        if category == "SOFT_CONSTRAINTS" and constraints_added > 0:
+            logger.info(
+                f"🟢 SOFT constraint {module_id} generated {constraints_added} penalty constraints"
+            )
         # Check if module should have generated constraints
         if constraints_added == 0:
             if category == "CORE":

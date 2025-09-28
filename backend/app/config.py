@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     DATABASE_MAX_OVERFLOW: int = Field(default=20, alias="DB_MAX_OVERFLOW")
     DATABASE_POOL_TIMEOUT: int = Field(default=30, alias="DB_POOL_TIMEOUT")
     DATABASE_POOL_RECYCLE: int = Field(default=3600, alias="DB_POOL_RECYCLE")
-
+    DATABASE_SCHEMA: str = Field(default="exam_system", alias="DATABASE_SCHEMA")
+    DATABASE_ECHO: bool = Field(default=False, alias="DATABASE_ECHO")
     # Redis settings (for Celery and caching)
     REDIS_URL: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
     REDIS_CELERY_DB: int = Field(default=1, alias="REDIS_CELERY_DB")
@@ -188,6 +189,8 @@ class Settings(BaseSettings):
             "max_overflow": self.DATABASE_MAX_OVERFLOW,
             "pool_timeout": self.DATABASE_POOL_TIMEOUT,
             "pool_recycle": self.DATABASE_POOL_RECYCLE,
+            "echo": self.DATABASE_ECHO,
+            "schema": self.DATABASE_SCHEMA,
         }
 
     @property

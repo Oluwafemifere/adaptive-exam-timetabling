@@ -12,7 +12,7 @@ from .base import Base, TimestampMixin
 if TYPE_CHECKING:
     from .jobs import TimetableJob
     from .constraints import ConfigurationConstraint
-    from .academic import Faculty, Department
+    from .academic import Faculty, Department, Staff
 
 
 class User(Base, TimestampMixin):
@@ -38,6 +38,7 @@ class User(Base, TimestampMixin):
     initiated_jobs: Mapped[List["TimetableJob"]] = relationship(
         back_populates="initiated_by_user"
     )
+    staff: Mapped["Staff"] = relationship("Staff", back_populates="user", uselist=False)
 
 
 class UserRole(Base, TimestampMixin):
