@@ -125,35 +125,3 @@ class CoreDataService:
         return await self._execute_cud_function(
             "delete_exam", {"p_exam_id": exam_id, "p_user_id": user_id}, "exam"
         )
-
-    # --- Time Slot Management ---
-    async def create_time_slot(
-        self, time_slot_data: Dict[str, Any], user_id: UUID
-    ) -> Dict[str, Any]:
-        return await self._execute_cud_function(
-            "create_time_slot",
-            {"p_data": time_slot_data, "p_user_id": user_id},
-            "time_slot",
-        )
-
-    async def update_time_slot(
-        self, time_slot_id: UUID, time_slot_data: Dict[str, Any], user_id: UUID
-    ) -> Dict[str, Any]:
-        return await self._execute_cud_function(
-            "update_time_slot",
-            {
-                "p_time_slot_id": time_slot_id,
-                "p_data": time_slot_data,
-                "p_user_id": user_id,
-            },
-            "time_slot",
-        )
-
-    async def delete_time_slot(
-        self, time_slot_id: UUID, user_id: UUID
-    ) -> Dict[str, Any]:
-        return await self._execute_cud_function(
-            "delete_time_slot",
-            {"p_time_slot_id": time_slot_id, "p_user_id": user_id},
-            "time_slot",
-        )

@@ -1,7 +1,7 @@
 # app/schemas/jobs.py
 from __future__ import annotations
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Any, List
+from typing import Dict, Optional, Any, List
 from uuid import UUID
 from datetime import datetime
 
@@ -25,17 +25,14 @@ class TimetableJobRead(TimetableJobBase):
     model_config = MODEL_CONFIG
 
     id: UUID
+    session_id: UUID
+    configuration_id: UUID
+    initiated_by: UUID
     status: str
     progress_percentage: int
-    cp_sat_runtime_seconds: Optional[int] = None
-    ga_runtime_seconds: Optional[int] = None
-    total_runtime_seconds: Optional[int] = None
-    hard_constraint_violations: int = 0
-    soft_constraint_score: Optional[float] = None
-    room_utilization_percentage: Optional[float] = None
     solver_phase: Optional[str] = None
     error_message: Optional[str] = None
-    result_data: Optional[dict[str, Any]] = None
+    result_data: Optional[Dict[str, Any]] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    version_ids: List[UUID] = Field(alias="versions", default_factory=list)
+    created_at: datetime

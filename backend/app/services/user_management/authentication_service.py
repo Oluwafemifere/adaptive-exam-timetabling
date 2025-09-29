@@ -5,6 +5,7 @@ All operations are delegated to PostgreSQL functions.
 """
 
 import logging
+import json  # Add this import
 from typing import Dict, Any, Optional
 from uuid import UUID
 from sqlalchemy import text
@@ -33,8 +34,12 @@ class AuthenticationService:
         """
         try:
             logger.info(f"Attempting to register user: {user_data.get('email')}")
+
+            # Convert the dictionary to JSON string for PostgreSQL JSONB parameter
+            user_data_json = json.dumps(user_data)
+
             query = text("SELECT exam_system.register_user(p_user_data => :user_data)")
-            result = await self.session.execute(query, {"user_data": user_data})
+            result = await self.session.execute(query, {"user_data": user_data_json})
             registration_result = result.scalar_one()
             await self.session.commit()
             logger.info(

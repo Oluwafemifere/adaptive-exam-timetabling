@@ -30,14 +30,14 @@ from ..models.academic import (
     Student,
     CourseRegistration,
 )
-from ..models.infrastructure import Building, Room, RoomType, ExamRoom
+from ..models.infrastructure import Building, Room, RoomType
 from ..models.constraints import (
     ConstraintCategory,
     ConstraintRule,
     ConfigurationConstraint,
 )
-from ..models.scheduling import Exam, TimeSlot, Staff, StaffUnavailability
-from ..models.jobs import TimetableJob, TimetableVersion
+from ..models.scheduling import Exam, Staff, StaffUnavailability
+from ..models.jobs import TimetableJob
 from ..models.timetable_edits import TimetableEdit
 from ..models.audit_logs import AuditLog
 from ..models.file_uploads import FileUploadSession, UploadedFile
@@ -188,18 +188,6 @@ async def complete_test_data(test_session: AsyncSession) -> Dict[str, Any]:
     )
     test_session.add(user_role)
 
-    time_slot = TimeSlot(
-        id=uuid4(),
-        name=f"Morning Session {unique_suffix}",
-        start_time=time(9, 0),
-        end_time=time(12, 0),
-        duration_minutes=180,
-        is_active=True,
-    )
-    test_session.add(time_slot)
-
-    await test_session.flush()  # Get IDs for Level 2
-
     # Level 2: Entities with single dependencies
     department = Department(
         id=uuid4(),
@@ -316,19 +304,6 @@ async def complete_test_data(test_session: AsyncSession) -> Dict[str, Any]:
     )
     test_session.add(staff)
 
-    exam = Exam(
-        id=uuid4(),
-        course_id=course.id,
-        session_id=academic_session.id,
-        time_slot_id=time_slot.id,
-        exam_date=date(2024, 6, 15),
-        duration_minutes=180,
-        expected_students=50,
-        requires_special_arrangements=False,
-        status="pending",
-    )
-    test_session.add(exam)
-
     await test_session.flush()
 
     # Level 5: Most complex dependencies
@@ -363,34 +338,6 @@ async def complete_test_data(test_session: AsyncSession) -> Dict[str, Any]:
 
     await test_session.flush()
 
-    # Additional entities
-    exam_room = ExamRoom(
-        id=uuid4(),
-        exam_id=exam.id,
-        room_id=room.id,
-        allocated_capacity=50,
-        is_primary=True,
-    )
-    test_session.add(exam_room)
-
-    staff_unavailability = StaffUnavailability(
-        id=uuid4(),
-        staff_id=staff.id,
-        session_id=academic_session.id,
-        unavailable_date=date(2024, 6, 20),
-        time_slot_id=time_slot.id,
-        reason="Conference",
-    )
-    test_session.add(staff_unavailability)
-
-    timetable_version = TimetableVersion(
-        id=uuid4(),
-        job_id=timetable_job.id,
-        version_number=random.randint(1000000, 9999999),
-        is_active=False,
-    )
-    test_session.add(timetable_version)
-
     # Commit all changes
     await test_session.commit()
 
@@ -409,14 +356,9 @@ async def complete_test_data(test_session: AsyncSession) -> Dict[str, Any]:
         "programme": programme,
         "student": student,
         "staff": staff,
-        "exam": exam,
         "course_registration": course_registration,
         "configuration_constraint": configuration_constraint,
         "timetable_job": timetable_job,
-        "timetable_version": timetable_version,
-        "exam_room": exam_room,
-        "staff_unavailability": staff_unavailability,
-        "time_slot": time_slot,
         "user_role": user_role,
     }
 

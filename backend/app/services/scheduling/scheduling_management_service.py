@@ -7,9 +7,11 @@ Handles job creation, task dispatching, and status retrieval.
 import logging
 from typing import Dict, Any, Optional
 from uuid import UUID
-from sqlalchemy import text
+from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+
+from ...models import TimetableJob  # Import the model for querying
 from ...tasks import generate_timetable_task
 
 logger = logging.getLogger(__name__)
@@ -52,16 +54,31 @@ class SchedulingManagementService:
                 create_job_query, {"session_id": session_id, "user_id": user_id}
             )
             job_id = result.scalar_one()
-            await self.session.commit()
             logger.info(f"Database job record created with ID: {job_id}")
 
-            # Step 2: Dispatch the Celery task.
-            # The configuration_id is a placeholder and can be the job_id itself,
-            # as the task no longer creates the job record.
+            # Step 2: Retrieve the configuration_id from the newly created job.
+            # This ensures the Celery task uses the same configuration as the DB record.
+            get_config_query = select(TimetableJob.configuration_id).where(
+                TimetableJob.id == job_id
+            )
+            config_result = await self.session.execute(get_config_query)
+            configuration_id = config_result.scalar_one_or_none()
+
+            if not configuration_id:
+                raise Exception(
+                    f"Could not retrieve configuration_id for new job {job_id}"
+                )
+
+            logger.info(
+                f"Retrieved configuration_id {configuration_id} for job {job_id}"
+            )
+            await self.session.commit()
+
+            # Step 3: Dispatch the Celery task with the correct configuration_id.
             task_signature = generate_timetable_task.s(
                 job_id=str(job_id),
                 session_id=str(session_id),
-                configuration_id=str(job_id),
+                configuration_id=str(configuration_id),
                 user_id=str(user_id),
                 options=options,
             )

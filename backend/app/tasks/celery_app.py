@@ -6,7 +6,7 @@ from celery.signals import setup_logging
 from kombu import Queue
 from sqlalchemy import NullPool, text
 from ..core.config import settings
-from ..main import health_check as fastapi_health_check
+from ..database import check_db_health
 from typing import Any, Optional, Dict
 from ..database import db_manager, DatabaseManager
 import re

@@ -2,7 +2,7 @@
 from fastapi import APIRouter, WebSocket, Depends, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ....api.deps import db_session, current_user
+from ....api.deps import db_session, get_current_user_for_websocket
 from ....models.users import User
 from ....services.notification import (
     subscribe_job,
@@ -16,7 +16,7 @@ async def websocket_job_updates(
     websocket: WebSocket,
     job_id: str,
     db: AsyncSession = Depends(db_session),
-    user: User = Depends(current_user),
+    user: User = Depends(get_current_user_for_websocket),
 ):
     await websocket.accept()
     try:

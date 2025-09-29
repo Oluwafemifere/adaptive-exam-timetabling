@@ -15,7 +15,7 @@ from datetime import datetime, date
 from celery import Task
 
 # --- Core Application Imports ---
-from .celery_app import celery_app
+from .celery_app import celery_app, _run_coro_in_new_loop
 from ..services.scheduling.data_preparation_service import ExactDataFlowService
 from ..services.notification.websocket_manager import publish_job_update
 from ..models.jobs import TimetableJob
@@ -48,7 +48,7 @@ class SchedulingTask(Task):
         self.progress = 0
         self.current_phase = "initializing"
 
-    def update_progress(self, progress: int, phase: str, message: str = ""):
+    async def update_progress(self, progress: int, phase: str, message: str = ""):
         """Update task progress and notify WebSocket clients"""
         self.progress = progress
         self.current_phase = phase
@@ -64,31 +64,15 @@ class SchedulingTask(Task):
             },
         )
         if self.job_id:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(
-                    publish_job_update(
-                        self.job_id,
-                        {
-                            "status": "running",
-                            "progress": progress,
-                            "phase": phase,
-                            "message": message,
-                        },
-                    )
-                )
-            except RuntimeError:  # No running loop
-                asyncio.run(
-                    publish_job_update(
-                        self.job_id,
-                        {
-                            "status": "running",
-                            "progress": progress,
-                            "phase": phase,
-                            "message": message,
-                        },
-                    )
-                )
+            await publish_job_update(
+                self.job_id,
+                {
+                    "status": "running",
+                    "progress": progress,
+                    "phase": phase,
+                    "message": message,
+                },
+            )
 
 
 @celery_app.task(bind=True, base=SchedulingTask, name="generate_timetable")
@@ -109,10 +93,11 @@ def generate_timetable_task(
 
     try:
         logger.info(f"Starting timetable generation for job {job_id}")
-        coroutine = _async_generate_timetable(
-            self, job_id, session_id, configuration_id, user_id, options
+        result = _run_coro_in_new_loop(
+            _async_generate_timetable(
+                self, job_id, session_id, configuration_id, user_id, options
+            )
         )
-        result = asyncio.run(coroutine)
         return result
 
     except Exception as exc:
@@ -120,19 +105,17 @@ def generate_timetable_task(
             f"Timetable generation failed catastrophically for job {job_id}: {exc}",
             exc_info=True,
         )
-        # Send a final failure message over WebSocket
-        asyncio.run(
+        _run_coro_in_new_loop(
             publish_job_update(
                 job_id,
                 {
                     "status": "failed",
-                    "progress": self.progress,  # Report last known progress
+                    "progress": self.progress,
                     "phase": "error",
                     "message": f"Critical Error: {str(exc)}",
                 },
             )
         )
-        # Re-raise the exception to have Celery mark the task as FAILED
         raise
 
 
@@ -140,13 +123,9 @@ async def _update_job_status(
     db: AsyncSession, job_id: UUID, status: str, started_at: Optional[datetime] = None
 ) -> None:
     """Updates the status and start time of a job."""
-    # --- START OF FIX ---
-    # Explicitly type the dictionary to allow for mixed value types (str, datetime).
-    # This resolves the Pylance reportArgumentType error.
     values: Dict[str, Any] = {"status": status}
     if started_at:
         values["started_at"] = started_at
-    # --- END OF FIX ---
 
     query = update(TimetableJob).where(TimetableJob.id == job_id).values(**values)
     await db.execute(query)
@@ -170,15 +149,15 @@ async def _async_generate_timetable(
 
     try:
         async with async_session_factory() as db:
-            # Immediately update the job status to 'running'
             await db.execute(
                 text("SELECT exam_system.update_job_status(:job_id, 'running', true)"),
                 {"job_id": UUID(job_id)},
             )
             await db.commit()
 
-            # --- 1. Data Preparation ---
-            task.update_progress(5, "preparing_data", "Preparing scheduling dataset...")
+            await task.update_progress(
+                5, "preparing_data", "Preparing scheduling dataset..."
+            )
             data_prep = ExactDataFlowService(db)
             dataset = await data_prep.build_exact_problem_model_dataset(
                 UUID(session_id)
@@ -188,28 +167,20 @@ async def _async_generate_timetable(
             start_date_str = options.get("start_date")
             end_date_str = options.get("end_date")
 
-            if start_date_str and end_date_str:
-                start_date = date.fromisoformat(start_date_str)
-                end_date = date.fromisoformat(end_date_str)
-                logger.info(
-                    f"Using date range from task options: {start_date} to {end_date}"
-                )
-            else:
-                date_range_config = dataset.date_range_config
-                if not date_range_config or "start_date" not in date_range_config:
-                    raise SchedulingError(
-                        "Dataset does not contain a valid date range configuration and none was provided in options."
-                    )
-                start_date = datetime.fromisoformat(
-                    date_range_config["start_date"]
-                ).date()
-                end_date = datetime.fromisoformat(date_range_config["end_date"]).date()
-                logger.info(
-                    f"Using date range from dataset: {start_date} to {end_date}"
+            if not start_date_str or not end_date_str:
+                raise SchedulingError(
+                    "Scheduling task requires 'start_date' and 'end_date' in options."
                 )
 
-            # --- 2. Problem Model Building ---
-            task.update_progress(15, "building_problem", "Building problem model...")
+            start_date = date.fromisoformat(start_date_str)
+            end_date = date.fromisoformat(end_date_str)
+            logger.info(
+                f"Using date range from task options: {start_date} to {end_date}"
+            )
+
+            await task.update_progress(
+                15, "building_problem", "Building problem model..."
+            )
             problem = ExamSchedulingProblem(
                 session_id=UUID(session_id),
                 exam_period_start=start_date,
@@ -218,22 +189,20 @@ async def _async_generate_timetable(
             )
             await problem.load_from_backend(dataset)
 
-            # --- 3. Solver Initialization & Execution ---
-            task.update_progress(
+            await task.update_progress(
                 25, "initializing_solver", "Initializing CP-SAT solver..."
             )
             solver_manager = CPSATSolverManager(problem=problem)
 
-            task.update_progress(30, "solving", "Running CP-SAT solver...")
+            await task.update_progress(30, "solving", "Running CP-SAT solver...")
             status, solution = solver_manager.solve()
 
-            # --- 4. Process Solution ---
             if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                 raise SchedulingError(
                     f"Solver failed to find a solution. Status: {solver_manager.solver.StatusName(status)}"
                 )
 
-            task.update_progress(85, "post_processing", "Processing solution...")
+            await task.update_progress(85, "post_processing", "Processing solution...")
             solution.update_statistics()
 
             objective_value = solution.objective_value
@@ -241,11 +210,9 @@ async def _async_generate_timetable(
             backend_solution_dict = solution.to_dict()
             statistics_dict = solution.statistics.to_dict()
 
-            # --- 5. Save Results ---
-            # --- 5. Save Results ---
-            task.update_progress(90, "saving_results", "Saving results to database...")
-            # --- START OF FIX ---
-            # Use the new DB function to save results
+            await task.update_progress(
+                90, "saving_results", "Saving results to database..."
+            )
             results_payload = {
                 "solution": backend_solution_dict,
                 "objective_value": objective_value,
@@ -257,9 +224,7 @@ async def _async_generate_timetable(
                 {"job_id": UUID(job_id), "results": json.dumps(results_payload)},
             )
             await db.commit()
-            # --- END OF FIX ---
 
-            task.update_progress(100, "completed", "Timetable generation complete!")
             await publish_job_update(
                 job_id,
                 {
@@ -267,13 +232,14 @@ async def _async_generate_timetable(
                     "progress": 100,
                     "phase": "completed",
                     "message": f"Generated timetable with {completion_percentage:.1f}% completion.",
-                    "result": {
-                        "objective_value": objective_value,
-                        "completion_percentage": completion_percentage,
-                        "total_assignments": len(solution.assignments),
-                    },
+                    "result": results_payload,
                 },
             )
+
+            # --- START OF FIX ---
+            # REMOVED the redundant call that was causing the status to revert to "running"
+            # await task.update_progress(100, "completed", "Timetable generation complete!")
+            # --- END OF FIX ---
 
             return {
                 "success": True,

@@ -3,26 +3,14 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, EmailStr
 
 from ....api.deps import db_session
 from ....services.user_management.authentication_service import AuthenticationService
 
+# Import the new, complete schemas from the correct location
+from ....schemas.users import UserCreate, UserRead
+
 router = APIRouter()
-
-
-class UserCreate(BaseModel):
-    email: EmailStr
-    password: str
-    first_name: str
-    last_name: str
-
-
-class UserRead(BaseModel):
-    id: str
-    email: EmailStr
-    first_name: str
-    last_name: str
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -42,4 +30,5 @@ async def register_user(
 
     # The result from the service contains the new user's data
     new_user = result.get("user", {})
-    return UserRead(**new_user)
+    # Use the Pydantic model for response validation
+    return UserRead.model_validate(new_user)

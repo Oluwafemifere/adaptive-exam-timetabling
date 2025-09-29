@@ -112,10 +112,16 @@ async def generate_timetable(
     """
     try:
         service = SchedulingManagementService(db)
+
+        # MODIFIED: Extract start_date and end_date from request and add to options
+        options = request.options or {}
+        options["start_date"] = request.start_date.isoformat()
+        options["end_date"] = request.end_date.isoformat()
+
         result = await service.start_new_scheduling_job(
             session_id=request.session_id,
             user_id=user.id,
-            options=request.options or {},
+            options=options,  # Use the prepared options dict
         )
 
         if not result.get("success"):

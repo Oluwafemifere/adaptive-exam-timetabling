@@ -1,7 +1,7 @@
 # backend/app/api/v1/routes/rooms.py
 """API endpoints for managing rooms and venues."""
 
-from typing import List, Optional
+from typing import List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -11,36 +11,8 @@ from ....services.data_management.core_data_service import CoreDataService
 from ....services.data_retrieval.unified_data_retrieval import UnifiedDataService
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Placeholder schemas, these should be defined in a proper schema file
-from pydantic import BaseModel
-
-
-class RoomBase(BaseModel):
-    name: str
-    code: str
-    capacity: int
-    exam_capacity: int
-    building_id: UUID
-    room_type_id: UUID
-    is_active: bool = True
-
-
-class RoomCreate(RoomBase):
-    pass
-
-
-class RoomUpdate(BaseModel):
-    name: Optional[str] = None
-    code: Optional[str] = None
-    capacity: Optional[int] = None
-    exam_capacity: Optional[int] = None
-    building_id: Optional[UUID] = None
-    room_type_id: Optional[UUID] = None
-    is_active: Optional[bool] = None
-
-
-class RoomRead(RoomBase):
-    id: UUID
+# Import the new, complete schemas from the correct location
+from ....schemas.infrastructure import RoomCreate, RoomRead, RoomUpdate
 
 
 router = APIRouter()

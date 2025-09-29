@@ -1,4 +1,6 @@
 # app/schemas/scheduling.py
+"""Pydantic v2 schemas for scheduling domain."""
+
 from __future__ import annotations
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any
@@ -43,28 +45,6 @@ class ExamUpdate(BaseModel):
     is_common: Optional[bool] = None
     morning_only: Optional[bool] = None
     instructor_id: Optional[UUID] = None
-
-
-class TimeSlotBase(BaseModel):
-    name: str
-    day_of_week: str
-    start_time: time
-    end_time: time
-    period_type: str
-    is_active: bool = True
-
-
-class TimeSlotCreate(TimeSlotBase):
-    pass
-
-
-class TimeSlotUpdate(BaseModel):
-    name: Optional[str] = None
-    day_of_week: Optional[str] = None
-    start_time: Optional[time] = None
-    end_time: Optional[time] = None
-    period_type: Optional[str] = None
-    is_active: Optional[bool] = None
 
 
 class TimetableAssignmentRead(BaseModel):
@@ -142,8 +122,9 @@ class TimetableGenerationRequest(BaseModel):
     model_config = MODEL_CONFIG
 
     session_id: UUID
-    configuration_id: UUID
     options: Optional[Dict[str, Any]] = None
+    start_date: date
+    end_date: date
 
 
 class TimetableGenerationResponse(BaseModel):

@@ -258,6 +258,17 @@ async def subscribe_job(
                         # Validate user can access this job
                         if await user_can_access_job(user_id, job_id, db):
                             yield data
+                            # If the job is finished, stop listening and close the connection.
+                            if data.get("status") in [
+                                "completed",
+                                "failed",
+                                "cancelled",
+                            ]:
+                                logger.info(
+                                    f"Job {job_id} reached terminal state '{data.get('status')}'. "
+                                    f"Closing WebSocket subscription."
+                                )
+                                break
                         else:
                             logger.warning(
                                 f"User {user_id} denied access to job {job_id}"
@@ -276,6 +287,12 @@ async def subscribe_job(
                 status = await get_initial_job_status(job_id, db)
                 if status:
                     yield status
+                    if status.get("status") in ["completed", "failed", "cancelled"]:
+                        logger.info(
+                            f"Job {job_id} reached terminal state '{status.get('status')}' via polling. "
+                            f"Closing WebSocket subscription."
+                        )
+                        break
 
     except Exception as e:
         logger.error(f"Error in job subscription for {job_id}: {e}")

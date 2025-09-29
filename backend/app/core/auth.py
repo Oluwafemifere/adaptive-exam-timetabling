@@ -1,6 +1,7 @@
 # backend/app/core/auth.py
 
 from datetime import timedelta
+from uuid import UUID
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,20 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
     return user
 
 
+# --- START OF FIX ---
+async def get_user_by_id(db: AsyncSession, user_id: str) -> User | None:
+    """Retrieves a user from the database by their ID."""
+    try:
+        user_uuid = UUID(user_id)
+        result = await db.execute(select(User).where(User.id == user_uuid))
+        return result.scalars().first()
+    except (ValueError, TypeError):
+        return None
+
+
+# --- END OF FIX ---
+
+
 async def get_current_user(
     token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)
 ) -> User:
@@ -36,20 +51,15 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    try:
-        payload = decode_access_token(token)
-        if payload is None:
-            raise credentials_exception
-
-        user_id = payload.get("sub")
-        if not isinstance(user_id, str):
-            raise credentials_exception
-
-    except Exception:
+    payload = decode_access_token(token)
+    if payload is None:
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalars().first()
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str):
+        raise credentials_exception
+
+    user = await get_user_by_id(db, user_id=user_id)  # Use the new helper function
 
     if user is None:
         raise credentials_exception

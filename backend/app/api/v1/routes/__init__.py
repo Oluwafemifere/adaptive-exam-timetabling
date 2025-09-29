@@ -10,7 +10,6 @@ from .scheduling import router as scheduling_router
 from .courses import router as courses_router
 from .rooms import router as rooms_router
 from .exams import router as exams_router
-from .timeslots import router as timeslots_router
 from .timetables import router as timetables_router
 from .users import router as users_router
 
@@ -25,7 +24,6 @@ router.include_router(users_router, prefix="/users", tags=["User Management"])
 router.include_router(courses_router, prefix="/courses", tags=["Courses"])
 router.include_router(rooms_router, prefix="/rooms", tags=["Rooms & Venues"])
 router.include_router(exams_router, prefix="/exams", tags=["Exams"])
-router.include_router(timeslots_router, prefix="/timeslots", tags=["Time Slots"])
 
 # Scheduling & Timetables
 router.include_router(

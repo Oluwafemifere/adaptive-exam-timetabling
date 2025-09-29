@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.ext.associationproxy import association_proxy
-
+from datetime import date, time, datetime
 from .base import Base, TimestampMixin
 
 # Use TYPE_CHECKING to avoid circular imports
