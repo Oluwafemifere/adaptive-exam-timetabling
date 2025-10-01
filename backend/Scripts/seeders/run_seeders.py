@@ -45,7 +45,7 @@ class UnifiedSeederRunner:
             f"🎭 Starting fake data seeding with magnitude level {magnitude}..."
         )
         # Set the magnitude level before running
-        self.fake_seeder.set_magnitude_level(magnitude)
+        self.fake_seeder._set_magnitude_level(magnitude)
         await self.fake_seeder.run(drop_existing=drop_existing)
         logger.info("✅ Fake data seeding completed!")
 

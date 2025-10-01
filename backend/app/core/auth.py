@@ -16,6 +16,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
 
 async def authenticate_user(db: AsyncSession, email: str, password: str) -> User | None:
+    """Authenticates a user by checking their email and password."""
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalars().first()
 
@@ -26,6 +27,16 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
         return None
 
     return user
+
+
+async def create_token_for_user(user: User) -> dict:
+    """Creates an access token for a given user."""
+    access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    token = create_access_token(
+        subject=str(user.id),
+        expires_delta=access_token_expires,
+    )
+    return {"access_token": token, "token_type": "bearer"}
 
 
 # --- START OF FIX ---
@@ -65,12 +76,3 @@ async def get_current_user(
         raise credentials_exception
 
     return user
-
-
-async def create_token_for_user(user: User):
-    access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
-    token = create_access_token(
-        subject=str(user.id),
-        expires_delta=access_token_expires,
-    )
-    return {"access_token": token, "token_type": "bearer"}

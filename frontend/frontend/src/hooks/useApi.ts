@@ -1,284 +1,380 @@
-import React from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiService, mockData } from '../services/api'
-import { useAppStore } from '../store'
-import { toast } from 'sonner'
+// frontend/src/hooks/useApi.ts
 
-// Custom hook for KPI data
-export function useKPIData() {
-  return useQuery({
-    queryKey: ['kpi-data'],
-    queryFn: async () => {
-      // Use mock data for development
-      return mockData.kpiData
-    },
-    refetchInterval: 30000, // Refresh every 30 seconds
-    onSuccess: (data) => {
-      useAppStore.getState().setKpiData(data)
-    },
-  })
-}
+import { useMemo, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import * as api from '../services/api';
+import { useAppStore } from '../store';
+import axios from 'axios';
+import type {
+  TimetableGenerationRequest,
+  Conflict,
+  KPIData,
+  ExamUpdatePayload,
+  AcademicSession,
+  Course,
+  Room,
+  TimetableResponse,
+  RenderableExam,
+  TimetableResult,
+  ActiveTimetableResponse,
+  Assignment,
+  TimeSlot,
+} from '../store/types';
+import { useAuthStore } from './useAuth';
+import { config, timetable } from '../config';
 
-// Custom hook for timetable data
-export function useTimetable() {
-  return useQuery({
-    queryKey: ['timetable'],
-    queryFn: async () => {
-      // Use mock data for development
-      return mockData.exams
-    },
-    onSuccess: (data) => {
-      useAppStore.getState().setExams(data)
-    },
-  })
-}
+const apiClient = axios.create({
+  baseURL: '/api/v1',
+});
 
-// Custom hook for conflicts
-export function useConflicts() {
-  return useQuery({
-    queryKey: ['conflicts'],
-    queryFn: async () => {
-      // Use mock data for development
-      return mockData.conflicts
-    },
-    onSuccess: (data) => {
-      useAppStore.getState().setConflicts(data)
-    },
-  })
-}
+// --- Real-time Job Status Hook --- (unchanged)
+export const useJobSocket = (jobId: string | null) => {
+  const queryClient = useQueryClient();
+  const { setSchedulingStatus, setCurrentPage } = useAppStore();
+  const { token } = useAuthStore();
 
-// Custom hook for file upload
-export function useFileUpload() {
-  const queryClient = useQueryClient()
-  const { setUploadStatus } = useAppStore()
+  useEffect(() => {
+    if (!jobId || !token) return;
 
-  return useMutation({
-    mutationFn: async (files: FormData) => {
-      setUploadStatus({ isUploading: true, progress: 0 })
-      
-      // Simulate upload progress
-      const progressInterval = setInterval(() => {
-        setUploadStatus((prev) => ({
-          progress: Math.min(prev.progress + 10, 90)
-        }))
-      }, 500)
+    const wsUrl = `${config.websocket.url}/jobs/${jobId}?token=${token}`;
+    const socket = new WebSocket(wsUrl);
 
+    socket.onopen = () => {
+      console.log(`WebSocket connected for job ${jobId}`);
+    };
+
+    socket.onmessage = (event) => {
       try {
-        // Mock validation response
-        const result = {
-          uploadId: Math.random().toString(36).substr(2, 9),
-          status: 'completed' as const,
-          validation: {
-            students: { valid: true, errors: [] },
-            courses: { valid: true, errors: [] },
-            registrations: { valid: true, errors: [] },
-            rooms: { valid: true, errors: [] },
-            invigilators: { valid: true, errors: [] },
-            constraints: { valid: true, errors: [] },
-          }
-        }
+        const data = JSON.parse(event.data);
+        console.log("WS Message:", data);
 
-        clearInterval(progressInterval)
-        setUploadStatus({ progress: 100, isUploading: false })
-        
-        return result
+        setSchedulingStatus({
+          phase: data.solver_phase || useAppStore.getState().schedulingStatus.phase,
+          progress: data.progress_percentage || 0,
+          metrics: { ...useAppStore.getState().schedulingStatus.metrics, ...(data.result_data || {}) }
+        });
+
+        if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+          setSchedulingStatus({ isRunning: false, phase: data.status, progress: data.status === 'completed' ? 100 : data.progress_percentage });
+
+          if (data.status === 'completed') {
+            toast.success("Scheduling completed!", {
+              description: "Loading the generated timetable...",
+            });
+            queryClient.invalidateQueries({ queryKey: ['timetable', 'latest'] });
+            queryClient.invalidateQueries({ queryKey: ['conflicts', 'latest'] });
+            setCurrentPage('timetable');
+          } else {
+            toast.error(`Scheduling ${data.status}`, {
+              description: data.error_message || 'An unexpected error occurred.'
+            });
+          }
+          socket.close();
+        }
       } catch (error) {
-        clearInterval(progressInterval)
-        setUploadStatus({ isUploading: false, progress: 0 })
-        throw error
+        console.error("Failed to parse WebSocket message:", error);
+        toast.error("Received an invalid message from the server.");
       }
+    };
+
+    socket.onclose = () => console.log(`WebSocket disconnected for job ${jobId}`);
+    socket.onerror = (error) => {
+      console.error("WebSocket Error:", error);
+      toast.error("Real-time update connection failed.");
+      setSchedulingStatus({ isRunning: false, phase: 'error', metrics: { error_message: 'Could not connect to the real-time update service.' } });
+    };
+
+    return () => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
+    };
+  }, [jobId, setSchedulingStatus, token, queryClient, setCurrentPage]);
+};
+
+// --- API Hooks ---
+export const useAcademicSessions = () => {
+  const { isAuthenticated } = useAuthStore();
+  return useQuery<AcademicSession[], Error>({
+    queryKey: ['academicSessions'],
+    queryFn: () => api.fetchAcademicSessions().then(res => res.data),
+    enabled: isAuthenticated,
+  });
+};
+
+// Generic fetch-all hook
+export const useAllEntities = <T,>(entityType: string) => {
+  const { isAuthenticated } = useAuthStore();
+  return useQuery<T[], Error>({
+    queryKey: ['allEntities', entityType],
+    queryFn: async () => {
+      // fetchAllEntities returns the raw data array (services/api.ts updated)
+      return api.fetchAllEntities(entityType);
     },
-    onSuccess: () => {
-      toast.success('Files uploaded successfully!')
-      queryClient.invalidateQueries({ queryKey: ['timetable'] })
+    enabled: isAuthenticated,
+  });
+};
+
+// Timetable and Exam Hooks
+export function useTimetable(versionId: string | 'latest' = 'latest') {
+  return useQuery<TimetableResult, Error, RenderableExam[]>({
+    queryKey: ['timetable', versionId],
+    queryFn: async () => {
+      const response = await apiClient.get<TimetableResponse>(`/timetables/versions/${versionId}`);
+      return response.data.data;
     },
-    onError: (error: any) => {
-      toast.error(`Upload failed: ${error.message}`)
-      setUploadStatus({ isUploading: false, progress: 0 })
+    select: (data): RenderableExam[] => {
+        if (!data || !data.solution?.assignments) return [];
+        return Object.values(data.solution.assignments).map((a: Assignment) => ({
+            id: a.exam_id,
+            date: a.date,
+            startTime: a.start_time,
+            endTime: a.end_time,
+            courseCode: a.course_code,
+            courseName: a.course_title,
+            departments: [a.department_name],
+            room: a.rooms.map(r => r.code).join(', ') || 'N/A',
+            building: a.rooms.map(r => r.building_name).join(', ') || 'N/A',
+            instructor: a.instructor_name || 'N/A',
+            invigilator: a.invigilators.map(i => i.name).join(', ') || 'N/A',
+            expectedStudents: a.capacity_metrics.expected_students,
+            roomCapacity: a.capacity_metrics.total_assigned_capacity,
+            examType: a.is_practical ? 'Practical' : 'Theory',
+            conflicts: a.conflicts,
+            originalAssignment: a,
+        }));
     },
-  })
+  });
 }
 
-// Custom hook for scheduling
-export function useScheduling() {
-  const queryClient = useQueryClient()
-  const { setSchedulingStatus } = useAppStore()
 
-  const startScheduling = useMutation({
-    mutationFn: async (constraints: any) => {
-      setSchedulingStatus({
-        isRunning: true,
-        phase: 'cp-sat',
-        progress: 0,
-        canPause: true,
-        canCancel: true,
-      })
+export const useActiveTimetable = () => {
+  const { isAuthenticated } = useAuthStore();
+  const activeTimetableQuery = useQuery({
+    queryKey: ['activeTimetable'],
+    queryFn: () => api.fetchActiveTimetable().then(res => res.data as ActiveTimetableResponse),
+    enabled: isAuthenticated,
+  });
 
-      // Simulate scheduling process
-      return new Promise((resolve) => {
-        let progress = 0
-        const interval = setInterval(() => {
-          progress += 5
-          
-          if (progress === 50) {
-            setSchedulingStatus({ phase: 'genetic-algorithm' })
-          }
-          
-          setSchedulingStatus({
-            progress,
-            metrics: {
-              constraintsSatisfied: Math.floor((progress / 100) * 45),
-              totalConstraints: 45,
-              iterationsCompleted: Math.floor((progress / 100) * 1000),
-              bestSolution: Math.max(0, 100 - progress / 2),
-            }
-          })
+  // Fetch lookup data
+  const coursesQuery = useAllEntities<Course>('courses');
+  const roomsQuery = useAllEntities<Room>('rooms');
 
-          if (progress >= 100) {
-            clearInterval(interval)
-            setSchedulingStatus({
-              isRunning: false,
-              phase: 'completed',
-              progress: 100,
-              canPause: false,
-              canCancel: false,
-            })
-            resolve({ jobId: 'mock-job-id', status: 'completed' })
-          }
-        }, 1000)
-      })
-    },
-    onSuccess: () => {
-      toast.success('Scheduling completed successfully!')
-      queryClient.invalidateQueries({ queryKey: ['timetable'] })
-      queryClient.invalidateQueries({ queryKey: ['conflicts'] })
-    },
-    onError: (error: any) => {
-      toast.error(`Scheduling failed: ${error.message}`)
-      setSchedulingStatus({
-        isRunning: false,
-        phase: 'error',
-        canPause: false,
-        canCancel: false,
-      })
-    },
-  })
+  const isDataLoading = activeTimetableQuery.isLoading || coursesQuery.isLoading || roomsQuery.isLoading;
+
+  type ProcessedActiveTimetable = {
+    renderableExams: RenderableExam[];
+    conflicts: Conflict[];
+    uniqueRooms: string[];
+    uniqueDepartments: string[];
+    dateRange: string[];
+    timeSlots: TimeSlot[];
+    originalData: ActiveTimetableResponse | null;
+  };
+
+  const processedData = useMemo<ProcessedActiveTimetable>(() => {
+    if (isDataLoading || !activeTimetableQuery.data?.data.timetable.solution?.assignments) {
+      return {
+        renderableExams: [],
+        conflicts: [],
+        uniqueRooms: [],
+        uniqueDepartments: [],
+        dateRange: [],
+        timeSlots: [],
+        originalData: null,
+      };
+    }
+      
+    const assignmentsArray = Object.values(activeTimetableQuery.data.data.timetable.solution.assignments);
+
+    const renderableExams = assignmentsArray.map((a: Assignment): RenderableExam => {
+      return {
+          id: a.exam_id,
+          date: a.date,
+          startTime: a.start_time,
+          endTime: a.end_time,
+          courseCode: a.course_code,
+          courseName: a.course_title,
+          departments: [a.department_name],
+          room: a.rooms.map(r => r.code).join(', ') || 'N/A',
+          building: a.rooms.map(r => r.building_name).join(', ') || 'N/A',
+          instructor: a.instructor_name || 'N/A',
+          invigilator: a.invigilators.map(i => i.name).join(', ') || 'N/A',
+          expectedStudents: a.capacity_metrics.expected_students,
+          roomCapacity: a.capacity_metrics.total_assigned_capacity,
+          examType: a.is_practical ? 'Practical' : 'Theory',
+          conflicts: a.conflicts,
+          originalAssignment: a,
+      };
+    });
+
+    const uniqueRooms = Array.from(new Set(renderableExams.flatMap(e => e.room))).sort();
+    const uniqueDepartments = Array.from(new Set(renderableExams.flatMap(e => e.departments))).sort();
+
+
+    const allDates = assignmentsArray
+        .map(a => a.date)
+        .filter(Boolean) as string[];
+    const uniqueDates = [...new Set(allDates)].sort();
+    
+    // UPDATED: Generate hourly time slots based on config
+    const timeSlots: TimeSlot[] = [];
+    for (let hour = timetable.dayStartHour; hour < timetable.dayEndHour; hour++) {
+      const nextHour = hour + 1;
+      timeSlots.push({
+        id: `${hour}:00`,
+        label: `${hour.toString().padStart(2, '0')}:00 - ${nextHour.toString().padStart(2, '0')}:00`,
+        start_hour: hour,
+      });
+    }
+
+    return {
+      renderableExams,
+      conflicts: activeTimetableQuery.data.data.timetable.solution.conflicts || [],
+      uniqueRooms,
+      uniqueDepartments,
+      dateRange: uniqueDates,
+      timeSlots: timeSlots,
+      originalData: activeTimetableQuery.data,
+    };
+  }, [activeTimetableQuery.data, isDataLoading]);
 
   return {
-    startScheduling,
-    pauseScheduling: () => {
-      setSchedulingStatus({ isRunning: false, canPause: false })
-      toast.info('Scheduling paused')
-    },
-    cancelScheduling: () => {
-      setSchedulingStatus({
-        isRunning: false,
-        phase: 'idle',
-        progress: 0,
-        canPause: false,
-        canCancel: false,
-      })
-      toast.info('Scheduling cancelled')
-    },
-  }
-}
+    ...activeTimetableQuery,
+    isLoading: isDataLoading,
+    data: processedData
+  };
+};
 
-// Custom hook for exam slot updates (drag & drop)
-export function useUpdateExamSlot() {
-  const queryClient = useQueryClient()
-
+export const useUpdateExam = () => {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ examId, newSlot }: {
-      examId: string
-      newSlot: { date: string; timeSlot: string; room?: string }
-    }) => {
-      // Mock API call
-      await new Promise(resolve => setTimeout(resolve, 500))
-      return { success: true }
+    mutationFn: ({ examId, data }: { examId: string; data: ExamUpdatePayload }) => api.updateExam(examId, data),
+    onSuccess: (_, variables) => {
+      toast.success(`Exam ${variables.examId} updated successfully!`);
+      queryClient.invalidateQueries({ queryKey: ['timetable'] });
+      queryClient.invalidateQueries({ queryKey: ['conflicts'] });
     },
+    onError: (error: Error) => {
+      toast.error(`Failed to update exam: ${error.message}`);
+    },
+  });
+};
+
+// Conflict Hooks
+export const useConflicts = (versionId = 'latest') => {
+  const { setConflicts } = useAppStore.getState();
+  const { isAuthenticated } = useAuthStore();
+  return useQuery<Conflict[], Error>({
+    queryKey: ['conflicts', versionId],
+    queryFn: () => api.fetchConflicts(versionId).then(res => {
+      const conflictsData = (res.data.data.conflicts || []) as Conflict[];
+      setConflicts(conflictsData);
+      return conflictsData;
+    }),
+    enabled: isAuthenticated && !!versionId,
+  });
+};
+
+export const useResolveConflict = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (variables: { conflictId: string; resolution: Record<string, unknown> }) => api.resolveConflict(variables),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['timetable'] })
-      queryClient.invalidateQueries({ queryKey: ['conflicts'] })
-      toast.success('Exam slot updated successfully!')
+      toast.success('Conflict resolution submitted!');
+      queryClient.invalidateQueries({ queryKey: ['conflicts'] });
+      queryClient.invalidateQueries({ queryKey: ['timetable'] });
     },
-    onError: (error: any) => {
-      toast.error(`Failed to update exam slot: ${error.message}`)
+    onError: (error: Error) => {
+      toast.error(`Conflict resolution failed: ${error.message}`);
     },
-  })
-}
+  });
+};
 
-// Custom hook for conflict resolution
-export function useResolveConflict() {
-  const queryClient = useQueryClient()
-  const { resolveConflict } = useAppStore()
+// Scheduling Hooks
+export const useScheduling = () => {
+  const { setSchedulingStatus } = useAppStore();
 
+  const startScheduling = useMutation({
+    mutationFn: (data: TimetableGenerationRequest) => api.startScheduling(data),
+    onSuccess: (response) => {
+      const jobId = response.data.job_id;
+      toast.success(`Scheduling process initiated with Job ID: ${jobId}`);
+      setSchedulingStatus({ isRunning: true, phase: 'pending', progress: 0, jobId });
+    },
+    onError: (error: Error) => {
+      toast.error(`Scheduling failed to start: ${error.message}`);
+      setSchedulingStatus({ isRunning: false, phase: 'error', jobId: null });
+    }
+  });
+
+  const cancelScheduling = useMutation({
+    mutationFn: (jobId: string) => api.cancelJob(jobId),
+    onSuccess: (_, jobId) => {
+      toast.warning(`Request to cancel job ${jobId} sent.`);
+      setSchedulingStatus({ isRunning: false, phase: 'cancelled' });
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to cancel job: ${error.message}`);
+    }
+  });
+
+  return { startScheduling, cancelScheduling };
+};
+
+// File Upload Hook
+export const useFileUpload = () => {
+  const { setUploadStatus } = useAppStore();
   return useMutation({
-    mutationFn: async ({ conflictId, resolution }: {
-      conflictId: string
-      resolution?: any
-    }) => {
-      // Mock API call
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      return { success: true }
+    mutationFn: ({ formData, entityType }: { formData: FormData, entityType: string }) => {
+      setUploadStatus({ isUploading: true, progress: 0 });
+      return api.uploadFiles(formData, entityType);
     },
     onSuccess: (_, variables) => {
-      resolveConflict(variables.conflictId)
-      queryClient.invalidateQueries({ queryKey: ['conflicts'] })
-      queryClient.invalidateQueries({ queryKey: ['timetable'] })
-      toast.success('Conflict resolved successfully!')
+      toast.success(`'${variables.entityType}' file uploaded and validation started.`);
+      setUploadStatus({ isUploading: false, progress: 100 });
     },
-    onError: (error: any) => {
-      toast.error(`Failed to resolve conflict: ${error.message}`)
+    onError: (error: Error, variables) => {
+      toast.error(`'${variables.entityType}' upload failed: ${error.message}`);
+      setUploadStatus({ isUploading: false });
     },
-  })
-}
+  });
+};
 
-// Custom hook for report generation
-export function useGenerateReport() {
+// Report Generation Hook
+export const useGenerateReport = () => {
+  const { activeSessionId } = useAppStore();
   return useMutation({
-    mutationFn: async ({ type, options }: {
-      type: 'student' | 'room' | 'conflicts' | 'instructor'
-      options: any
-    }) => {
-      // Mock report generation
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      
-      return {
-        reportId: Math.random().toString(36).substr(2, 9),
-        status: 'completed' as const,
-        downloadUrl: `#download-${type}-report`,
-      }
+    mutationFn: (variables: { report_type: string; options: Record<string, unknown> }) => {
+      if (!activeSessionId) throw new Error("No active session selected.");
+      return api.generateReport(activeSessionId, variables);
     },
-    onSuccess: (data) => {
-      toast.success('Report generated successfully!', {
-        action: {
-          label: 'Download',
-          onClick: () => {
-            // Mock download
-            toast.info('Download started...')
-          },
-        },
-      })
+    onSuccess: (response) => {
+      toast.success('Report generation started!', { description: response.data.message });
     },
-    onError: (error: any) => {
-      toast.error(`Report generation failed: ${error.message}`)
+    onError: (error: Error) => {
+      toast.error(`Failed to generate report: ${error.message}`);
     },
-  })
-}
+  });
+};
 
-// Custom hook for real-time updates
-export function useRealTimeUpdates() {
-  const { setSystemStatus } = useAppStore()
+// KPI Data Hook
+export const useKPIData = () => {
+  const { setKpiData } = useAppStore.getState();
+  const { isAuthenticated } = useAuthStore();
+  const { activeSessionId } = useAppStore();
 
-  // Mock real-time status updates
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setSystemStatus({
-        constraintEngine: Math.random() > 0.1 ? 'active' : 'idle',
-        dataSyncProgress: Math.random() * 100,
-      })
-    }, 5000)
-
-    return () => clearInterval(interval)
-  }, [setSystemStatus])
-}
+  return useQuery<KPIData, Error>({
+    queryKey: ['kpiData', activeSessionId],
+    queryFn: () => {
+      if (!activeSessionId) throw new Error("No active session selected.");
+      return api.fetchKPIData(activeSessionId).then(res => {
+        const kpi = res.data.data as KPIData;
+        setKpiData(kpi);
+        return kpi;
+      });
+    },
+    enabled: isAuthenticated && !!activeSessionId,
+  });
+};

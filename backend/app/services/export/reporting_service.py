@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .report_builder import ReportBuilder
-from ..data_retrieval import UnifiedDataService
+from ..data_retrieval import DataRetrievalService
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class ReportingService:
 
     def __init__(self, session: AsyncSession):
         self.session = session
-        self.data_service = UnifiedDataService(session)
+        self.data_service = DataRetrievalService(session)
         self.report_builder = ReportBuilder()
 
     async def generate_full_timetable_report(

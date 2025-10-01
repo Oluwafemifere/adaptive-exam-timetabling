@@ -51,7 +51,7 @@ class Settings(BaseSettings):
         alias="SECRET_KEY",
     )
     JWT_SECRET_KEY: str = Field(
-        default="jwt-secret-key-change-in-production",
+        default="mysecret",
         alias="JWT_SECRET_KEY",
     )
     JWT_ALGORITHM: str = "HS256"

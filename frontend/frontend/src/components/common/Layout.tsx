@@ -13,7 +13,6 @@ import {
 } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
-import { Separator } from '../ui/separator'
 import { useAppStore } from '../../store'
 import { cn } from '../ui/utils'
 
@@ -73,15 +72,15 @@ export function Layout({ children }: LayoutProps) {
   const isSchedulingActive = schedulingStatus.isRunning
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-background text-foreground flex">
       {/* Sidebar */}
-      <div className="w-64 bg-white shadow-sm border-r border-gray-200 flex flex-col">
+      <div className="w-64 bg-card shadow-sm border-r border-border flex flex-col">
         {/* Header */}
-        <div className="p-6 border-b border-gray-200">
-          <h1 className="text-xl font-semibold text-gray-900">
+        <div className="p-6 border-b border-border">
+          <h1 className="text-xl font-semibold text-foreground">
             Exam Timetabling
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Adaptive Scheduling System
           </p>
         </div>
@@ -98,14 +97,14 @@ export function Layout({ children }: LayoutProps) {
                 variant={isActive ? "secondary" : "ghost"}
                 className={cn(
                   "w-full justify-start text-left h-auto p-3",
-                  isActive && "bg-blue-50 text-blue-700 border-blue-200"
+                  isActive && "bg-primary/10 text-primary"
                 )}
                 onClick={() => setCurrentPage(item.href)}
               >
                 <Icon className="h-4 w-4 mr-3 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="font-medium">{item.name}</div>
-                  <div className="text-xs text-gray-500 truncate">
+                  <div className="text-xs text-muted-foreground truncate">
                     {item.description}
                   </div>
                 </div>
@@ -123,10 +122,10 @@ export function Layout({ children }: LayoutProps) {
         </nav>
 
         {/* System Status Footer */}
-        <div className="p-4 border-t border-gray-200">
+        <div className="p-4 border-t border-border">
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600">Constraint Engine</span>
+              <span className="text-muted-foreground">Constraint Engine</span>
               <div className="flex items-center">
                 {systemStatus.constraintEngine === 'active' ? (
                   <CheckCircle className="h-3 w-3 text-green-500 mr-1" />
@@ -139,7 +138,7 @@ export function Layout({ children }: LayoutProps) {
                   "text-xs capitalize",
                   systemStatus.constraintEngine === 'active' && "text-green-600",
                   systemStatus.constraintEngine === 'error' && "text-red-600",
-                  systemStatus.constraintEngine === 'idle' && "text-gray-500"
+                  systemStatus.constraintEngine === 'idle' && "text-muted-foreground"
                 )}>
                   {systemStatus.constraintEngine}
                 </span>
@@ -147,7 +146,7 @@ export function Layout({ children }: LayoutProps) {
             </div>
             
             <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600">Auto Resolution</span>
+              <span className="text-muted-foreground">Auto Resolution</span>
               <Badge variant={systemStatus.autoResolution ? "default" : "secondary"} className="text-xs">
                 {systemStatus.autoResolution ? "On" : "Off"}
               </Badge>
@@ -155,13 +154,13 @@ export function Layout({ children }: LayoutProps) {
             
             {systemStatus.dataSyncProgress > 0 && (
               <div className="space-y-1">
-                <div className="flex items-center justify-between text-xs text-gray-600">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>Data Sync</span>
                   <span>{Math.round(systemStatus.dataSyncProgress)}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-1">
+                <div className="w-full bg-muted rounded-full h-1">
                   <div 
-                    className="bg-blue-600 h-1 rounded-full transition-all duration-300" 
+                    className="bg-primary h-1 rounded-full transition-all duration-300" 
                     style={{ width: `${systemStatus.dataSyncProgress}%` }}
                   />
                 </div>
@@ -174,13 +173,13 @@ export function Layout({ children }: LayoutProps) {
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <header className="bg-card border-b border-border px-6 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 capitalize">
+              <h2 className="text-lg font-semibold text-foreground capitalize">
                 {currentPage.replace('-', ' ')}
               </h2>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 {navigation.find(item => item.href === currentPage)?.description}
               </p>
             </div>
@@ -201,7 +200,7 @@ export function Layout({ children }: LayoutProps) {
                 </Badge>
               )}
 
-              <div className="text-sm text-gray-500">
+              <div className="text-sm text-muted-foreground">
                 Last updated: {new Date().toLocaleTimeString()}
               </div>
             </div>
@@ -209,7 +208,7 @@ export function Layout({ children }: LayoutProps) {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto bg-background">
           <div className="p-6">
             {children}
           </div>

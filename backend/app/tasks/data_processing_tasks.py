@@ -8,28 +8,25 @@ data validation, transformation, and bulk operations.
 import asyncio
 import logging
 import os
-import json  # <-- Import json
+import json
 from typing import Dict, Any, List, Optional
 from uuid import UUID
 from datetime import datetime
-from sqlalchemy.orm import Session
-from sqlalchemy import create_engine, text  # MODIFIED: Imported text
-from .celery_app import celery_app
+from sqlalchemy import text, create_engine
+from .celery_app import celery_app, _run_coro_in_new_loop  # <-- USING SHARED HELPER
 from ..services.data_validation.csv_processor import CSVProcessor
 from ..services.data_validation.data_mapper import DataMapper
 from ..services.data_validation.integrity_checker import (
     DataIntegrityChecker,
     IntegrityCheckResult,
 )
-
-# REMOVED: from ..services.data_retrieval.audit_data import AuditData
 from ..models.file_uploads import FileUploadSession
 from ..core.exceptions import DataProcessingError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import update
-from sqlalchemy.orm import Session
-import asyncio
-from asgiref.sync import async_to_sync
+from sqlalchemy.pool import NullPool
+from ..core.config import settings
+from sqlalchemy.orm import Session as SyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +39,8 @@ async def _async_process_csv_upload(
     user_id: str,
     options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    MODIFIED Async implementation of CSV upload processing.
-    This version uses a dedicated database function for seeding.
-    """
+    """Async implementation of CSV upload processing with isolated DB engine."""
     from celery import current_task
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-    from sqlalchemy.pool import NullPool
-    from ..core.config import settings
 
     task = current_task._get_current_object()
     update_state_func = (
@@ -58,6 +49,7 @@ async def _async_process_csv_upload(
         else lambda *args, **kwargs: None
     )
 
+    # --- ISOLATED DB ENGINE ---
     engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool, echo=False)
     async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -79,7 +71,7 @@ async def _async_process_csv_upload(
                     f"CSV processing failed: {processing_result['errors']}"
                 )
 
-            # 2. Map data to the target JSON format
+            # 2. Map data
             update_state_func(
                 state="PROGRESS", meta={"current": 40, "phase": "mapping_data"}
             )
@@ -95,15 +87,11 @@ async def _async_process_csv_upload(
                     f"Data mapping failed: {mapping_result['errors']}"
                 )
 
-            # 3. Call the database function to seed the data
+            # 3. Call DB function
             update_state_func(
                 state="PROGRESS", meta={"current": 70, "phase": "seeding_database"}
             )
-
-            # Serialize the mapped data to a JSON string
             jsonb_payload = json.dumps(mapping_result["mapped_data"])
-
-            # Execute the database function
             db_func_result = await session.execute(
                 text(
                     "SELECT exam_system.seed_data_from_jsonb(:entity_type, :data::jsonb)"
@@ -113,7 +101,6 @@ async def _async_process_csv_upload(
             seeding_response = db_func_result.scalar_one()
 
             if not seeding_response.get("success"):
-                # Extract errors from the DB function response and fail the session
                 db_errors = [
                     f"Record: {err.get('record', '{}')}, Error: {err.get('error', 'Unknown DB error')}"
                     for err in seeding_response.get("errors", [])
@@ -129,7 +116,7 @@ async def _async_process_csv_upload(
                     validation_errors=validation_errors,
                 )
 
-            # 4. Update session as complete
+            # 4. Finalize
             update_state_func(
                 state="PROGRESS", meta={"current": 90, "phase": "finalizing"}
             )
@@ -217,7 +204,6 @@ def process_csv_upload_task(
         logger.info(
             f"Processing CSV upload {upload_session_id} for entity type {entity_type}"
         )
-
         self.update_state(
             state="PROGRESS",
             meta={
@@ -228,13 +214,16 @@ def process_csv_upload_task(
             },
         )
 
-        return async_to_sync(_async_process_csv_upload)(
-            self.request.id,
-            upload_session_id,
-            file_path,
-            entity_type,
-            user_id,
-            options,
+        # --- STANDARDIZED ASYNC EXECUTION ---
+        return _run_coro_in_new_loop(
+            _async_process_csv_upload(
+                self.request.id,
+                upload_session_id,
+                file_path,
+                entity_type,
+                user_id,
+                options,
+            )
         )
 
     except Exception as exc:
@@ -252,10 +241,8 @@ def validate_data_integrity_task(
     Validate data integrity across multiple entity types for a session.
     Checks referential integrity, constraint violations, and data quality.
     """
-
     try:
         logger.info(f"Starting data integrity validation for session {session_id}")
-
         self.update_state(
             state="PROGRESS",
             meta={
@@ -266,16 +253,10 @@ def validate_data_integrity_task(
             },
         )
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            result = loop.run_until_complete(
-                _async_validate_data_integrity(self, session_id, entity_types, user_id)
-            )
-            return result
-        finally:
-            loop.close()
+        # --- STANDARDIZED ASYNC EXECUTION ---
+        return _run_coro_in_new_loop(
+            _async_validate_data_integrity(self, session_id, entity_types, user_id)
+        )
 
     except Exception as exc:
         logger.error(f"Data integrity validation failed: {exc}")
@@ -287,18 +268,20 @@ def validate_data_integrity_task(
 async def _async_validate_data_integrity(
     task, session_id: str, entity_types: List[str], user_id: str
 ) -> Dict[str, Any]:
-    """Async implementation of data integrity validation"""
+    """Async implementation of data integrity validation with isolated DB engine"""
 
-    from ..database import db_manager
+    # --- ISOLATED DB ENGINE ---
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool, echo=False)
+    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    sync_engine = None
 
-    async with db_manager.get_session() as db:
+    async with async_session_factory() as db:
         try:
-            if db_manager.engine is None:
-                raise RuntimeError("Database engine not initialized")
-
-            sync_engine = db_manager.engine.sync_engine
-
-            with Session(sync_engine) as sync_session:
+            # Create synchronous engine for DataIntegrityChecker
+            sync_engine = create_engine(
+                settings.DATABASE_URL.replace("+asyncpg", ""), poolclass=NullPool
+            )
+            with SyncSession(sync_engine) as sync_session:
                 integrity_checker = DataIntegrityChecker(sync_session)
 
             session_uuid = UUID(session_id)
@@ -376,6 +359,11 @@ async def _async_validate_data_integrity(
             raise DataProcessingError(
                 f"Data integrity validation failed: {e}"
             ).with_context(session_id=session_id)
+        finally:
+            if engine:
+                await engine.dispose()
+            if sync_engine:
+                sync_engine.dispose()
 
 
 @celery_app.task(bind=True, name="bulk_data_import")
@@ -385,7 +373,6 @@ def bulk_data_import_task(
     """
     Import data from multiple sources in bulk with validation and rollback support.
     """
-
     try:
         logger.info(
             f"Starting bulk data import with {len(import_config.get('sources', []))} sources"
@@ -401,16 +388,10 @@ def bulk_data_import_task(
             },
         )
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            result = loop.run_until_complete(
-                _async_bulk_data_import(self, import_config, user_id)
-            )
-            return result
-        finally:
-            loop.close()
+        # --- STANDARDIZED ASYNC EXECUTION ---
+        return _run_coro_in_new_loop(
+            _async_bulk_data_import(self, import_config, user_id)
+        )
 
     except Exception as exc:
         logger.error(f"Bulk data import failed: {exc}")
@@ -420,11 +401,13 @@ def bulk_data_import_task(
 async def _async_bulk_data_import(
     task, import_config: Dict[str, Any], user_id: str
 ) -> Dict[str, Any]:
-    """Async implementation of bulk data import"""
+    """Async implementation of bulk data import with isolated DB engine"""
 
-    from ..database import db_manager
+    # --- ISOLATED DB ENGINE ---
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool, echo=False)
+    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    async with db_manager.get_session() as db:
+    async with async_session_factory() as db:
         try:
             sources = import_config.get("sources", [])
             import_results = {}
@@ -500,6 +483,9 @@ async def _async_bulk_data_import(
         except Exception as e:
             logger.error(f"Error in bulk data import: {e}")
             raise DataProcessingError(f"Bulk data import failed: {e}")
+        finally:
+            if engine:
+                await engine.dispose()
 
 
 # Helper functions
@@ -507,7 +493,7 @@ async def _async_bulk_data_import(
 
 async def _get_entity_data(db: AsyncSession, entity_type: str) -> List[Dict[str, Any]]:
     """
-    MODIFIED: Helper to get entity data for validation by calling a DB function.
+    Helper to get entity data for validation by calling a DB function.
     """
     result = await db.execute(
         text("SELECT exam_system.get_entity_data_as_json(:entity_type)"),

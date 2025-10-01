@@ -8,8 +8,9 @@ from .academic import (
     Programme,
     Course,
     Student,
-    StudentEnrollment,  # New model
+    StudentEnrollment,
     CourseRegistration,
+    CourseInstructor,
 )
 from .scheduling import (
     Exam,
@@ -62,6 +63,7 @@ __all__ = [
     "Student",
     "StudentEnrollment",  # New model
     "CourseRegistration",
+    "CourseInstructor",
     # Scheduling models
     "Exam",
     "ExamDepartment",

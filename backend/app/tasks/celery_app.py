@@ -31,6 +31,7 @@ def make_celery() -> Celery:
         task_routes={
             "generate_timetable": {"queue": "scheduling"},
             "backend.app.tasks.scheduling_tasks.*": {"queue": "scheduling"},
+            "backend.app.tasks.post_processing_tasks.*": {"queue": "post_processing"},
             "backend.app.tasks.data_processing_tasks.*": {"queue": "data_processing"},
             "backend.app.tasks.notification_tasks.*": {"queue": "notifications"},
         },
@@ -38,6 +39,7 @@ def make_celery() -> Celery:
         task_queues=(
             Queue("default", routing_key="default"),
             Queue("scheduling", routing_key="scheduling"),
+            Queue("post_processing", routing_key="post_processing"),
             Queue("data_processing", routing_key="data_processing"),
             Queue("notifications", routing_key="notifications"),
         ),
@@ -99,18 +101,31 @@ celery_app = make_celery()
 celery_app.autodiscover_tasks(["backend.app.tasks"])
 
 
+# --- START OF MODIFICATION: ROBUST ASYNC-IN-SYNC HELPER ---
 def _run_coro_in_new_loop(coro):
-    """Run an async coroutine on a fresh event loop in this thread."""
+    """
+    Runs a coroutine in a new asyncio event loop, ensuring proper cleanup.
+    This is essential for running async code from a sync Celery task with gevent.
+    """
     loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
+        asyncio.set_event_loop(loop)
+        # Run the coroutine until it completes
         return loop.run_until_complete(coro)
     finally:
+        # Gracefully shut down any async generators
         try:
             loop.run_until_complete(loop.shutdown_asyncgens())
         except Exception:
+            # This can happen if the loop is already closing
             pass
+        # Close the loop
         loop.close()
+        # Reset the event loop for the current thread
+        asyncio.set_event_loop(None)
+
+
+# --- END OF MODIFICATION ---
 
 
 @celery_app.task(name="health_check")

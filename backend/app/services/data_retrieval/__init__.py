@@ -8,9 +8,9 @@ from the database by calling dedicated PostgreSQL functions. This offloads
 complex data aggregation to the database layer.
 """
 
-from .unified_data_retrieval import UnifiedDataService
+from .data_retrieval_service import DataRetrievalService
 
 __all__ = [
     # Unified service for complex data retrieval via PSQL functions
-    "UnifiedDataService",
+    "DataRetrievalService",
 ]

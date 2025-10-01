@@ -3,25 +3,27 @@
 API endpoints for scheduling-related operations including data retrieval,
 timetable generation, and scheduling configuration management.
 """
-from typing import Optional
+from typing import Optional, Union, Dict, Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
+from datetime import date
 
 from ....api.deps import db_session, current_user
 from ....models.users import User
-from ....services.data_retrieval.unified_data_retrieval import UnifiedDataService
-from ....services.scheduling.conflict_detection_service import ConflictDetectionService
-from ....services.scheduling.scheduling_management_service import (
-    SchedulingManagementService,
+from ....services.data_retrieval import DataRetrievalService
+from ....services.scheduling import (
+    SchedulingService,
 )
 from ....schemas.scheduling import (
     SchedulingDataResponse,
     TimetableGenerationRequest,
     TimetableGenerationResponse,
     ConflictAnalysisResponse,
-    SchedulingJobResponse,
+    TimetableValidationRequest,
 )
+from ....schemas.system import GenericResponse
 from ....schemas.jobs import TimetableJobRead
 
 router = APIRouter()
@@ -31,7 +33,6 @@ router = APIRouter()
     "/data/{session_id}",
     response_model=SchedulingDataResponse,
     summary="Get scheduling data for session",
-    description="Retrieves all data needed for scheduling a specific academic session",
 )
 async def get_scheduling_data(
     session_id: UUID,
@@ -41,107 +42,187 @@ async def get_scheduling_data(
     """
     Get comprehensive scheduling data for an academic session.
     """
-    try:
-        service = UnifiedDataService(db)
-        data = await service.get_scheduling_dataset(session_id)
-        return SchedulingDataResponse(
-            success=True, message="Scheduling data retrieved successfully", data=data
-        )
-    except Exception as e:
+    service = DataRetrievalService(db)
+    data = await service.get_scheduling_dataset(session_id)
+    if not data:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve scheduling data: {str(e)}",
+            detail="Failed to retrieve scheduling data",
         )
+    return SchedulingDataResponse(
+        success=True, message="Scheduling data retrieved successfully", data=data
+    )
 
 
 @router.get(
     "/conflicts/{version_id}",
     response_model=ConflictAnalysisResponse,
     summary="Analyze scheduling conflicts",
-    description="Analyzes potential scheduling conflicts for a timetable version",
 )
 async def analyze_scheduling_conflicts(
-    version_id: UUID,
+    version_id: Union[UUID, str],
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """
-    Analyze potential scheduling conflicts for a given set of timetable assignments.
-    """
-    try:
-        data_service = UnifiedDataService(db)
-        timetable_data = await data_service.get_full_timetable(version_id)
+    data_service = DataRetrievalService(db)
 
-        if not timetable_data or "assignments" not in timetable_data:
+    # Handle "latest" special case
+    if isinstance(version_id, str) and version_id == "latest":
+        metadata = await data_service.get_latest_version_metadata()
+        if not metadata or "id" not in metadata:
             raise HTTPException(
-                status_code=404,
-                detail="Timetable version not found or has no assignments.",
+                status_code=404, detail="No completed timetable versions found."
             )
+        try:
+            version_uuid = UUID(metadata["id"])
+        except ValueError:
+            raise HTTPException(
+                status_code=500, detail="Invalid version ID in metadata."
+            )
+    else:
+        # Ensure input can be coerced to UUID
+        try:
+            version_uuid = UUID(str(version_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid version_id format.")
 
-        conflict_service = ConflictDetectionService(db)
-        conflict_result = await conflict_service.check_for_conflicts(
-            timetable_data["assignments"], version_id
-        )
-
+    # Run conflict analysis
+    conflict_data = await data_service.get_timetable_conflicts(version_uuid)
+    if not conflict_data:
         return ConflictAnalysisResponse(
-            success=conflict_result.get("success", False),
-            message="Conflict analysis completed successfully",
-            data=conflict_result,
+            success=True,
+            message="Conflict analysis completed. No conflicts found.",
+            data={"conflicts": []},
         )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to analyze conflicts: {str(e)}",
-        )
+
+    return ConflictAnalysisResponse(
+        success=True,
+        message="Conflict analysis completed successfully",
+        data=conflict_data,
+    )
 
 
 @router.post(
     "/generate",
     response_model=TimetableGenerationResponse,
     summary="Generate exam timetable",
-    description="Initiates timetable generation using the backend solver engine",
 )
 async def generate_timetable(
     request: TimetableGenerationRequest,
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """
-    Generate an exam timetable for the specified session.
-    This creates a background job that can be monitored for progress.
-    """
-    try:
-        service = SchedulingManagementService(db)
-
-        # MODIFIED: Extract start_date and end_date from request and add to options
-        options = request.options or {}
-        options["start_date"] = request.start_date.isoformat()
-        options["end_date"] = request.end_date.isoformat()
-
-        result = await service.start_new_scheduling_job(
-            session_id=request.session_id,
-            user_id=user.id,
-            options=options,  # Use the prepared options dict
-        )
-
-        if not result.get("success"):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=result.get("error", "Failed to start job"),
-            )
-
-        job_status = await service.get_job_status(result["job_id"])
-        assert job_status
-        return TimetableGenerationResponse(
-            success=True,
-            message="Timetable generation initiated successfully",
-            job_id=result["job_id"],
-            status=job_status.get("status", "queued"),
-            estimated_completion_minutes=15,
-        )
-
-    except Exception as e:
+    service = SchedulingService(db)
+    options = request.options or {}
+    options["start_date"] = request.start_date.isoformat()
+    options["end_date"] = request.end_date.isoformat()
+    result = await service.start_new_scheduling_job(
+        session_id=request.session_id, user_id=user.id, options=options
+    )
+    if not result.get("success"):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to initiate timetable generation: {str(e)}",
+            detail=result.get("error", "Failed to start job"),
+        )
+    job_status_result = await service.get_job_status(result["job_id"])
+    job_status = TimetableJobRead.model_validate(job_status_result)
+    return TimetableGenerationResponse(
+        success=True,
+        message="Timetable generation initiated successfully",
+        job_id=result["job_id"],
+        status=job_status.status,
+        estimated_completion_minutes=15,
+    )
+
+
+# --- NEWLY ADDED ROUTE ---
+
+
+# Define a new schema for the request body, specific to this route,
+# to avoid requiring a session_id from the client.
+class ActiveSessionTimetableRequest(BaseModel):
+    start_date: date
+    end_date: date
+    options: Optional[Dict[str, Any]] = None
+
+
+@router.post(
+    "/generate/active-session",
+    response_model=TimetableGenerationResponse,
+    summary="Generate Timetable for Active Session",
+    description="Automatically finds the active academic session and starts a new timetable generation job for it.",
+)
+async def generate_timetable_for_active_session(
+    request: ActiveSessionTimetableRequest,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Automatically retrieves the active academic session and initiates
+    a new timetable generation job for it.
+    """
+    data_service = DataRetrievalService(db)
+
+    # 1. Fetch the active academic session ID
+    active_session = await data_service.get_active_academic_session()
+    if not active_session or not active_session.get("id"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active academic session found. An administrator must set an active session.",
+        )
+    session_id = active_session["id"]
+
+    # 2. Start the scheduling job using the retrieved session ID
+    scheduling_service = SchedulingService(db)
+    options = request.options or {}
+    options["start_date"] = request.start_date.isoformat()
+    options["end_date"] = request.end_date.isoformat()
+
+    result = await scheduling_service.start_new_scheduling_job(
+        session_id=session_id, user_id=user.id, options=options
+    )
+
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result.get("error", "Failed to start the scheduling job."),
+        )
+
+    # 3. Fetch and return the initial status of the created job
+    job_id = result["job_id"]
+    job_status_result = await scheduling_service.get_job_status(job_id)
+    job_status = TimetableJobRead.model_validate(job_status_result)
+
+    return TimetableGenerationResponse(
+        success=True,
+        message="Timetable generation for active session initiated successfully.",
+        job_id=job_id,
+        status=job_status.status,
+        estimated_completion_minutes=15,
+    )
+
+
+@router.post("/validate", response_model=GenericResponse)
+async def validate_timetable_assignments(
+    request: TimetableValidationRequest,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Validate a proposed set of timetable assignments against constraints.
+    Uses the `validate_timetable` service method.
+    """
+    service = DataRetrievalService(db)
+    try:
+        validation_result = await service.validate_timetable(
+            assignments=request.assignments, version_id=request.version_id
+        )
+        return GenericResponse(
+            success=True,
+            message="Timetable validation completed.",
+            data=validation_result,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to validate timetable: {e}"
         )

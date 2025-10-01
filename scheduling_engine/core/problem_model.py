@@ -1,13 +1,12 @@
 # scheduling_engine/core/problem_model.py
-# FIXED Problem Model Enhancement
-# This file enhances the problem model to properly handle backend data
+
 
 from __future__ import annotations
 import math
 import traceback
 from typing import Dict, List, Set, Optional, Any, TYPE_CHECKING, Tuple
 from uuid import UUID, uuid4
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, time, date, timedelta
 from enum import Enum
 import logging
@@ -44,6 +43,17 @@ class Timeslot:
     end_time: time
     duration_minutes: int
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts the Timeslot object to a dictionary."""
+        return {
+            "id": str(self.id),
+            "parent_day_id": str(self.parent_day_id),
+            "name": self.name,
+            "start_time": self.start_time.isoformat(),
+            "end_time": self.end_time.isoformat(),
+            "duration_minutes": self.duration_minutes,
+        }
+
 
 @dataclass
 class Day:
@@ -52,8 +62,12 @@ class Day:
     timeslots: List[Timeslot] = field(default_factory=list)
 
     def __post_init__(self):
-        # FIXED: More flexible timeslot creation - use existing timeslots or create defaults
+        # This now serves as a fallback only if timeslots are not provided
+        # during object creation, which the corrected problem model now does.
         if not self.timeslots:
+            logger.warning(
+                f"Day {self.id} is creating default timeslots as none were provided."
+            )
             templates = [
                 ("Morning", time(9, 0), time(12, 0)),
                 ("Afternoon", time(12, 0), time(15, 0)),
@@ -77,6 +91,14 @@ class Day:
                 f"Day {self.id} has {len(self.timeslots)} timeslots, expected 3"
             )
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts the Day object to a dictionary."""
+        return {
+            "id": str(self.id),
+            "date": self.date.isoformat(),
+            "timeslots": [ts.to_dict() for ts in self.timeslots],
+        }
+
 
 @dataclass
 class Room:
@@ -86,6 +108,7 @@ class Room:
     exam_capacity: int
     has_computers: bool = False
     adjacent_seat_pairs: List[Tuple[int, int]] = field(default_factory=list)
+    building_name: Optional[str] = None
 
     @property
     def overbookable(self) -> bool:
@@ -94,6 +117,12 @@ class Room:
     @property
     def seat_indices(self) -> List[int]:
         return list(range(self.capacity))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts the Room object to a dictionary."""
+        d = asdict(self)
+        d["id"] = str(self.id)
+        return d
 
     @classmethod
     def from_backend_data(cls, data: Dict[str, Any]) -> "Room":
@@ -118,6 +147,9 @@ class Room:
             exam_capacity=int(data.get("exam_capacity", data.get("capacity", 0))),
             has_computers=bool(data.get("has_computers", False)),
             adjacent_seat_pairs=adjacent_pairs_value,
+            # --- START OF FIX: Ensure building_name is read ---
+            building_name=data.get("building_name"),
+            # --- END OF FIX ---
         )
 
 
@@ -147,6 +179,25 @@ class Instructor:
     email: Optional[str] = None
     department: Optional[str] = None
     availability: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts the Instructor object to a dictionary."""
+        d = asdict(self)
+        d["id"] = str(self.id)
+        return d
+
+    @classmethod
+    def from_backend_data(cls, data: Dict[str, Any]) -> "Instructor":
+        """Create Instructor from backend data for consistency."""
+        id_value = data["id"]
+        uuid_obj = UUID(str(id_value)) if not isinstance(id_value, UUID) else id_value
+        return cls(
+            id=uuid_obj,
+            name=data.get("name", ""),
+            email=data.get("email"),
+            department=data.get("department"),
+            availability=data.get("availability", {}),
+        )
 
 
 @dataclass
@@ -218,6 +269,12 @@ class Invigilator:
                 f"Invigilator {self.id} max_students_per_exam must be >= 1"
             )
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts the Invigilator object to a dictionary."""
+        d = asdict(self)
+        d["id"] = str(self.id)
+        return d
+
     @classmethod
     def from_backend_data(cls, data: Dict[str, Any]) -> "Invigilator":
         """Create Invigilator from backend data"""
@@ -227,9 +284,14 @@ class Invigilator:
         else:
             uuid_obj = UUID(str(id_value))
 
+        # --- START OF FIX: Use the name provided by the data mapper ---
+        # The data_preparation_service now correctly constructs the full name.
+        full_name = data.get("name", f"Staff {data.get('staff_number', '')}")
+        # --- END OF FIX ---
+
         return cls(
             id=uuid_obj,
-            name=data.get("name", f"Staff {data.get('staff_number', '')}"),
+            name=full_name,
             email=data.get("email"),
             department=data.get("department"),
             can_invigilate=data.get("can_invigilate", True),
@@ -266,7 +328,9 @@ class Exam:
     is_practical: bool = False
     morning_only: bool = False
     actual_student_count: int = 0
+    department_name: Optional[str] = None
     prerequisite_exams: Set[UUID] = field(default_factory=set)
+    instructor_ids: Set[UUID] = field(default_factory=set)
 
     def __post_init__(self):
         """Initialize internal student set"""
@@ -292,20 +356,31 @@ class Exam:
         return self.duration_minutes
 
     @property
-    def instructor_id(self) -> Optional[UUID]:
-        return getattr(self, "_instructor_id", None)
-
-    @instructor_id.setter
-    def instructor_id(self, value: Optional[UUID]):
-        self._instructor_id = value
-
-    @property
     def allowed_rooms(self) -> Set[UUID]:
         return getattr(self, "_allowed_rooms", set())
 
     @allowed_rooms.setter
     def allowed_rooms(self, value: Set[UUID]):
         self._allowed_rooms = value
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts the Exam object to a dictionary."""
+        return {
+            "id": str(self.id),
+            "course_id": str(self.course_id),
+            "duration_minutes": self.duration_minutes,
+            "expected_students": self.expected_students,
+            "is_practical": self.is_practical,
+            "morning_only": self.morning_only,
+            "actual_student_count": self.actual_student_count,
+            "prerequisite_exams": [str(e) for e in self.prerequisite_exams],
+            "students": [str(s) for s in self._students],
+            "course_code": getattr(self, "course_code", "N/A"),
+            "course_title": getattr(self, "course_title", "N/A"),
+            "allowed_rooms": [str(r) for r in self.allowed_rooms],
+            "instructor_ids": [str(inst_id) for inst_id in self.instructor_ids],
+            "department_name": self.department_name,
+        }
 
     def set_students(self, student_ids: Set[UUID]) -> None:
         """Set the complete student list for this exam"""
@@ -368,6 +443,17 @@ class Exam:
 
             exam.set_students(student_uuids)
 
+        # --- START OF FIX: Map department_name and other attributes ---
+        exam.department_name = data.get("department_name")
+        setattr(exam, "course_code", data.get("course_code", "N/A"))
+        setattr(exam, "course_title", data.get("course_title", "N/A"))
+
+        if "instructor_ids" in data and data["instructor_ids"]:
+            exam.instructor_ids = {
+                UUID(str(inst_id)) for inst_id in data["instructor_ids"]
+            }
+        # --- END OF FIX ---
+
         if "actual_student_count" in data:
             # Use actual count if it's higher than expected
             actual_count = int(data["actual_student_count"])
@@ -376,9 +462,6 @@ class Exam:
 
         if "allowed_rooms" in data:
             exam.allowed_rooms = data["allowed_rooms"]
-
-        if "instructor_id" in data:
-            exam.instructor_id = data["instructor_id"]
 
         return exam
 
@@ -404,7 +487,7 @@ class ExamSchedulingProblem:
         # Core data structures
         self.holidays: Set[date] = set()
         self.days: Dict[UUID, Day] = {}
-        self._date_range_configured = False
+        self._date_range_configured = True
         self.deterministic_seed = deterministic_seed
 
         # Entities with UUID keys
@@ -415,6 +498,7 @@ class ExamSchedulingProblem:
         # Course registrations with UUID keys
         self._student_courses: Dict[UUID, Set[UUID]] = defaultdict(set)
         self.course_students: Dict[UUID, Set[UUID]] = defaultdict(set)
+        self.day_timeslot_map: Dict[UUID, Set[UUID]] = defaultdict(set)
 
         # Enhanced invigilator management with UUID keys
         self.instructors: Dict[UUID, Instructor] = {}
@@ -456,6 +540,7 @@ class ExamSchedulingProblem:
         # Caching for performance
         self.timeslots_cache: Optional[Dict[UUID, Timeslot]] = None
         self.timeslot_to_day: Optional[Dict[UUID, Day]] = None
+        self.timeslot_templates: List[Dict[str, Any]] = []
 
     def add_staff(self, staff: Staff) -> None:
         """Add a staff member to the problem"""
@@ -469,101 +554,70 @@ class ExamSchedulingProblem:
             logger.info("Activated basic constraints as fallback")
 
     def _generate_days_with_timeslots(self) -> Dict[UUID, Day]:
-        """Generate days with consistent count and logging - FIXED VERSION"""
+        """
+        FIXED: Generate days with timeslots based on loaded templates using the
+        configured exam period dates.
+        """
         days = {}
         current_date = self.exam_period_start
         days_generated = 0
 
-        target_days = self.exam_days_count if self.exam_days_count else 10
-        logger.info(
-            f"Generating exactly {target_days} weekdays from {self.exam_period_start} to {self.exam_period_end}"
+        # Use the actual exam period to generate weekdays
+        target_days = (
+            self.exam_days_count
+            if self.exam_days_count
+            else ((self.exam_period_end - self.exam_period_start).days + 1)
         )
 
+        logger.info(
+            f"Generating weekdays from {self.exam_period_start} to {self.exam_period_end} "
+            f"(target: {target_days} days)"
+        )
         holidays_set = self.holidays
 
-        # First, try to generate from the specified date range
-        while (
-            days_generated < target_days
-            and current_date <= self.exam_period_end
-            and (current_date - self.exam_period_start).days < 365
-        ):  # Safety limit
-
-            # Only weekdays (Monday=0, Sunday=6), exclude holidays
+        while days_generated < target_days and current_date <= self.exam_period_end:
+            # Only generate for weekdays and non-holidays
             if current_date.weekday() < 5 and current_date not in holidays_set:
-                day = Day(id=uuid4(), date=current_date)
+                day_id = uuid4()
+                day_timeslots = []
+
+                # Create timeslots from the templates
+                for template in self.timeslot_templates:
+                    try:
+                        start_t = time.fromisoformat(template["start_time"])
+                        end_t = time.fromisoformat(template["end_time"])
+                        duration = (end_t.hour - start_t.hour) * 60 + (
+                            end_t.minute - start_t.minute
+                        )
+
+                        slot = Timeslot(
+                            id=uuid4(),
+                            parent_day_id=day_id,
+                            name=template["name"],
+                            start_time=start_t,
+                            end_time=end_t,
+                            duration_minutes=duration,
+                        )
+                        day_timeslots.append(slot)
+                    except (ValueError, KeyError) as e:
+                        logger.error(
+                            f"Skipping invalid timeslot template {template}: {e}"
+                        )
+                        continue
+
+                # Pass the generated timeslots directly to the Day constructor
+                day = Day(id=day_id, date=current_date, timeslots=day_timeslots)
                 days[day.id] = day
+                self.day_timeslot_map[day.id] = {slot.id for slot in day.timeslots}
                 days_generated += 1
-                logger.debug(f"Generated day {days_generated}: {current_date}")
 
             current_date += timedelta(days=1)
 
-        # If we didn't get enough days, extend beyond the original end date
-        if days_generated < target_days:
-            logger.warning(
-                f"Only generated {days_generated} weekdays, need {target_days}. Extending date range."
-            )
-            extra_days_needed = target_days - days_generated
-
-            # Start from day after original end date
-            current_date = self.exam_period_end + timedelta(days=1)
-            extra_days_generated = 0
-
-            while (
-                extra_days_generated < extra_days_needed
-                and (current_date - self.exam_period_start).days < 365
-            ):
-                if current_date.weekday() < 5 and current_date not in holidays_set:
-                    day = Day(id=uuid4(), date=current_date)
-                    days[day.id] = day
-                    extra_days_generated += 1
-                    days_generated += 1
-                    logger.debug(
-                        f"Generated extra day {days_generated}: {current_date}"
-                    )
-
-                current_date += timedelta(days=1)
-
-            # Update the end date to reflect the extension
-            self.exam_period_end = current_date - timedelta(days=1)
-
-        total_timeslots = sum(len(day.timeslots) for day in days.values())
+        # Log actual days generated
         logger.info(
-            f"Generated {len(days)} days with exactly {total_timeslots} timeslots (3 per day)"
+            f"Generated {len(days)} days with {sum(len(day.timeslots) for day in days.values())} "
+            f"total timeslots using exam period {self.exam_period_start} to {self.exam_period_end}"
         )
-
-        # Validate exactly 3 timeslots per day
-        for day in days.values():
-            if len(day.timeslots) != 3:
-                logger.warning(
-                    f"Day {day.id} has {len(day.timeslots)} timeslots, expected 3"
-                )
-                # Fix it by ensuring 3 timeslots
-                while len(day.timeslots) < 3:
-                    # Add missing timeslots
-                    slot_names = ["Morning", "Afternoon", "Evening"]
-                    existing_names = [slot.name for slot in day.timeslots]
-
-                    for name in slot_names:
-                        if name not in existing_names:
-                            # Create a default timeslot for the missing period
-                            if name == "Morning":
-                                start, end = time(9, 0), time(12, 0)
-                            elif name == "Afternoon":
-                                start, end = time(12, 0), time(15, 0)
-                            else:  # Evening
-                                start, end = time(15, 0), time(18, 0)
-
-                            slot = Timeslot(
-                                id=uuid4(),
-                                parent_day_id=day.id,
-                                name=name,
-                                start_time=start,
-                                end_time=end,
-                                duration_minutes=(end.hour - start.hour) * 60,
-                            )
-                            day.timeslots.append(slot)
-                            break
-
         return days
 
     @property
@@ -602,6 +656,19 @@ class ExamSchedulingProblem:
             # Phase 1: Entity loading with validation
             logger.info("📋 PHASE 1: Loading entities...")
             entities_loaded = self._load_entities_with_validation(dataset)
+
+            if hasattr(dataset, "instructors") and dataset.instructors:
+                for instructor_data in dataset.instructors:
+                    try:
+                        instructor = Instructor.from_backend_data(instructor_data)
+                        self.add_instructor(instructor)
+                    except Exception as e:
+                        logger.error(
+                            f"Error loading instructor {instructor_data.get('id', 'unknown')}: {e}"
+                        )
+                logger.info(f"✅ INSTRUCTORS: {len(self.instructors)} loaded")
+            else:
+                logger.warning("🟡 WARNING: No instructors loaded from dataset!")
 
             for entity_type, count in entities_loaded.items():
                 if count == 0:
@@ -646,8 +713,33 @@ class ExamSchedulingProblem:
 
             # This call is now supplemental to the registration data above
             self.populate_exam_students()
-
-            # Phase 4: Day and timeslot configuration
+            if hasattr(dataset, "timeslot_templates") and dataset.timeslot_templates:
+                self.timeslot_templates = dataset.timeslot_templates
+                logger.info(
+                    f"Loaded {len(self.timeslot_templates)} timeslot templates from dataset."
+                )
+            else:
+                logger.warning(
+                    "No timeslot templates in dataset. Falling back to hardcoded defaults."
+                )
+                self.timeslot_templates = [
+                    {
+                        "name": "Morning",
+                        "start_time": "09:00:00",
+                        "end_time": "12:00:00",
+                    },
+                    {
+                        "name": "Afternoon",
+                        "start_time": "12:00:00",
+                        "end_time": "15:00:00",
+                    },
+                    {
+                        "name": "Evening",
+                        "start_time": "15:00:00",
+                        "end_time": "18:00:00",
+                    },
+                ]
+                # Phase 4: Day and timeslot configuration
             logger.info("📋 PHASE 4: Configuring days and timeslots...")
             self._configure_days_and_timeslots(dataset)
 
@@ -1063,23 +1155,27 @@ class ExamSchedulingProblem:
         if dataset.days:
             try:
                 self.days = {
-                    day["id"]: Day(id=day["id"], date=day["date"])
+                    UUID(str(day["id"])): Day(id=UUID(str(day["id"])), date=day["date"])
                     for day in dataset.days
                 }
 
                 # Add timeslots to days
                 for day_data in dataset.days:
-                    day = self.days[day_data["id"]]
-                    for ts_data in day_data["timeslots"]:
+                    day_id = UUID(str(day_data["id"]))
+                    day = self.days[day_id]
+                    day_timeslots = set()
+                    for ts_data in day_data.get("timeslots", []):
                         timeslot = Timeslot(
-                            id=ts_data["id"],
-                            parent_day_id=ts_data["parent_day_id"],
+                            id=UUID(str(ts_data["id"])),
+                            parent_day_id=UUID(str(ts_data["parent_day_id"])),
                             name=ts_data["name"],
                             start_time=ts_data["start_time"],
                             end_time=ts_data["end_time"],
                             duration_minutes=ts_data["duration_minutes"],
                         )
                         day.timeslots.append(timeslot)
+                        day_timeslots.add(timeslot.id)
+                    self.day_timeslot_map[day_id] = day_timeslots
 
                 logger.info(f"Loaded {len(self.days)} days from dataset")
 
@@ -1171,6 +1267,60 @@ class ExamSchedulingProblem:
 
             self._date_range_configured = True
 
+    def get_room_capacity_info(self, room_id: UUID) -> Dict[str, Any]:
+        """Get detailed capacity information for a room"""
+        room = self.rooms.get(room_id)
+        if not room:
+            return {}
+
+        return {
+            "id": room.id,
+            "code": room.code,
+            "normal_capacity": room.capacity,
+            "exam_capacity": room.exam_capacity,
+            "has_computers": room.has_computers,
+            "overbookable": getattr(room, "overbookable", False),
+        }
+
+    def get_exam_student_info(self, exam_id: UUID) -> Dict[str, Any]:
+        """Get detailed student information for an exam"""
+        exam = self.exams.get(exam_id)
+        if not exam:
+            return {}
+
+        return {
+            "id": exam.id,
+            "course_id": exam.course_id,
+            "expected_students": exam.expected_students,
+            "actual_students": len(exam.students) if hasattr(exam, "students") else 0,
+            "duration_minutes": exam.duration_minutes,
+            "is_practical": exam.is_practical,
+            "course_code": getattr(exam, "course_code", "N/A"),
+            "course_title": getattr(exam, "course_title", "N/A"),
+        }
+
+    def get_capacity_utilization_stats(self) -> Dict[str, Any]:
+        """Get capacity utilization statistics for the problem"""
+        total_room_capacity = sum(room.exam_capacity for room in self.rooms.values())
+        total_student_exams = sum(
+            len(exam.students)
+            for exam in self.exams.values()
+            if hasattr(exam, "students")
+        )
+
+        if total_room_capacity == 0:
+            utilization = 0
+        else:
+            utilization = (total_student_exams / total_room_capacity) * 100
+
+        return {
+            "total_room_capacity": total_room_capacity,
+            "total_student_exams": total_student_exams,
+            "utilization_percentage": utilization,
+            "rooms_count": len(self.rooms),
+            "exams_count": len(self.exams),
+        }
+
     def configure_exam_days(self, days_count: int) -> None:
         """Configure the number of exam days and regenerate day structure"""
         if days_count <= 0:
@@ -1182,6 +1332,7 @@ class ExamSchedulingProblem:
         self._generate_days_based_on_period()
 
         self.exam_days_count = days_count
+        self.day_timeslot_map.clear()
         self.days = self._generate_days_with_timeslots()
 
         # CRITICAL FIX: If no days were generated, create default days
@@ -1208,6 +1359,7 @@ class ExamSchedulingProblem:
             day_date = start_date + timedelta(days=i)
             day = Day(id=uuid4(), date=day_date)
             days[day.id] = day
+            self.day_timeslot_map[day.id] = {slot.id for slot in day.timeslots}
 
         logger.info(f"Created {len(days)} default days as fallback")
         return days

@@ -24,6 +24,11 @@ from .data_processing_tasks import (
     bulk_data_import_task,
 )
 
+# Import and re-export post-processing tasks
+from .post_processing_tasks import (
+    enrich_timetable_result_task,
+)
+
 __all__ = [
     # Core celery components
     "celery_app",
@@ -41,4 +46,6 @@ __all__ = [
     "process_csv_upload_task",
     "validate_data_integrity_task",
     "bulk_data_import_task",
+    # Post-processing tasks
+    "enrich_timetable_result_task",
 ]

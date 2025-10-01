@@ -1,6 +1,7 @@
+// frontend/src/pages/Settings.tsx
+
 import React, { useState } from 'react'
 import { 
-  Settings as SettingsIcon, 
   User, 
   Bell, 
   Palette, 
@@ -12,6 +13,7 @@ import {
   Trash2,
   Download,
   Upload
+  // REMOVED: Settings as SettingsIcon
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -19,7 +21,7 @@ import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Switch } from '../components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { Slider } from '../components/ui/slider'
+// REMOVED: Unused 'Slider' import
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Badge } from '../components/ui/badge'
 import { Separator } from '../components/ui/separator'
@@ -130,7 +132,8 @@ function UserProfileSection() {
             <Label>Role</Label>
             <Select
               value={profile.role}
-              onValueChange={(value) => setProfile(prev => ({ ...prev, role: value as any }))}
+              // FIXED: Replaced 'any' with a type assertion
+              onValueChange={(value) => setProfile(prev => ({ ...prev, role: value as UserProfile['role'] }))}
               disabled={!isEditing}
             >
               <SelectTrigger>
@@ -239,7 +242,7 @@ function NotificationSettings() {
 }
 
 function ConstraintTemplates() {
-  const { settings, updateSettings } = useAppStore()
+  const { updateSettings } = useAppStore()
   const [selectedTemplate, setSelectedTemplate] = useState('balanced')
 
   const applyTemplate = (templateId: string) => {
@@ -324,7 +327,8 @@ function SystemIntegration() {
     cloudStorage: 'cs-****************************'
   })
 
-  const [connectionStatus, setConnectionStatus] = useState({
+  // FIXED: Removed unused 'setConnectionStatus'
+  const [connectionStatus] = useState({
     sisIntegration: 'connected',
     emailService: 'connected',
     cloudStorage: 'disconnected'
@@ -453,7 +457,11 @@ function DangerZone() {
 }
 
 export function Settings() {
-  const { settings } = useAppStore()
+  const { settings, updateSettings } = useAppStore()
+
+  const handleThemeChange = (theme: 'light' | 'dark') => {
+    updateSettings({ theme })
+  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -496,7 +504,7 @@ export function Settings() {
                   <Label className="font-medium">Theme</Label>
                   <p className="text-sm text-gray-500">Choose between light and dark themes</p>
                 </div>
-                <Select value={settings.theme} onValueChange={() => {}}>
+                <Select value={settings.theme} onValueChange={(value: 'light' | 'dark') => handleThemeChange(value)}>
                   <SelectTrigger className="w-32">
                     <SelectValue />
                   </SelectTrigger>

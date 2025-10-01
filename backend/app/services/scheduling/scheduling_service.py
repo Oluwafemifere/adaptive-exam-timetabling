@@ -1,4 +1,4 @@
-# backend/app/services/scheduling/scheduling_management_service.py
+# backend/app/services/scheduling/scheduling_service.py
 """
 Service for managing the lifecycle of timetable scheduling jobs.
 Handles job creation, task dispatching, and status retrieval.
@@ -17,7 +17,7 @@ from ...tasks import generate_timetable_task
 logger = logging.getLogger(__name__)
 
 
-class SchedulingManagementService:
+class SchedulingService:
     """Manages timetable generation jobs."""
 
     def __init__(self, session: AsyncSession):
@@ -74,7 +74,7 @@ class SchedulingManagementService:
             )
             await self.session.commit()
 
-            # Step 3: Dispatch the Celery task with the correct configuration_id.
+            # Step 3: Dispatch the Celery task with all required arguments.
             task_signature = generate_timetable_task.s(
                 job_id=str(job_id),
                 session_id=str(session_id),

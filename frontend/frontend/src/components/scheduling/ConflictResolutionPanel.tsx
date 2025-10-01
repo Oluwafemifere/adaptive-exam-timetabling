@@ -1,4 +1,5 @@
-import React from 'react'
+// src/components/scheduling/ConflictResolutionPanel.tsx
+
 import { 
   AlertTriangle, 
   CheckCircle, 
@@ -17,7 +18,7 @@ import { cn } from '../ui/utils'
 
 interface ConflictItemProps {
   conflict: Conflict
-  onResolve: (conflictId: string, resolution?: any) => void
+  onResolve: (conflictId: string, resolution?: Record<string, boolean>) => void
   isResolving: boolean
 }
 
@@ -59,7 +60,7 @@ function ConflictItem({ conflict, onResolve, isResolving }: ConflictItemProps) {
                   <Badge variant={conflict.type === 'hard' ? "destructive" : "secondary"}>
                     {conflict.type.toUpperCase()}
                   </Badge>
-                  <Badge variant="outline" className={getSeverityColor(conflict.severity, conflict.type)}>
+                  <Badge variant="outline" className={cn(getSeverityColor(conflict.severity, conflict.type))}>
                     {conflict.severity}
                   </Badge>
                   {conflict.autoResolvable && (
@@ -80,7 +81,7 @@ function ConflictItem({ conflict, onResolve, isResolving }: ConflictItemProps) {
             <div className="flex flex-wrap gap-1">
               {conflict.examIds.map((examId) => (
                 <Badge key={examId} variant="outline" className="text-xs">
-                  {examId}
+                  {examId.substring(0, 8)}...
                 </Badge>
               ))}
             </div>
@@ -104,7 +105,7 @@ function ConflictItem({ conflict, onResolve, isResolving }: ConflictItemProps) {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => onResolve(conflict.id)}
+                // onClick={() => onResolve(conflict.id)} // Manual resolve would open a modal
                 disabled={isResolving}
                 className="h-7 text-xs"
               >
@@ -127,6 +128,7 @@ function ConflictItem({ conflict, onResolve, isResolving }: ConflictItemProps) {
   )
 }
 
+// ... (ConflictStats component remains the same)
 interface ConflictStatsProps {
   conflicts: Conflict[]
 }
@@ -167,13 +169,12 @@ export function ConflictResolutionPanel({
 }: ConflictResolutionPanelProps) {
   const resolveMutation = useResolveConflict()
 
-  const handleResolveConflict = (conflictId: string, resolution?: any) => {
+  const handleResolveConflict = (conflictId: string, resolution: Record<string, boolean> = {}) => {
     resolveMutation.mutate({ conflictId, resolution })
   }
 
   const autoResolvableCount = conflicts.filter(c => c.autoResolvable).length
   const sortedConflicts = [...conflicts].sort((a, b) => {
-    // Sort by type (hard first), then severity (high first)
     if (a.type !== b.type) {
       return a.type === 'hard' ? -1 : 1
     }
@@ -205,10 +206,8 @@ export function ConflictResolutionPanel({
           </div>
         ) : (
           <>
-            {/* Conflict Statistics */}
             <ConflictStats conflicts={conflicts} />
             
-            {/* Auto-resolve all button */}
             {autoResolvableCount > 0 && (
               <>
                 <Button
@@ -223,7 +222,6 @@ export function ConflictResolutionPanel({
               </>
             )}
 
-            {/* Conflicts List */}
             <ScrollArea className="h-[400px] -mx-4 px-4">
               <div className="space-y-3">
                 {sortedConflicts.map((conflict) => (

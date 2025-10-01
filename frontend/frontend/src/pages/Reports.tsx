@@ -1,3 +1,5 @@
+// frontend/src/pages/Reports.tsx
+
 import React, { useState } from 'react'
 import { 
   FileText, 
@@ -6,10 +8,8 @@ import {
   Users, 
   Building2, 
   AlertTriangle,
-  Eye,
-  Trash2,
-  Filter,
-  RefreshCw
+  Trash2
+  // REMOVED: Eye, Filter, RefreshCw
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -20,7 +20,10 @@ import { Input } from '../components/ui/input'
 import { Checkbox } from '../components/ui/checkbox'
 import { Progress } from '../components/ui/progress'
 import { useGenerateReport } from '../hooks/useApi'
-import { cn } from '../components/ui/utils'
+// REMOVED: Unused 'cn' import
+
+// Define a more specific type for report options
+type ReportOptions = Record<string, string | boolean | number | undefined>;
 
 interface ReportTemplate {
   id: string
@@ -92,6 +95,20 @@ const reportTemplates: ReportTemplate[] = [
   }
 ]
 
+interface ReportTemplate {
+  id: string
+  name: string
+  description: string
+  icon: React.ElementType
+  type: 'student' | 'room' | 'conflicts' | 'instructor'
+  options: Array<{
+    name: string
+    label: string
+    type: 'text' | 'select' | 'checkbox' | 'date'
+    required?: boolean
+    options?: string[]
+  }>
+}
 interface GeneratedReport {
   id: string
   name: string
@@ -109,13 +126,15 @@ function ReportTemplateCard({
   isGenerating 
 }: { 
   template: ReportTemplate
-  onGenerate: (template: ReportTemplate, options: any) => void
+  // FIXED: Replaced 'any' with the specific 'ReportOptions' type
+  onGenerate: (template: ReportTemplate, options: ReportOptions) => void
   isGenerating: boolean 
 }) {
-  const [options, setOptions] = useState<Record<string, any>>({})
+  const [options, setOptions] = useState<ReportOptions>({})
   const Icon = template.icon
 
-  const handleOptionChange = (optionName: string, value: any) => {
+  // FIXED: Replaced 'any' with a more specific type for the value
+  const handleOptionChange = (optionName: string, value: string | boolean | number) => {
     setOptions(prev => ({ ...prev, [optionName]: value }))
   }
 
@@ -142,7 +161,7 @@ function ReportTemplateCard({
               
               {option.type === 'select' && (
                 <Select
-                  value={options[option.name] || option.options?.[0]}
+                  value={String(options[option.name] || option.options?.[0])}
                   onValueChange={(value) => handleOptionChange(option.name, value)}
                 >
                   <SelectTrigger className="w-full">
@@ -159,7 +178,7 @@ function ReportTemplateCard({
               {option.type === 'text' && (
                 <Input
                   placeholder={`Enter ${option.label.toLowerCase()}`}
-                  value={options[option.name] || ''}
+                  value={String(options[option.name] || '')}
                   onChange={(e) => handleOptionChange(option.name, e.target.value)}
                 />
               )}
@@ -168,7 +187,7 @@ function ReportTemplateCard({
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     id={`${template.id}-${option.name}`}
-                    checked={options[option.name] || false}
+                    checked={Boolean(options[option.name] || false)}
                     onCheckedChange={(checked) => handleOptionChange(option.name, checked)}
                   />
                   <Label 
@@ -343,7 +362,8 @@ export function Reports() {
     }
   ])
 
-  const handleGenerateReport = async (template: ReportTemplate, options: any) => {
+  // FIXED: Replaced 'any' with specific 'ReportOptions' type
+  const handleGenerateReport = async (template: ReportTemplate, options: ReportOptions) => {
     const reportId = Math.random().toString(36).substr(2, 9)
     
     // Add to generated reports with generating status
@@ -359,7 +379,8 @@ export function Reports() {
     setGeneratedReports(prev => [newReport, ...prev])
     
     try {
-      await generateReportMutation.mutateAsync({ type: template.type, options })
+      // FIXED: Changed 'type' to 'report_type'
+      await generateReportMutation.mutateAsync({ report_type: template.type, options })
       
       // Update to completed status
       setGeneratedReports(prev => 
@@ -370,6 +391,8 @@ export function Reports() {
         )
       )
     } catch (error) {
+      // FIXED: Use the error variable, e.g., for logging
+      console.error("Failed to generate report:", error);
       // Update to failed status
       setGeneratedReports(prev => 
         prev.map(report => 

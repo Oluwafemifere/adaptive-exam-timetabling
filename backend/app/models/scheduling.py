@@ -21,13 +21,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
-from sqlalchemy.ext.associationproxy import association_proxy
+from sqlalchemy.ext.associationproxy import AssociationProxy, association_proxy
 from datetime import date, time, datetime
 from .base import Base, TimestampMixin
 
 # Use TYPE_CHECKING to avoid circular imports
 if TYPE_CHECKING:
-    from .academic import AcademicSession, Course, Department
+    from .academic import AcademicSession, Course, Department, CourseInstructor
     from .infrastructure import Room, ExamAllowedRoom
     from .versioning import TimetableVersion
     from .users import User
@@ -53,14 +53,12 @@ class Exam(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-
     course_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("courses.id"), nullable=False
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
     )
-    # REMOVED: time_slot_id and exam_date are now in TimetableAssignment
     duration_minutes: Mapped[int] = mapped_column(Integer, default=180, nullable=False)
     expected_students: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     requires_special_arrangements: Mapped[bool] = mapped_column(
@@ -74,11 +72,8 @@ class Exam(Base):
     )
     is_common: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     morning_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    instructor_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("staff.id"), nullable=True
-    )
+    # REMOVED: instructor_id is no longer on the Exam model.
 
-    # Use string references to avoid circular imports
     course: Mapped["Course"] = relationship("Course", back_populates="exams")
     session: Mapped["AcademicSession"] = relationship(
         "AcademicSession", back_populates="exams"
@@ -93,9 +88,6 @@ class Exam(Base):
     allowed_rooms: Mapped[List["ExamAllowedRoom"]] = relationship(back_populates="exam")
     timetable_assignments: Mapped[List["TimetableAssignment"]] = relationship(
         back_populates="exam"
-    )
-    instructor: Mapped[Optional["Staff"]] = relationship(
-        "Staff", foreign_keys=[instructor_id], back_populates="taught_exams"
     )
 
     # Self-referencing many-to-many relationship for prerequisites
@@ -189,8 +181,11 @@ class Staff(Base, TimestampMixin):
     user: Mapped[Optional["User"]] = relationship(
         "User", back_populates="staff", uselist=False
     )
-    taught_exams: Mapped[List["Exam"]] = relationship(
-        "Exam", foreign_keys="Exam.instructor_id", back_populates="instructor"
+    course_associations: Mapped[List["CourseInstructor"]] = relationship(
+        back_populates="staff"
+    )
+    taught_courses: AssociationProxy[List["Course"]] = association_proxy(
+        "course_associations", "course"
     )
 
 

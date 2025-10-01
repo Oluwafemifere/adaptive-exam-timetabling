@@ -22,11 +22,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import ARRAY
 
-from sqlalchemy.ext.associationproxy import association_proxy
+from sqlalchemy.ext.associationproxy import association_proxy, AssociationProxy
 
 # Remove direct imports that cause circular dependencies
 
@@ -95,6 +95,25 @@ class AcademicSession(Base, TimestampMixin):
         Index("idx_academic_sessions_active", "is_active"),
         Index("idx_academic_sessions_archived_at", "archived_at"),
     )
+
+
+class CourseInstructor(Base, TimestampMixin):
+    __tablename__ = "course_instructors"
+
+    course_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("courses.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    staff_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("staff.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    # Relationships to the main tables
+    course: Mapped["Course"] = relationship(back_populates="instructor_associations")
+    staff: Mapped["Staff"] = relationship(back_populates="course_associations")
 
 
 class Department(Base, TimestampMixin):
@@ -177,7 +196,6 @@ class Course(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-
     code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     credit_units: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -198,6 +216,7 @@ class Course(Base):
     is_active: Mapped[Optional[bool]] = mapped_column(
         Boolean, default=True, nullable=True
     )
+    # REMOVED: The old instructor_id column is no longer needed.
 
     department: Mapped["Department"] = relationship(
         "Department", back_populates="courses"
@@ -205,6 +224,14 @@ class Course(Base):
     exams: Mapped[List["Exam"]] = relationship("Exam", back_populates="course")
     registrations: Mapped[List["CourseRegistration"]] = relationship(
         "CourseRegistration", back_populates="course"
+    )
+
+    # NEW: Relationship to handle multiple instructors via the association model.
+    instructor_associations: Mapped[List["CourseInstructor"]] = relationship(
+        back_populates="course", cascade="all, delete-orphan"
+    )
+    instructors: AssociationProxy[List["Staff"]] = association_proxy(
+        "instructor_associations", "staff"
     )
 
 

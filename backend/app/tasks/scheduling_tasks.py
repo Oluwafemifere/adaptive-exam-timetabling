@@ -9,16 +9,18 @@ REFACTORED FOR PURE CP-SAT SOLVER IMPLEMENTATION.
 import asyncio
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from uuid import UUID
 from datetime import datetime, date
 from celery import Task
 
 # --- Core Application Imports ---
 from .celery_app import celery_app, _run_coro_in_new_loop
+from .post_processing_tasks import (
+    enrich_timetable_result_task,
+)  # Import the new task
 from ..services.scheduling.data_preparation_service import ExactDataFlowService
 from ..services.notification.websocket_manager import publish_job_update
-from ..models.jobs import TimetableJob
 from ..core.exceptions import SchedulingError
 from ..core.config import settings
 
@@ -28,7 +30,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
 )
-from sqlalchemy import update, text
+from sqlalchemy import text
 from sqlalchemy.pool import NullPool
 
 # --- SCHEDULING ENGINE IMPORTS (CP-SAT ONLY) ---
@@ -119,19 +121,6 @@ def generate_timetable_task(
         raise
 
 
-async def _update_job_status(
-    db: AsyncSession, job_id: UUID, status: str, started_at: Optional[datetime] = None
-) -> None:
-    """Updates the status and start time of a job."""
-    values: Dict[str, Any] = {"status": status}
-    if started_at:
-        values["started_at"] = started_at
-
-    query = update(TimetableJob).where(TimetableJob.id == job_id).values(**values)
-    await db.execute(query)
-    await db.commit()
-
-
 async def _async_generate_timetable(
     task: SchedulingTask,
     job_id: str,
@@ -146,12 +135,16 @@ async def _async_generate_timetable(
     async_session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
+    job_uuid = UUID(job_id)
 
     try:
         async with async_session_factory() as db:
+            # Use the DB function to update status
             await db.execute(
-                text("SELECT exam_system.update_job_status(:job_id, 'running', true)"),
-                {"job_id": UUID(job_id)},
+                text(
+                    "SELECT exam_system.update_job_status(:p_job_id, :p_status, :p_set_started_at)"
+                ),
+                {"p_job_id": job_uuid, "p_status": "running", "p_set_started_at": True},
             )
             await db.commit()
 
@@ -163,7 +156,7 @@ async def _async_generate_timetable(
                 UUID(session_id)
             )
 
-            assert options
+            assert options is not None
             start_date_str = options.get("start_date")
             end_date_str = options.get("end_date")
 
@@ -189,6 +182,31 @@ async def _async_generate_timetable(
             )
             await problem.load_from_backend(dataset)
 
+            # --- START: GATHER LOOKUP METADATA FOR ENRICHMENT ---
+            # This data will be saved alongside the raw solution so a
+            # post-processing task can enrich the results without
+            # rebuilding the problem state.
+            lookup_metadata = {
+                "exams": {str(e.id): e.to_dict() for e in problem.exams.values()},
+                "rooms": {str(r.id): r.to_dict() for r in problem.rooms.values()},
+                "invigilators": {
+                    str(i.id): i.to_dict() for i in problem.invigilators.values()
+                },
+                "instructors": {
+                    str(i.id): i.to_dict() for i in problem.instructors.values()
+                },
+                "timeslots": {
+                    str(t.id): t.to_dict() for t in problem.timeslots.values()
+                },
+                "days": {str(d.id): d.to_dict() for d in problem.days.values()},
+                "timeslot_to_day_map": {
+                    str(ts_id): str(day_id)
+                    for day_id, ts_set in problem.day_timeslot_map.items()
+                    for ts_id in ts_set
+                },
+            }
+            # --- END: GATHER LOOKUP METADATA ---
+
             await task.update_progress(
                 25, "initializing_solver", "Initializing CP-SAT solver..."
             )
@@ -205,48 +223,53 @@ async def _async_generate_timetable(
             await task.update_progress(85, "post_processing", "Processing solution...")
             solution.update_statistics()
 
-            objective_value = solution.objective_value
-            completion_percentage = solution.get_completion_percentage()
-            backend_solution_dict = solution.to_dict()
-            statistics_dict = solution.statistics.to_dict()
+            # --- Prepare payload with RAW solution and metadata ---
+            results_payload = {
+                "solution": solution.to_dict(),  # Raw solution
+                "lookup_metadata": lookup_metadata,  # Data for enrichment task
+                "objective_value": solution.objective_value,
+                "completion_percentage": solution.get_completion_percentage(),
+                "statistics": solution.statistics.to_dict(),
+                "is_enriched": False,
+            }
 
             await task.update_progress(
                 90, "saving_results", "Saving results to database..."
             )
-            results_payload = {
-                "solution": backend_solution_dict,
-                "objective_value": objective_value,
-                "completion_percentage": completion_percentage,
-                "statistics": statistics_dict,
-            }
+            # Use the DB function to save results
             await db.execute(
-                text("SELECT exam_system.update_job_results(:job_id, :results)"),
-                {"job_id": UUID(job_id), "results": json.dumps(results_payload)},
+                text(
+                    "SELECT exam_system.update_job_results(:p_job_id, :p_results_data)"
+                ),
+                {
+                    "p_job_id": job_uuid,
+                    "p_results_data": json.dumps(results_payload, default=str),
+                },
             )
             await db.commit()
 
+            # --- START: CHAIN THE ENRICHMENT TASK ---
+            logger.info(f"Chaining enrichment task for job {job_id}")
+            enrich_timetable_result_task.delay(job_id=job_id)
+            # --- END: CHAIN THE ENRICHMENT TASK ---
+
+            # Update websocket with initial completion, enrichment will send final update
             await publish_job_update(
                 job_id,
                 {
-                    "status": "completed",
-                    "progress": 100,
-                    "phase": "completed",
-                    "message": f"Generated timetable with {completion_percentage:.1f}% completion.",
-                    "result": results_payload,
+                    "status": "post_processing",  # New status
+                    "progress": 95,
+                    "phase": "pending_enrichment",
+                    "message": "Timetable generated, preparing final view.",
                 },
             )
-
-            # --- START OF FIX ---
-            # REMOVED the redundant call that was causing the status to revert to "running"
-            # await task.update_progress(100, "completed", "Timetable generation complete!")
-            # --- END OF FIX ---
 
             return {
                 "success": True,
                 "job_id": job_id,
                 "solution_id": str(solution.id),
-                "objective_value": objective_value,
-                "completion_percentage": completion_percentage,
+                "objective_value": results_payload["objective_value"],
+                "completion_percentage": results_payload["completion_percentage"],
                 "total_assignments": len(solution.assignments),
             }
 
@@ -256,44 +279,17 @@ async def _async_generate_timetable(
             exc_info=True,
         )
         async with async_session_factory() as error_db:
-            await _update_job_failed(error_db, UUID(job_id), str(e))
-
+            # Use the DB function to mark the job as failed
+            await error_db.execute(
+                text(
+                    "SELECT exam_system.update_job_failed(:p_job_id, :p_error_message)"
+                ),
+                {"p_job_id": job_uuid, "p_error_message": str(e)},
+            )
+            await error_db.commit()
         raise SchedulingError(f"Timetable generation failed: {e}")
     finally:
         await engine.dispose()
-
-
-async def _update_job_results(
-    db: AsyncSession, job_id: UUID, results: Dict[str, Any]
-) -> None:
-    """Update job with results data"""
-    query = (
-        update(TimetableJob)
-        .where(TimetableJob.id == job_id)
-        .values(
-            status="completed",
-            progress_percentage=100,
-            result_data=results,
-            completed_at=datetime.utcnow(),
-        )
-    )
-    await db.execute(query)
-    await db.commit()
-
-
-async def _update_job_failed(
-    db: AsyncSession, job_id: UUID, error_message: str
-) -> None:
-    """Update job as failed"""
-    query = (
-        update(TimetableJob)
-        .where(TimetableJob.id == job_id)
-        .values(
-            status="failed", error_message=error_message, completed_at=datetime.utcnow()
-        )
-    )
-    await db.execute(query)
-    await db.commit()
 
 
 __all__ = [

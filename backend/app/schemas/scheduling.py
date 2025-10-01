@@ -145,8 +145,16 @@ class ConflictAnalysisResponse(BaseModel):
     data: Dict[str, Any]
 
 
-class SchedulingJobResponse(BaseModel):
-    model_config = MODEL_CONFIG
+# --- NEWLY ADDED SCHEMAS ---
 
-    success: bool
-    job: Any  # usually TimetableJobRead
+
+class ManualTimetableEditCreate(BaseModel):
+    exam_id: UUID
+    old_values: Dict[str, Any]
+    new_values: Dict[str, Any]
+    reason: str = Field(..., min_length=10)
+
+
+class TimetableValidationRequest(BaseModel):
+    version_id: UUID
+    assignments: List[Dict[str, Any]]

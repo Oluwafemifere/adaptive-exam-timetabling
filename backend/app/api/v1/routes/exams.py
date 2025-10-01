@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from ....api.deps import db_session, current_user
 from ....models.users import User
 from ....services.data_management.core_data_service import CoreDataService
-from ....services.data_retrieval.unified_data_retrieval import UnifiedDataService
+from ....services.data_retrieval import DataRetrievalService
 from ....schemas.scheduling import ExamCreate, ExamRead, ExamUpdate
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +29,7 @@ async def create_exam(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Failed to create exam."),
         )
-    data_service = UnifiedDataService(db)
+    data_service = DataRetrievalService(db)
     created_exam = await data_service.get_entity_by_id("exam", result["id"])
     return created_exam
 
@@ -42,7 +42,7 @@ async def list_exams(
     user: User = Depends(current_user),
 ):
     """Retrieve a paginated list of exams."""
-    service = UnifiedDataService(db)
+    service = DataRetrievalService(db)
     result = await service.get_paginated_entities(
         "exams", page=page, page_size=page_size
     )
@@ -57,7 +57,7 @@ async def get_exam(
     user: User = Depends(current_user),
 ):
     """Retrieve a single exam by its ID."""
-    service = UnifiedDataService(db)
+    service = DataRetrievalService(db)
     exam = await service.get_entity_by_id("exam", exam_id)
     if not exam:
         raise HTTPException(
@@ -83,7 +83,7 @@ async def update_exam(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Failed to update exam."),
         )
-    data_service = UnifiedDataService(db)
+    data_service = DataRetrievalService(db)
     updated_exam = await data_service.get_entity_by_id("exam", exam_id)
     return updated_exam
 

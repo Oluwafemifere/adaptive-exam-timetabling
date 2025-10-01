@@ -5,7 +5,7 @@ from datetime import datetime, date, time, timedelta
 import math
 from typing import Dict, List, Set, Optional, Any, Tuple
 from uuid import UUID, uuid4
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from collections import defaultdict
 import logging
 import uuid
@@ -31,7 +31,7 @@ class ProblemModelCompatibleDataset:
     # Days and timeslots structure
     days: List[Dict[str, Any]] = field(default_factory=list)
     timeslots: List[Dict[str, Any]] = field(default_factory=list)
-
+    timeslot_templates: List[Dict[str, Any]] = field(default_factory=list)
     # Relationships - critical for problem model
     course_registrations: List[Dict[str, Any]] = field(default_factory=list)
     student_exam_mappings: Dict[str, Set[str]] = field(
@@ -49,25 +49,21 @@ class ExactDataMapper:
     @staticmethod
     def map_room_to_problem_model(db_room: Dict) -> Dict[str, Any]:
         """Map database room to EXACT problem model format"""
-        # Handle adjacent_seat_pairs carefully as it may be null or an object
         adjacent_pairs = db_room.get("adjacent_seat_pairs")
         if not isinstance(adjacent_pairs, list):
-            # If it's null or a dict like {"adjacent_rooms": [...]}, default to empty list.
-            # The problem model expects a List[Tuple[int, int]] which this data doesn't match.
             adjacent_pairs = []
 
         return {
-            # Required fields - must match Room class in problem_model.py
             "id": UUID(str(db_room["id"])),
             "code": db_room.get("code", ""),
             "capacity": db_room.get("capacity", 0),
             "exam_capacity": db_room.get("exam_capacity", db_room.get("capacity", 0)),
-            # Optional fields
             "has_computers": db_room.get("has_computers", False),
             "adjacent_seat_pairs": adjacent_pairs,
-            # Additional fields for reference
             "name": db_room.get("name", ""),
+            # --- START OF FIX: Correctly map building_name ---
             "building_name": db_room.get("building_name"),
+            # --- END OF FIX ---
             "has_projector": db_room.get("has_projector", False),
             "has_ac": db_room.get("has_ac", False),
             "overbookable": db_room.get("overbookable", False),
@@ -77,24 +73,37 @@ class ExactDataMapper:
     @staticmethod
     def map_invigilator_to_problem_model(db_staff: Dict) -> Dict[str, Any]:
         """Map database staff to EXACT problem model invigilator format"""
+        # --- START OF FIX: Construct name from first_name and last_name ---
+        first_name = db_staff.get("first_name", "")
+        last_name = db_staff.get("last_name", "")
+        full_name = f"{first_name} {last_name}".strip()
+        # --- END OF FIX ---
+
         return {
-            # Required fields - must match Invigilator class in problem_model.py
             "id": UUID(str(db_staff["id"])),
-            "name": db_staff.get(
-                "name", f"Staff {db_staff.get('staff_number', 'Unknown')}"
-            ),
-            # Optional fields with defaults
+            # Use the constructed full name
+            "name": full_name or f"Staff {db_staff.get('staff_number', 'Unknown')}",
             "email": db_staff.get("email"),
             "department": db_staff.get("department"),
             "can_invigilate": db_staff.get("can_invigilate", True),
             "max_concurrent_exams": db_staff.get("max_concurrent_exams", 1),
             "max_students_per_exam": db_staff.get("max_students_per_exam", 50),
             "availability": {},
-            # Additional staff fields
             "staff_number": db_staff.get("staff_number"),
             "staff_type": db_staff.get("staff_type"),
             "max_daily_sessions": db_staff.get("max_daily_sessions", 2),
             "max_consecutive_sessions": db_staff.get("max_consecutive_sessions", 1),
+        }
+
+    @staticmethod
+    def map_instructor_to_problem_model(db_instructor: Dict) -> Dict[str, Any]:
+        """Map database instructor to EXACT problem model format."""
+        return {
+            "id": UUID(str(db_instructor["id"])),
+            "name": db_instructor.get("name", "Unknown Instructor"),
+            "email": db_instructor.get("email"),
+            "department": db_instructor.get("department"),
+            "availability": db_instructor.get("availability", {}),
         }
 
     @staticmethod
@@ -208,7 +217,13 @@ class ExactDataMapper:
                 "status": db_exam.get("status", "pending"),
                 "prerequisite_exams": set(),
                 "allowed_rooms": set(),
-                "instructor_id": None,
+                # --- START OF FIX: Correctly map instructor_ids and department_name ---
+                "instructor_ids": {
+                    UUID(str(instr_id))
+                    for instr_id in db_exam.get("instructor_ids", [])
+                },
+                "department_name": db_exam.get("department_name"),
+                # --- END OF FIX ---
             }
 
             # Validate student count consistency
@@ -426,6 +441,12 @@ class ExactDataFlowService:
                 continue
         mapped_entities["invigilators"] = invigilators
 
+        # Map instructors
+        instructors = [
+            self.mapper.map_instructor_to_problem_model(instr)
+            for instr in raw_data.get("instructors", [])
+        ]
+        mapped_entities["instructors"] = instructors
         # Validate we have invigilators if we have exams
         if len(exams) > 0 and len(invigilators) == 0:
             logger.warning(
@@ -578,6 +599,25 @@ class ExactDataFlowService:
             dataset.student_exam_mappings = relationships.get(
                 "student_exam_mappings", defaultdict(set)
             )
+
+            # Set timeslot_templates with default values if not provided
+            dataset.timeslot_templates = [
+                {
+                    "name": "Morning",
+                    "start_time": "09:00:00",
+                    "end_time": "12:00:00",
+                },
+                {
+                    "name": "Afternoon",
+                    "start_time": "12:00:00",
+                    "end_time": "15:00:00",
+                },
+                {
+                    "name": "Evening",
+                    "start_time": "15:00:00",
+                    "end_time": "18:00:00",
+                },
+            ]
 
             dataset.metadata = {
                 "created_at": datetime.now().isoformat(),

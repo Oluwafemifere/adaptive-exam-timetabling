@@ -5,26 +5,28 @@ Celery tasks for notification operations including email sending,
 WebSocket broadcasts, and system-wide notifications.
 """
 
-import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 from uuid import UUID
 from datetime import datetime, timedelta
 
-from .celery_app import celery_app
+from .celery_app import celery_app, _run_coro_in_new_loop
 from ..services.notification.email_service import EmailService
 from ..services.notification.websocket_manager import (
     connection_manager,
     publish_job_update,
 )
-
-# REMOVED: from ..services.data_retrieval.user_data import UserData
-# REMOVED: from ..services.data_retrieval.audit_data import AuditData
-from ..models.users import User
-from ..models.jobs import TimetableJob
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, text  # MODIFIED: Imported text
-from ..database import db_manager
+from ..models.users import (
+    User,
+)  # Keep for email sending logic if user details are needed
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    create_async_engine,
+    async_sessionmaker,
+)
+from sqlalchemy import select, delete, text
+from ..core.config import settings
+from sqlalchemy.pool import NullPool
 from celery import Task
 
 logger = logging.getLogger(__name__)
@@ -48,21 +50,16 @@ def send_email_notification_task(
             state="PROGRESS",
             meta={"current": 10, "total": 100, "phase": "preparing"},
         )
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(
-                _async_send_email_notification(
-                    self,
-                    recipient_email,
-                    subject,
-                    template_name,
-                    template_data,
-                    sender_email,
-                )
+        return _run_coro_in_new_loop(
+            _async_send_email_notification(
+                self,
+                recipient_email,
+                subject,
+                template_name,
+                template_data,
+                sender_email,
             )
-        finally:
-            loop.close()
+        )
     except Exception as exc:
         logger.error(f"Email notification failed for {recipient_email}: {exc}")
         raise exc
@@ -77,40 +74,39 @@ async def _async_send_email_notification(
     sender_email: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Async implementation of email notification"""
-    async with db_manager.get_session() as db:
-        try:
-            email_service = EmailService()
-            task.update_state(
-                state="PROGRESS",
-                meta={"current": 30, "total": 100, "phase": "rendering"},
-            )
-            email_content = await email_service._render_template(
-                template_name, template_data
-            )
-            task.update_state(
-                state="PROGRESS", meta={"current": 60, "total": 100, "phase": "sending"}
-            )
-            send_result = await email_service.send_email(
-                subject=subject,
-                recipients=[recipient_email],
-                template_name=template_name,
-                context=template_data,
-                html_body=email_content,
-            )
-            task.update_state(
-                state="SUCCESS",
-                meta={"current": 100, "total": 100, "phase": "completed"},
-            )
-            return {
-                "success": True,
-                "recipient": recipient_email,
-                "subject": subject,
-                "template": template_name,
-                "send_result": send_result,
-            }
-        except Exception as e:
-            logger.error(f"Error sending email notification: {e}")
-            raise e
+    try:
+        email_service = EmailService()
+        task.update_state(
+            state="PROGRESS",
+            meta={"current": 30, "total": 100, "phase": "rendering"},
+        )
+        email_content = await email_service._render_template(
+            template_name, template_data
+        )
+        task.update_state(
+            state="PROGRESS", meta={"current": 60, "total": 100, "phase": "sending"}
+        )
+        send_result = await email_service.send_email(
+            subject=subject,
+            recipients=[recipient_email],
+            template_name=template_name,
+            context=template_data,
+            html_body=email_content,
+        )
+        task.update_state(
+            state="SUCCESS",
+            meta={"current": 100, "total": 100, "phase": "completed"},
+        )
+        return {
+            "success": True,
+            "recipient": recipient_email,
+            "subject": subject,
+            "template": template_name,
+            "send_result": send_result,
+        }
+    except Exception as e:
+        logger.error(f"Error sending email notification: {e}")
+        raise e
 
 
 @celery_app.task(bind=True, name="send_bulk_notifications")
@@ -128,16 +124,11 @@ def send_bulk_notifications_task(
         self.update_state(
             state="PROGRESS", meta={"current": 0, "total": 100, "phase": "preparing"}
         )
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(
-                _async_send_bulk_notifications(
-                    self, notification_config, user_filter, notification_type
-                )
+        return _run_coro_in_new_loop(
+            _async_send_bulk_notifications(
+                self, notification_config, user_filter, notification_type
             )
-        finally:
-            loop.close()
+        )
     except Exception as exc:
         logger.error(f"Bulk notifications failed: {exc}")
         raise exc
@@ -150,7 +141,10 @@ async def _async_send_bulk_notifications(
     notification_type: str,
 ) -> Dict[str, Any]:
     """Async implementation of bulk notifications"""
-    async with db_manager.get_session() as db:
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with async_session_factory() as db:
         try:
             task.update_state(
                 state="PROGRESS",
@@ -209,6 +203,9 @@ async def _async_send_bulk_notifications(
         except Exception as e:
             logger.error(f"Error in bulk notifications: {e}")
             raise e
+        finally:
+            if engine:
+                await engine.dispose()
 
 
 @celery_app.task(name="notify_job_status_change")
@@ -225,16 +222,11 @@ def notify_job_status_change_task(
         logger.info(
             f"Notifying job status change: {job_id} from {old_status} to {new_status}"
         )
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(
-                _async_notify_job_status_change(
-                    job_id, old_status, new_status, additional_data
-                )
+        return _run_coro_in_new_loop(
+            _async_notify_job_status_change(
+                job_id, old_status, new_status, additional_data
             )
-        finally:
-            loop.close()
+        )
     except Exception as exc:
         logger.error(f"Job status notification failed for {job_id}: {exc}")
         raise exc
@@ -247,14 +239,20 @@ async def _async_notify_job_status_change(
     additional_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Async implementation of job status change notification"""
-    async with db_manager.get_session() as db:
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with async_session_factory() as db:
         try:
             job_uuid = UUID(job_id)
-            query = select(TimetableJob).where(TimetableJob.id == job_uuid)
-            result = await db.execute(query)
-            job = result.scalar_one_or_none()
+            # Use the get_job_status DB function
+            result = await db.execute(
+                text("SELECT exam_system.get_job_status(:p_job_id)"),
+                {"p_job_id": job_uuid},
+            )
+            job_details = result.scalar_one_or_none()
 
-            if not job:
+            if not job_details:
                 logger.warning(f"Job {job_id} not found for status notification")
                 return {"success": False, "error": "Job not found"}
 
@@ -262,14 +260,16 @@ async def _async_notify_job_status_change(
                 job_id,
                 {
                     "status": new_status,
-                    "progress": job.progress_percentage,
-                    "phase": job.solver_phase or "",
+                    "progress": job_details.get("progress_percentage", 0),
+                    "phase": job_details.get("solver_phase", ""),
                     "message": _get_status_message(new_status, additional_data),
                 },
             )
 
             if new_status in ["completed", "failed", "cancelled"]:
-                await _send_job_completion_email(db, job, new_status, additional_data)
+                await _send_job_completion_email(
+                    db, job_details, new_status, additional_data
+                )
 
             return {
                 "success": True,
@@ -283,6 +283,9 @@ async def _async_notify_job_status_change(
         except Exception as e:
             logger.error(f"Error in job status notification: {e}")
             raise e
+        finally:
+            if engine:
+                await engine.dispose()
 
 
 @celery_app.task(name="send_system_maintenance_notification")
@@ -295,16 +298,9 @@ def send_system_maintenance_notification_task(
     """
     try:
         logger.info("Sending system maintenance notifications")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(
-                _async_send_maintenance_notification(
-                    maintenance_config, notification_types
-                )
-            )
-        finally:
-            loop.close()
+        return _run_coro_in_new_loop(
+            _async_send_maintenance_notification(maintenance_config, notification_types)
+        )
     except Exception as exc:
         logger.error(f"System maintenance notification failed: {exc}")
         raise exc
@@ -314,7 +310,10 @@ async def _async_send_maintenance_notification(
     maintenance_config: Dict[str, Any], notification_types: List[str]
 ) -> Dict[str, Any]:
     """Async implementation of system maintenance notification"""
-    async with db_manager.get_session() as db:
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with async_session_factory() as db:
         try:
             if "websocket" in notification_types:
                 await connection_manager.broadcast_system_message(
@@ -340,7 +339,7 @@ async def _async_send_maintenance_notification(
                                 ),
                                 "template_name": "system_maintenance",
                                 "template_data": {
-                                    "user_name": user.get("username", "User"),
+                                    "user_name": user.get("first_name", "User"),
                                     **maintenance_config,
                                 },
                             }
@@ -360,21 +359,21 @@ async def _async_send_maintenance_notification(
         except Exception as e:
             logger.error(f"Error in system maintenance notification: {e}")
             raise e
+        finally:
+            if engine:
+                await engine.dispose()
 
 
 @celery_app.task(name="cleanup_old_notifications")
 def cleanup_old_notifications_task(days_old: int = 30) -> Dict[str, Any]:
     """
     Clean up old notification records and connection data.
+    Note: This task uses a direct ORM delete as a dedicated DB function
+    for this maintenance task is not available.
     """
     try:
         logger.info(f"Cleaning up notifications older than {days_old} days")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(_async_cleanup_old_notifications(days_old))
-        finally:
-            loop.close()
+        return _run_coro_in_new_loop(_async_cleanup_old_notifications(days_old))
     except Exception as exc:
         logger.error(f"Notification cleanup failed: {exc}")
         raise exc
@@ -382,7 +381,10 @@ def cleanup_old_notifications_task(days_old: int = 30) -> Dict[str, Any]:
 
 async def _async_cleanup_old_notifications(days_old: int) -> Dict[str, Any]:
     """Async implementation of notification cleanup"""
-    async with db_manager.get_session() as db:
+    engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with async_session_factory() as db:
         try:
             cutoff_date = datetime.utcnow() - timedelta(days=days_old)
             from ..models.users import UserNotification
@@ -391,6 +393,7 @@ async def _async_cleanup_old_notifications(days_old: int) -> Dict[str, Any]:
                 UserNotification.created_at < cutoff_date
             )
             result = await db.execute(stmt)
+            await db.commit()
             cleanup_count = result.rowcount
             connection_stats = connection_manager.get_connection_stats()
             return {
@@ -402,21 +405,23 @@ async def _async_cleanup_old_notifications(days_old: int) -> Dict[str, Any]:
         except Exception as e:
             logger.error(f"Error in notification cleanup: {e}")
             raise e
+        finally:
+            if engine:
+                await engine.dispose()
 
 
 # Helper functions
-
-
 async def _get_filtered_users(
     db: AsyncSession, user_filter: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
     """
-    MODIFIED: Get users based on filter criteria by calling DB functions.
+    Get users based on filter criteria by calling the appropriate DB function.
     """
     role = user_filter.get("role")
     if role:
         result = await db.execute(
-            text("SELECT exam_system.get_users_by_role_json(:role)"), {"role": role}
+            text("SELECT exam_system.get_users_by_role_json(:p_role_name)"),
+            {"p_role_name": role},
         )
     elif user_filter.get("active_only", True):
         result = await db.execute(text("SELECT exam_system.get_active_users_json()"))
@@ -439,7 +444,7 @@ async def _send_user_email_notification(
                 "template", "generic_notification"
             ),
             "template_data": {
-                "user_name": user.get("username", "User"),
+                "user_name": user.get("first_name", "User"),
                 **notification_config.get("template_data", {}),
             },
         }
@@ -480,19 +485,26 @@ def _get_status_message(
 
 async def _send_job_completion_email(
     db: AsyncSession,
-    job: TimetableJob,
+    job_details: Dict[str, Any],
     status: str,
     additional_data: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Send job completion email to job initiator"""
     try:
-        user_query = select(User).where(User.id == job.initiated_by)
+        # Note: A get_user_by_id function would be ideal here.
+        # Using a simple ORM query as a fallback.
+        user_id = job_details.get("initiated_by")
+        if not user_id:
+            logger.warning(f"Cannot get initiator for job {job_details.get('id')}")
+            return
+
+        user_query = select(User).where(User.id == UUID(user_id))
         result = await db.execute(user_query)
         user = result.scalar_one_or_none()
 
         if not user or not user.email:
             logger.warning(
-                f"Cannot send completion email for job {job.id} - user not found"
+                f"Cannot send completion email for job {job_details.get('id')} - user not found"
             )
             return
 
@@ -509,14 +521,12 @@ async def _send_job_completion_email(
                 "subject": subject,
                 "template_name": template,
                 "template_data": {
-                    "user_name": user.username,
-                    "job_id": str(job.id),
-                    "session_id": str(job.session_id),
+                    "user_name": user.first_name,
+                    "job_id": str(job_details.get("id")),
+                    "session_id": str(job_details.get("session_id")),
                     "status": status,
-                    "completion_time": (
-                        job.completed_at.isoformat() if job.completed_at else None  # type: ignore
-                    ),
-                    "error_message": job.error_message,
+                    "completion_time": job_details.get("completed_at"),
+                    "error_message": job_details.get("error_message"),
                     "additional_data": additional_data or {},
                 },
             }

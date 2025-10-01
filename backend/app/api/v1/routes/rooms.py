@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from ....api.deps import db_session, current_user
 from ....models.users import User
 from ....services.data_management.core_data_service import CoreDataService
-from ....services.data_retrieval.unified_data_retrieval import UnifiedDataService
+from ....services.data_retrieval import DataRetrievalService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Import the new, complete schemas from the correct location
@@ -32,7 +32,7 @@ async def create_room(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Failed to create room."),
         )
-    data_service = UnifiedDataService(db)
+    data_service = DataRetrievalService(db)
     created_room = await data_service.get_entity_by_id("room", result["id"])
     return created_room
 
@@ -45,7 +45,7 @@ async def list_rooms(
     user: User = Depends(current_user),
 ):
     """Retrieve a paginated list of rooms."""
-    service = UnifiedDataService(db)
+    service = DataRetrievalService(db)
     result = await service.get_paginated_entities(
         "rooms", page=page, page_size=page_size
     )
@@ -60,7 +60,7 @@ async def get_room(
     user: User = Depends(current_user),
 ):
     """Retrieve a single room by its ID."""
-    service = UnifiedDataService(db)
+    service = DataRetrievalService(db)
     room = await service.get_entity_by_id("room", room_id)
     if not room:
         raise HTTPException(
@@ -86,7 +86,7 @@ async def update_room(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=result.get("error", "Failed to update room."),
         )
-    data_service = UnifiedDataService(db)
+    data_service = DataRetrievalService(db)
     updated_room = await data_service.get_entity_by_id("room", room_id)
     return updated_room
 

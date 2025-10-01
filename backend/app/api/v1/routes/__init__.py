@@ -4,14 +4,19 @@ from .auth import router as auth_router
 from .jobs import router as jobs_router
 from .uploads import router as uploads_router
 from .websockets import router as websockets_router
-
-# Import the new and restored routers
 from .scheduling import router as scheduling_router
 from .courses import router as courses_router
 from .rooms import router as rooms_router
 from .exams import router as exams_router
 from .timetables import router as timetables_router
 from .users import router as users_router
+from .academic_sessions import router as sessions_router
+
+# Import the new routers
+from .system import router as system_router
+from .admin import router as admin_router
+from .roles import router as roles_router
+from .schedules import router as schedules_router
 
 # Create a main router that includes all sub-routers
 router = APIRouter()
@@ -19,6 +24,7 @@ router = APIRouter()
 # Include all route modules with their respective prefixes and tags
 router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 router.include_router(users_router, prefix="/users", tags=["User Management"])
+router.include_router(roles_router, prefix="/roles", tags=["Role Management"])
 
 # Core Data Management
 router.include_router(courses_router, prefix="/courses", tags=["Courses"])
@@ -33,6 +39,12 @@ router.include_router(
     timetables_router, prefix="/timetables", tags=["Timetable Management"]
 )
 router.include_router(jobs_router, prefix="/jobs", tags=["Background Jobs"])
+router.include_router(schedules_router, prefix="/schedules", tags=["Schedules"])
+router.include_router(sessions_router, prefix="/sessions", tags=["Academic Sessions"])
+
+# System & Administration
+router.include_router(system_router, prefix="/system", tags=["System Configuration"])
+router.include_router(admin_router, prefix="/admin", tags=["Administration"])
 
 # Utilities
 router.include_router(uploads_router, prefix="/uploads", tags=["File Uploads"])
