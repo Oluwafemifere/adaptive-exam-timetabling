@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from .jobs import TimetableJob
     from .file_uploads import FileUploadSession
     from .versioning import SessionTemplate
+    from .users import User
 
 
 class AcademicSession(Base, TimestampMixin):
@@ -252,10 +253,17 @@ class Student(Base, TimestampMixin):
     programme_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("programmes.id"), nullable=False
     )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
 
     programme: Mapped["Programme"] = relationship(
         "Programme", back_populates="students"
     )
+    user: Mapped[Optional["User"]] = relationship("User")
     registrations: Mapped[List["CourseRegistration"]] = relationship(
         "CourseRegistration", back_populates="student"
     )
@@ -311,7 +319,7 @@ class CourseRegistration(Base):
     registration_type: Mapped[str] = mapped_column(
         String, default="regular", nullable=True
     )
-    registered_at: Mapped[Optional[str]] = mapped_column(
+    registered_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, server_default=func.now(), nullable=True
     )
 

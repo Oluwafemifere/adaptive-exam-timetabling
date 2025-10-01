@@ -19,6 +19,8 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
+from app.models.hitl import ConstraintConfiguration, TimetableScenario
+
 from .base import Base, TimestampMixin
 
 # Use TYPE_CHECKING to avoid circular imports
@@ -55,7 +57,16 @@ class TimetableJob(Base, TimestampMixin):
     hard_constraint_violations: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False
     )
-    soft_constraint_score: Mapped[Numeric | None] = mapped_column(
+    scenario_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("timetable_scenarios.id"), nullable=True
+    )
+    constraint_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("constraint_configurations.id"),
+        nullable=True,
+    )
+    checkpoint_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    soft_constraints_violations: Mapped[Numeric | None] = mapped_column(
         Numeric, nullable=True
     )
     room_utilization_percentage: Mapped[Numeric | None] = mapped_column(
@@ -67,6 +78,15 @@ class TimetableJob(Base, TimestampMixin):
     started_at: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
 
+    # Fields from schema not present in the original model
+    can_pause: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    can_resume: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    can_cancel: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    processed_exams: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_exams: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fitness_score: Mapped[Numeric | None] = mapped_column(Numeric, nullable=True)
+
     # Use string references to avoid circular imports
     session: Mapped["AcademicSession"] = relationship(back_populates="jobs")
     configuration: Mapped["SystemConfiguration"] = relationship(back_populates="jobs")
@@ -75,4 +95,10 @@ class TimetableJob(Base, TimestampMixin):
     # MODIFIED: Changed to support multiple versions per job
     versions: Mapped[List["TimetableVersion"]] = relationship(
         "TimetableVersion", back_populates="job"
+    )
+    scenario: Mapped[Optional["TimetableScenario"]] = relationship(
+        "TimetableScenario", back_populates="jobs"
+    )
+    constraint_config: Mapped[Optional["ConstraintConfiguration"]] = relationship(
+        "ConstraintConfiguration", back_populates="jobs"
     )

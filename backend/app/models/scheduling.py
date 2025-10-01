@@ -16,6 +16,7 @@ from sqlalchemy import (
     Index,
     Table,
     Column,
+    Time,
 )
 
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -27,7 +28,7 @@ from .base import Base, TimestampMixin
 
 # Use TYPE_CHECKING to avoid circular imports
 if TYPE_CHECKING:
-    from .academic import AcademicSession, Course, Department, CourseInstructor
+    from .academic import AcademicSession, Course, Department, CourseInstructor, Student
     from .infrastructure import Room, ExamAllowedRoom
     from .versioning import TimetableVersion
     from .users import User
@@ -133,7 +134,21 @@ class ExamDepartment(Base, TimestampMixin):
     )
 
 
-# REMOVED: TimeSlot model is no longer needed.
+# Re-introduced TimeSlot model to match the database schema
+class TimeSlot(Base, TimestampMixin):
+    __tablename__ = "time_slots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("academic_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    period_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
 
 
 class Staff(Base, TimestampMixin):
@@ -198,13 +213,11 @@ class ExamInvigilator(Base, TimestampMixin):
     staff_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("staff.id"), nullable=False
     )
-    # MODIFIED: Links to the assignment, not individual fields
     timetable_assignment_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("timetable_assignments.id"), nullable=False
     )
-    is_chief_invigilator: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    # MODIFIED: Changed to role to match schema
+    role: Mapped[str] = mapped_column(String(30), default="invigilator", nullable=False)
 
     staff: Mapped["Staff"] = relationship("Staff", back_populates="invigilations")
     timetable_assignment: Mapped["TimetableAssignment"] = relationship(
@@ -224,7 +237,6 @@ class StaffUnavailability(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
     )
-    # MODIFIED: Replaced time_slot_id with a string period
     time_slot_period: Mapped[str | None] = mapped_column(String, nullable=True)
     unavailable_date: Mapped[Date] = mapped_column(Date, nullable=False)
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -248,21 +260,22 @@ class TimetableAssignment(Base):
         PG_UUID(as_uuid=True), ForeignKey("rooms.id"), nullable=False
     )
     exam_date: Mapped[Date] = mapped_column(Date, nullable=False)
-    # MODIFIED: Replaced time_slot_id with a string period
-    time_slot_period: Mapped[str] = mapped_column(String, nullable=False)
+    # MODIFIED: Replaced time_slot_period with time_slot_id to match schema
+    time_slot_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("time_slots.id"), nullable=False
+    )
     student_count: Mapped[int] = mapped_column(Integer, nullable=False)
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
     version_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("timetable_versions.id"), nullable=True
     )
-    # MERGED from ExamRoom
     allocated_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     seating_arrangement: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     exam: Mapped["Exam"] = relationship(back_populates="timetable_assignments")
     room: Mapped["Room"] = relationship(back_populates="timetable_assignments")
+    time_slot: Mapped["TimeSlot"] = relationship("TimeSlot")
     version: Mapped["TimetableVersion"] = relationship(
         "TimetableVersion", back_populates="timetable_assignments"
     )
@@ -274,7 +287,66 @@ class TimetableAssignment(Base):
     __table_args__ = (
         Index("idx_timetable_assignments_version_id", "version_id"),
         Index("idx_timetable_assignments_exam_id", "exam_id"),
-        Index(
-            "idx_timetable_assignments_day_time_slot", "exam_date", "time_slot_period"
-        ),
+        Index("idx_timetable_assignments_day_time_slot", "exam_date", "time_slot_id"),
     )
+
+
+# NEW MODEL from schema: assignment_change_requests
+class AssignmentChangeRequest(Base):
+    __tablename__ = "assignment_change_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    staff_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("staff.id"), nullable=False
+    )
+    timetable_assignment_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("timetable_assignments.id"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    review_notes: Mapped[str | None] = mapped_column(Text)
+
+    staff: Mapped["Staff"] = relationship("Staff")
+    timetable_assignment: Mapped["TimetableAssignment"] = relationship(
+        "TimetableAssignment"
+    )
+    reviewer: Mapped[Optional["User"]] = relationship("User")
+
+
+# NEW MODEL from schema: conflict_reports
+class ConflictReport(Base):
+    __tablename__ = "conflict_reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("students.id"), nullable=False
+    )
+    exam_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("exams.id"), nullable=False
+    )
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id")
+    )
+    resolver_notes: Mapped[str | None] = mapped_column(Text)
+
+    student: Mapped["Student"] = relationship("Student")
+    exam: Mapped["Exam"] = relationship("Exam")
+    reviewer: Mapped[Optional["User"]] = relationship("User")

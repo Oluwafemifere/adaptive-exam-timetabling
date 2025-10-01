@@ -19,6 +19,9 @@ from .scheduling import (
     ExamInvigilator,
     StaffUnavailability,
     TimetableAssignment,
+    TimeSlot,  # Added
+    AssignmentChangeRequest,  # Added
+    ConflictReport,  # Added
 )
 from .infrastructure import (
     Building,
@@ -40,6 +43,7 @@ from .versioning import (
     VersionMetadata,
     VersionDependency,
     SessionTemplate,
+    TimetableConflict,  # Added
 )
 from .constraints import (
     ConfigurationConstraint,
@@ -61,7 +65,7 @@ __all__ = [
     "Programme",
     "Course",
     "Student",
-    "StudentEnrollment",  # New model
+    "StudentEnrollment",
     "CourseRegistration",
     "CourseInstructor",
     # Scheduling models
@@ -71,6 +75,9 @@ __all__ = [
     "ExamInvigilator",
     "StaffUnavailability",
     "TimetableAssignment",
+    "TimeSlot",
+    "AssignmentChangeRequest",
+    "ConflictReport",
     # Infrastructure models
     "Building",
     "RoomType",
@@ -85,11 +92,12 @@ __all__ = [
     "SystemEvent",
     # Job models
     "TimetableJob",
-    # NEW: Versioning models
+    # Versioning models
     "TimetableVersion",
     "VersionMetadata",
     "VersionDependency",
     "SessionTemplate",
+    "TimetableConflict",
     # Constraint models
     "ConfigurationConstraint",
     "ConstraintRule",

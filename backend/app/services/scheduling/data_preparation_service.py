@@ -28,10 +28,13 @@ class ProblemModelCompatibleDataset:
     instructors: List[Dict[str, Any]] = field(default_factory=list)
     staff: List[Dict[str, Any]] = field(default_factory=list)
 
-    # Days and timeslots structure
+    # Days and timeslots structure from pg_func
     days: List[Dict[str, Any]] = field(default_factory=list)
-    timeslots: List[Dict[str, Any]] = field(default_factory=list)
-    timeslot_templates: List[Dict[str, Any]] = field(default_factory=list)
+
+    # HITL and Configuration capabilities
+    constraints: Dict[str, Any] = field(default_factory=dict)
+    locks: List[Dict[str, Any]] = field(default_factory=list)
+
     # Relationships - critical for problem model
     course_registrations: List[Dict[str, Any]] = field(default_factory=list)
     student_exam_mappings: Dict[str, Set[str]] = field(
@@ -61,34 +64,40 @@ class ExactDataMapper:
             "has_computers": db_room.get("has_computers", False),
             "adjacent_seat_pairs": adjacent_pairs,
             "name": db_room.get("name", ""),
-            # --- START OF FIX: Correctly map building_name ---
             "building_name": db_room.get("building_name"),
-            # --- END OF FIX ---
             "has_projector": db_room.get("has_projector", False),
             "has_ac": db_room.get("has_ac", False),
             "overbookable": db_room.get("overbookable", False),
             "max_inv_per_room": db_room.get("max_inv_per_room", 2),
+            "is_accessible": db_room.get("is_accessible", False),
+            "allowed_exam_ids": {
+                UUID(str(exam_id)) for exam_id in db_room.get("allowed_exam_ids", [])
+            },
         }
 
     @staticmethod
     def map_invigilator_to_problem_model(db_staff: Dict) -> Dict[str, Any]:
         """Map database staff to EXACT problem model invigilator format"""
-        # --- START OF FIX: Construct name from first_name and last_name ---
         first_name = db_staff.get("first_name", "")
         last_name = db_staff.get("last_name", "")
         full_name = f"{first_name} {last_name}".strip()
-        # --- END OF FIX ---
+
+        # Process unavailable_periods into the availability dictionary
+        availability = {}
+        for period in db_staff.get("unavailable_periods", []):
+            unavail_date = period.get("date")
+            if unavail_date:
+                availability.setdefault(unavail_date, []).append(period.get("period"))
 
         return {
             "id": UUID(str(db_staff["id"])),
-            # Use the constructed full name
             "name": full_name or f"Staff {db_staff.get('staff_number', 'Unknown')}",
             "email": db_staff.get("email"),
             "department": db_staff.get("department"),
             "can_invigilate": db_staff.get("can_invigilate", True),
             "max_concurrent_exams": db_staff.get("max_concurrent_exams", 1),
             "max_students_per_exam": db_staff.get("max_students_per_exam", 50),
-            "availability": {},
+            "availability": availability,
             "staff_number": db_staff.get("staff_number"),
             "staff_type": db_staff.get("staff_type"),
             "max_daily_sessions": db_staff.get("max_daily_sessions", 2),
@@ -116,13 +125,11 @@ class ExactDataMapper:
             if isinstance(value, UUID):
                 return value
             elif isinstance(value, str):
-                # Remove any whitespace and validate UUID format
                 cleaned_value = value.strip()
                 if not cleaned_value:
                     raise ValueError(f"{field_name} cannot be empty string")
                 return UUID(cleaned_value)
             elif isinstance(value, int):
-                # Convert integer to UUID string representation
                 return UUID(str(value))
             else:
                 raise ValueError(f"Unsupported type for {field_name}: {type(value)}")
@@ -158,14 +165,12 @@ class ExactDataMapper:
     def map_exam_to_problem_model(db_exam: Dict) -> Dict[str, Any]:
         """Map database exam to EXACT problem model format with enhanced validation"""
         try:
-            # Validate required fields
             ExactDataMapper._validate_required_fields(
                 db_exam,
                 ["id", "course_id", "duration_minutes"],
                 f"exam {db_exam.get('id', 'unknown')}",
             )
 
-            # Convert UUIDs with validation
             exam_id = ExactDataMapper._validate_and_convert_uuid(
                 db_exam["id"], "exam_id"
             )
@@ -173,10 +178,8 @@ class ExactDataMapper:
                 db_exam["course_id"], "course_id"
             )
 
-            # Validate numeric fields
             duration = db_exam.get("duration_minutes", 180)
-            # Define the maximum possible duration for a single day
-            MAX_DURATION_MINUTES = 540  # 3 slots * 180 minutes/slot
+            MAX_DURATION_MINUTES = 540
 
             if not isinstance(duration, (int, float)) or duration <= 0:
                 logger.warning(
@@ -185,10 +188,8 @@ class ExactDataMapper:
                 duration = 180
             elif duration > MAX_DURATION_MINUTES:
                 logger.error(
-                    f"CRITICAL: Exam {exam_id} has a duration of {duration} minutes, which exceeds the daily maximum of {MAX_DURATION_MINUTES}. Capping duration to prevent infeasibility."
+                    f"CRITICAL: Exam {exam_id} has a duration of {duration} minutes, which exceeds the daily maximum of {MAX_DURATION_MINUTES}. Capping duration."
                 )
-                # Cap the duration to the maximum possible value to allow scheduling.
-                # The ideal solution is to fix the data in the database.
                 duration = MAX_DURATION_MINUTES
 
             expected_students = db_exam.get("expected_students", 0)
@@ -206,7 +207,9 @@ class ExactDataMapper:
                 "is_practical": bool(db_exam.get("is_practical", False)),
                 "morning_only": bool(db_exam.get("morning_only", False)),
                 "actual_student_count": int(db_exam.get("actual_student_count", 0)),
-                "students": set(),
+                "students": {
+                    UUID(str(sid)) for sid in db_exam.get("registered_student_ids", [])
+                },
                 "course_code": db_exam.get("course_code", f"COURSE_{course_id}"),
                 "course_title": db_exam.get("course_title", "Unknown Course"),
                 "requires_projector": bool(db_exam.get("requires_projector", False)),
@@ -215,18 +218,17 @@ class ExactDataMapper:
                 ),
                 "is_common": bool(db_exam.get("is_common", False)),
                 "status": db_exam.get("status", "pending"),
-                "prerequisite_exams": set(),
+                "prerequisite_exams": {
+                    UUID(str(eid)) for eid in db_exam.get("prerequisite_exam_ids", [])
+                },
                 "allowed_rooms": set(),
-                # --- START OF FIX: Correctly map instructor_ids and department_name ---
                 "instructor_ids": {
                     UUID(str(instr_id))
                     for instr_id in db_exam.get("instructor_ids", [])
                 },
                 "department_name": db_exam.get("department_name"),
-                # --- END OF FIX ---
             }
 
-            # Validate student count consistency
             actual_count = exam_data["actual_student_count"]
             if actual_count > exam_data["expected_students"]:
                 exam_data["expected_students"] = actual_count
@@ -274,7 +276,6 @@ class ExactDataFlowService:
         self.session = session
         self.mapper = ExactDataMapper()
 
-    # @track_data_flow("build_dataset")
     async def build_exact_problem_model_dataset(
         self, session_id: UUID
     ) -> ProblemModelCompatibleDataset:
@@ -282,26 +283,15 @@ class ExactDataFlowService:
         logger.info(f"Building EXACT problem model dataset for session {session_id}")
 
         try:
-            # Phase 1: Validate raw data retrieval from PostgreSQL function
             raw_data = await self._validate_and_retrieve_raw_data(session_id)
-
-            # Phase 2: Map entities with validation
             mapped_entities = await self._map_entities_with_validation(raw_data)
-
-            # Phase 3: Build and validate relationships
             relationships = await self._build_and_validate_relationships(
                 mapped_entities, raw_data
             )
-
-            # Phase 4: Create final dataset with integrity check
             dataset = self._create_validated_dataset(
-                session_id, mapped_entities, relationships
+                session_id, mapped_entities, relationships, raw_data
             )
-
-            # Phase 5: Final integrity validation
             self._validate_final_dataset_integrity(dataset)
-
-            # Log final dataset statistics
             self._log_dataset_statistics(dataset)
 
             logger.info(
@@ -324,6 +314,9 @@ class ExactDataFlowService:
             "invigilators_count": len(dataset.invigilators),
             "total_registrations": len(dataset.course_registrations),
             "student_exam_mappings": len(dataset.student_exam_mappings),
+            "days_count": len(dataset.days),
+            "locks_count": len(dataset.locks),
+            "constraints_defined": "rules" in dataset.constraints,
         }
         logger.info(f"Dataset Statistics: {stats}")
 
@@ -333,27 +326,20 @@ class ExactDataFlowService:
         """
         logger.info(f"Executing PostgreSQL function for session {session_id}")
         try:
-            # Construct the SQL query to call the function
             query = text("SELECT exam_system.get_scheduling_dataset(:session_id)")
             result = await self.session.execute(query, {"session_id": session_id})
-
-            # The function returns a single row with a single column containing the JSONB
             raw_data = result.scalar_one_or_none()
 
             if not raw_data:
                 raise ValueError("PostgreSQL function returned no data.")
 
-            # The database driver (asyncpg) automatically decodes JSONB to a Python dict
             if not isinstance(raw_data, dict):
-                # Fallback if the result is a string that needs parsing
                 raw_data = json.loads(raw_data)
 
-            # Validate raw data structure
             if not raw_data or not isinstance(raw_data, dict):
                 raise ValueError("Invalid raw data structure from PostgreSQL function")
 
-            # Check for critical data components
-            critical_components = ["exams", "rooms", "students"]
+            critical_components = ["exams", "rooms", "students", "exam_days"]
             missing_components = [
                 comp for comp in critical_components if not raw_data.get(comp)
             ]
@@ -372,7 +358,6 @@ class ExactDataFlowService:
             logger.error(f"Failed to retrieve raw data for session {session_id}: {e}")
             raise
 
-    # @track_data_flow("map_entities")
     async def _map_entities_with_validation(
         self, raw_data: Dict[str, Any]
     ) -> Dict[str, List[Dict]]:
@@ -416,7 +401,6 @@ class ExactDataFlowService:
         staff = []
         for staff_data in raw_data.get("staff", []):
             try:
-                # Use the invigilator mapper as it contains all necessary fields
                 mapped_staff = self.mapper.map_invigilator_to_problem_model(staff_data)
                 staff.append(mapped_staff)
             except Exception as e:
@@ -447,13 +431,11 @@ class ExactDataFlowService:
             for instr in raw_data.get("instructors", [])
         ]
         mapped_entities["instructors"] = instructors
-        # Validate we have invigilators if we have exams
         if len(exams) > 0 and len(invigilators) == 0:
             logger.warning(
                 "No valid invigilators were mapped from the provided staff data."
             )
 
-        # Validate we have minimum required entities
         if len(exams) == 0:
             raise ValueError("No valid exams could be mapped")
         if len(rooms) == 0:
@@ -484,11 +466,9 @@ class ExactDataFlowService:
                         has_students = True
                         break
 
-                # Check direct students field
                 if not has_students and exam.get("students"):
                     has_students = len(exam["students"]) > 0
 
-                # Check actual student count
                 if not has_students and exam.get("actual_student_count", 0) > 0:
                     has_students = True
 
@@ -520,7 +500,6 @@ class ExactDataFlowService:
 
         return valid_exams
 
-    # @track_data_flow("build_relationships")
     async def _build_and_validate_relationships(
         self, mapped_entities: Dict[str, List[Dict]], raw_data: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -530,37 +509,30 @@ class ExactDataFlowService:
         try:
             relationships = {}
 
-            # Extract entities
             exams = mapped_entities.get("exams", [])
             raw_registrations = raw_data.get("course_registrations", [])
             raw_student_exam_mappings = raw_data.get("student_exam_mappings", {})
 
-            # Build student-exam mappings from the raw JSON data
             student_exam_mappings = {
                 str(student_id): {str(exam_id) for exam_id in exam_ids}
                 for student_id, exam_ids in raw_student_exam_mappings.items()
             }
 
-            # CRITICAL: Filter phantom exams before model creation
             filtered_exams = await self.validate_and_filter_phantom_exams(
                 exams, student_exam_mappings
             )
 
-            # Update with filtered exams
             mapped_entities["exams"] = filtered_exams
             relationships["student_exam_mappings"] = student_exam_mappings
 
-            # Build course registrations
             course_registrations = self._build_course_registrations(raw_registrations)
             relationships["course_registrations"] = course_registrations
 
-            # Populate exam student lists
             populated_exams = self._populate_exam_students(
                 filtered_exams, student_exam_mappings
             )
             mapped_entities["exams"] = populated_exams
 
-            # Validate relationship integrity
             self._validate_relationship_integrity(mapped_entities, relationships)
 
             logger.info(
@@ -579,6 +551,7 @@ class ExactDataFlowService:
         session_id: UUID,
         mapped_entities: Dict[str, List[Dict]],
         relationships: Dict[str, Any],
+        raw_data: Dict[str, Any],
     ) -> ProblemModelCompatibleDataset:
         """Create final validated dataset with all entities and relationships"""
         logger.info("Creating final validated dataset...")
@@ -586,7 +559,6 @@ class ExactDataFlowService:
         try:
             dataset = ProblemModelCompatibleDataset(session_id=session_id)
 
-            # Set core entities
             dataset.exams = mapped_entities.get("exams", [])
             dataset.rooms = mapped_entities.get("rooms", [])
             dataset.students = mapped_entities.get("students", [])
@@ -594,44 +566,28 @@ class ExactDataFlowService:
             dataset.instructors = mapped_entities.get("instructors", [])
             dataset.staff = mapped_entities.get("staff", [])
 
-            # Set relationships
             dataset.course_registrations = relationships.get("course_registrations", [])
             dataset.student_exam_mappings = relationships.get(
                 "student_exam_mappings", defaultdict(set)
             )
 
-            # Set timeslot_templates with default values if not provided
-            dataset.timeslot_templates = [
-                {
-                    "name": "Morning",
-                    "start_time": "09:00:00",
-                    "end_time": "12:00:00",
-                },
-                {
-                    "name": "Afternoon",
-                    "start_time": "12:00:00",
-                    "end_time": "15:00:00",
-                },
-                {
-                    "name": "Evening",
-                    "start_time": "15:00:00",
-                    "end_time": "18:00:00",
-                },
-            ]
+            # Pass through HITL and config data directly from raw source
+            dataset.days = raw_data.get("exam_days", [])
+            dataset.constraints = raw_data.get("constraints", {})
+            dataset.locks = raw_data.get("locks", [])
 
             dataset.metadata = {
                 "created_at": datetime.now().isoformat(),
                 "total_exams": len(dataset.exams),
                 "total_students": len(dataset.students),
                 "total_rooms": len(dataset.rooms),
-                "total_timeslots": len(dataset.timeslots),
                 "total_days": len(dataset.days),
-                "dataset_version": "1.0",
+                "dataset_version": "1.1-hitl",
             }
 
             logger.info(
                 f"Created dataset with {len(dataset.exams)} exams, {len(dataset.students)} students, "
-                f"{len(dataset.rooms)} rooms, {len(dataset.timeslots)} timeslots"
+                f"{len(dataset.rooms)} rooms, {len(dataset.days)} days"
             )
 
             return dataset
@@ -667,12 +623,10 @@ class ExactDataFlowService:
         """Validate the integrity of all relationships"""
         issues = []
 
-        # Check student-exam mappings consistency
         student_exam_mappings = relationships.get("student_exam_mappings", {})
         exams = mapped_entities.get("exams", [])
         students = mapped_entities.get("students", [])
 
-        # Verify all mapped students exist
         student_ids = {str(student["id"]) for student in students}
         for student_id in student_exam_mappings.keys():
             if student_id not in student_ids:
@@ -680,7 +634,6 @@ class ExactDataFlowService:
                     f"Student {student_id} in mappings but not in student list"
                 )
 
-        # Verify all mapped exams exist
         exam_ids = {str(exam["id"]) for exam in exams}
         for student_id, exam_set in student_exam_mappings.items():
             for exam_id in exam_set:
@@ -699,13 +652,13 @@ class ExactDataFlowService:
         integrity_issues = []
         warnings = []
 
-        # Basic validation
         if len(dataset.exams) == 0:
             integrity_issues.append("No exams in dataset")
         if len(dataset.rooms) == 0:
             integrity_issues.append("No rooms in dataset")
+        if len(dataset.days) == 0:
+            integrity_issues.append("No exam days defined in dataset")
 
-        # Phantom exam detection and AUTOMATIC REMOVAL
         phantom_exams = []
         valid_exams = []
 
@@ -715,7 +668,6 @@ class ExactDataFlowService:
                 len(exam_students) if isinstance(exam_students, (list, set)) else 0
             )
 
-            # Check if exam has students via student_exam_mappings
             exam_id_str = str(exam.get("id"))
             has_students_in_mappings = False
             for student_id, exam_ids in dataset.student_exam_mappings.items():
@@ -733,7 +685,6 @@ class ExactDataFlowService:
                     }
                 )
 
-        # FIXED: Automatically remove phantom exams instead of failing
         if phantom_exams:
             phantom_count = len(phantom_exams)
             logger.warning(f"🚨 Removing {phantom_count} phantom exams from dataset")
@@ -743,15 +694,12 @@ class ExactDataFlowService:
                     f"  👻 Removing phantom exam: {phantom['course_code']} (ID: {phantom['id']})"
                 )
 
-            # Replace exams list with only valid exams
             dataset.exams = valid_exams
             warnings.append(f"Removed {phantom_count} phantom exams")
 
-        # Check if we have enough exams after removal
         if len(dataset.exams) == 0 and len(phantom_exams) > 0:
             integrity_issues.append("No valid exams remaining after phantom removal")
 
-        # Report results
         if integrity_issues:
             issues_str = "; ".join(integrity_issues)
             logger.error(f"💥 CRITICAL dataset issues: {issues_str}")
@@ -768,12 +716,10 @@ class ExactDataFlowService:
         """Enhanced logging version"""
         logger.info("=== STUDENT-EXAM MAPPING PHASE START ===")
 
-        # Log initial data state
         logger.info(
             f"📊 INPUT DATA: {len(exams)} exams, {len(registrations)} registrations"
         )
 
-        # Create course-to-exam mapping with detailed logging
         course_to_exam = {}
         exam_details = {}
 
@@ -797,7 +743,6 @@ class ExactDataFlowService:
             f"🗺️ COURSE-EXAM MAPPING: {len(course_to_exam)} unique course-exam pairs"
         )
 
-        # Build mappings with detailed tracking
         student_exam_mappings = defaultdict(set)
         mapping_stats = {
             "successful_mappings": 0,
@@ -816,7 +761,6 @@ class ExactDataFlowService:
                     exam_id_str = course_to_exam[course_id_str]
                     student_exam_mappings[student_id_str].add(exam_id_str)
 
-                    # Track statistics
                     mapping_stats["successful_mappings"] += 1
                     mapping_stats["students_with_exams"].add(student_id_str)
                     mapping_stats["courses_with_students"].add(course_id_str)
@@ -831,7 +775,6 @@ class ExactDataFlowService:
                 mapping_stats["failed_mappings"] += 1
                 logger.error(f"❌ Failed to process registration: {e}")
 
-        # Identify phantom exams with detailed reporting
         all_exam_ids = set(exam_details.keys())
         exams_with_students = mapping_stats["exams_with_students"]
         phantom_exams = all_exam_ids - exams_with_students
@@ -849,7 +792,6 @@ class ExactDataFlowService:
                     f"     Expected: {details.get('expected_students', 0)}, Actual: {details.get('actual_students', 0)}"
                 )
 
-        # Log final statistics
         logger.info(f"✅ MAPPING STATISTICS:")
         logger.info(f"  📈 Successful mappings: {mapping_stats['successful_mappings']}")
         logger.info(f"  📉 Failed mappings: {mapping_stats['failed_mappings']}")
@@ -877,7 +819,6 @@ class ExactDataFlowService:
             "statistics": {},
         }
 
-        # Raw data validation
         raw_stats = {
             "exams": len(raw_data.get("exams", [])),
             "students": len(raw_data.get("students", [])),
@@ -885,7 +826,6 @@ class ExactDataFlowService:
             "registrations": len(raw_data.get("course_registrations", [])),
         }
 
-        # Mapped entities validation
         mapped_stats = {
             "exams": len(mapped_entities.get("exams", [])),
             "students": len(mapped_entities.get("students", [])),
@@ -893,7 +833,6 @@ class ExactDataFlowService:
             "invigilators": len(mapped_entities.get("invigilators", [])),
         }
 
-        # Check for data loss during mapping
         for entity_type in ["exams", "students", "rooms"]:
             raw_count = raw_stats.get(entity_type, 0)
             mapped_count = mapped_stats.get(entity_type, 0)
@@ -904,7 +843,6 @@ class ExactDataFlowService:
                     f"{entity_type.upper()} DATA LOSS: {raw_count} → {mapped_count} ({loss_percentage:.1f}% lost)"
                 )
 
-        # Relationship validation
         student_exam_mappings = relationships.get("student_exam_mappings", {})
         total_mappings = sum(len(exams) for exams in student_exam_mappings.values())
 
@@ -923,23 +861,18 @@ class ExactDataFlowService:
     ) -> None:
         """Comprehensive validation of student-exam mappings"""
 
-        # Find students without exams
         students_with_exams = set(mappings.keys())
-        all_student_ids = set()  # This would come from student data
-        # For now, we'll use the keys from mappings
+        all_student_ids = set()
 
-        # Find exams without students
         exams_with_students = set()
         for student_id, exam_set in mappings.items():
             exams_with_students.update(exam_set)
 
         exams_without_students = exam_ids - exams_with_students
 
-        # Update stats
         stats["students_without_exams"] = all_student_ids - students_with_exams
         stats["exams_without_students"] = exams_without_students
 
-        # Log validation results
         if stats["students_without_exams"]:
             logger.warning(
                 f"{len(stats['students_without_exams'])} students have no exam mappings"
@@ -954,7 +887,7 @@ class ExactDataFlowService:
             logger.error("CRITICAL: No student-exam mappings were created!")
             raise ValueError("No student-exam mappings generated")
 
-        if len(mappings) < 10:  # Arbitrary threshold, adjust based on your data
+        if len(mappings) < 10:
             logger.warning(f"Very few student-exam mappings created: {len(mappings)}")
 
     def _populate_exam_students(
@@ -962,7 +895,6 @@ class ExactDataFlowService:
     ) -> List[Dict]:
         """Populate exam student lists with enhanced validation"""
 
-        # Create reverse mapping: exam_id -> set of student_ids
         exam_student_mappings = defaultdict(set)
         student_count_per_exam = {}
 
@@ -977,7 +909,6 @@ class ExactDataFlowService:
                 )
                 continue
 
-        # Populate each exam with student data
         exams_with_students = 0
         total_students_assigned = 0
 
@@ -985,23 +916,25 @@ class ExactDataFlowService:
             exam_id_str = str(exam["id"])
             student_ids = exam_student_mappings.get(exam_id_str, set())
 
-            exam["students"] = student_ids
-            exam["actual_student_count"] = len(student_ids)
-            student_count_per_exam[exam_id_str] = len(student_ids)
+            # Combine with students already in the exam object from raw data
+            existing_students = exam.get("students", set())
+            all_students = student_ids.union(existing_students)
 
-            # Update expected students if actual is higher
-            if len(student_ids) > exam["expected_students"]:
+            exam["students"] = all_students
+            exam["actual_student_count"] = len(all_students)
+            student_count_per_exam[exam_id_str] = len(all_students)
+
+            if len(all_students) > exam["expected_students"]:
                 old_count = exam["expected_students"]
-                exam["expected_students"] = len(student_ids)
+                exam["expected_students"] = len(all_students)
                 logger.info(
-                    f"Updated exam {exam_id_str} expected students from {old_count} to {len(student_ids)}"
+                    f"Updated exam {exam_id_str} expected students from {old_count} to {len(all_students)}"
                 )
 
-            if student_ids:
+            if all_students:
                 exams_with_students += 1
-                total_students_assigned += len(student_ids)
+                total_students_assigned += len(all_students)
 
-        # Validation summary
         total_exams = len(exams)
         logger.info(
             f"Student population summary: {exams_with_students}/{total_exams} exams have students, "

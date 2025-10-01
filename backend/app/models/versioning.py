@@ -6,7 +6,10 @@ from datetime import datetime
 
 from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, Integer, Index
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
-from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy.orm import relationship, Mapped, mapped_column, declarative_base
+from sqlalchemy import func
+
+from app.models.hitl import TimetableScenario
 
 from .base import Base, TimestampMixin
 
@@ -49,6 +52,9 @@ class TimetableVersion(Base, TimestampMixin):
 
     # Existing fields with enhanced functionality
     version_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    scenario_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("timetable_scenarios.id"), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     approval_level: Mapped[str | None] = mapped_column(String, nullable=True)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(
@@ -82,6 +88,9 @@ class TimetableVersion(Base, TimestampMixin):
         "VersionDependency",
         foreign_keys="VersionDependency.depends_on_version_id",
         back_populates="depends_on_version",
+    )
+    scenario: Mapped[Optional["TimetableScenario"]] = relationship(
+        "TimetableScenario", back_populates="versions"
     )
 
     # Link to assignments
@@ -209,3 +218,29 @@ class SessionTemplate(Base, TimestampMixin):
         Index("idx_session_templates_source_session_id", "source_session_id"),
         Index("idx_session_templates_active", "is_active"),
     )
+
+
+# NEW MODEL from schema: timetable_conflicts
+class TimetableConflict(Base):
+    __tablename__ = "timetable_conflicts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("timetable_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    details: Mapped[dict | None] = mapped_column(JSONB)
+    is_resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    version: Mapped["TimetableVersion"] = relationship("TimetableVersion")
+
+    __table_args__ = (Index("idx_timetable_conflicts_version_id", "version_id"),)

@@ -1,4 +1,5 @@
 # app/models/audit_logs.py
+from typing import Optional
 import uuid
 from sqlalchemy import Index, String, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB, INET
@@ -26,3 +27,7 @@ class AuditLog(Base, TimestampMixin):
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scenario_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    action_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
