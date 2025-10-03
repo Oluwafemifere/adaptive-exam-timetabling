@@ -1,5 +1,4 @@
 // frontend/src/config/index.ts
-
 export const config = {
   // API Configuration
   api: {

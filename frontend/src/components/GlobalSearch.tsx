@@ -1,3 +1,4 @@
+// frontend/src/components/GlobalSearch.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Input } from './ui/input';
@@ -17,7 +18,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { useAppStore } from '../store';
-import { Exam, User } from '../store/types';
+import { RenderableExam } from '../store/types';
 
 interface SearchResult {
   id: string;

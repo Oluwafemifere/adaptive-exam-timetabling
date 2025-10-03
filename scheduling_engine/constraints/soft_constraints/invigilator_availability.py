@@ -1,15 +1,10 @@
+# scheduling_engine/constraints/soft_constraints/invigilator_availability.py
 """
-InvigilatorAvailabilityConstraint - S6 Implementation
-
-S6: Invigilator availability violation (new soft constraint)
-
-For each invigilator i and slot s, if i is unavailable at s,
-define availabilityViol_{i,s} ∈ {0,1}:
-availabilityViol_{i,s} ≥ ∑_{e,r} u_{i,e,r,s}
-Penalty: W_availability × ∑_{i,s} availabilityViol_{i,s} where W_availability = 1500.
+InvigilatorAvailabilityConstraint - S6 Implementation (PARAMETERIZED & FIXED)
 """
 
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
+from scheduling_engine.core.constraint_types import ConstraintDefinition
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,130 +13,67 @@ logger = logging.getLogger(__name__)
 class InvigilatorAvailabilityConstraint(CPSATBaseConstraint):
     """S6: Invigilator availability violation penalty for unavailable assignments"""
 
-    dependencies = ["InvigilatorSingleAssignmentConstraint"]
-    constraint_category = "SOFT_CONSTRAINTS"
-    is_critical = False
-    min_expected_constraints = 0  # May be 0 if all invigilators are always available
+    dependencies = []
 
-    def __init__(self, constraint_id, problem, shared_vars, model, factory=None):
-        super().__init__(constraint_id, problem, shared_vars, model, factory)
-        self.penalty_weight = 1500  # W_availability
+    def __init__(self, definition: ConstraintDefinition, problem, shared_vars, model):
+        super().__init__(definition, problem, shared_vars, model)
+        self.penalty_weight = self.definition.weight
         logger.info(
-            f"🟡 Initializing SOFT constraint {constraint_id} with weight {self.penalty_weight}"
+            f"🟡 Initializing SOFT constraint {self.constraint_id} with weight {self.penalty_weight}"
         )
 
-    def _create_local_variables(self):
-        """Create auxiliary variables for availability violations"""
+    def initialize_variables(self):
+        """Create auxiliary variables for availability violations."""
         self.availability_viol_vars = {}
+        for inv_id, invigilator in self.problem.invigilators.items():
+            # availability is a dict of {date_str: [period_name, ...]}
+            for date_str, periods in getattr(invigilator, "availability", {}).items():
+                for day in self.problem.days.values():
+                    if str(day.date) == date_str:
+                        for timeslot in day.timeslots:
+                            if "all" in periods or timeslot.name in periods:
+                                key = (inv_id, timeslot.id)
+                                self.availability_viol_vars[key] = (
+                                    self.model.NewBoolVar(
+                                        f"availabilityViol_{inv_id}_{timeslot.id}"
+                                    )
+                                )
 
-        # Check if we have invigilators and availability data
-        if not hasattr(self.problem, "invigilators") or not self.problem.invigilators:
-            return
-
-        # Get invigilator availability from precomputed data or problem
-        availability_data = self.precomputed_data.get("invigilator_availability", {})
-        if not availability_data and hasattr(self.problem, "invigilator_availability"):
-            availability_data = self.problem.invigilator_availability
-
-        if not availability_data:
-            logger.info(f"{self.constraint_id}: No invigilator availability data found")
-            return
-
-        # Create availability violation variables for unavailable invigilator-slot pairs
-        for invigilator_id in self.problem.invigilators:
-            invigilator_availability = availability_data.get(invigilator_id, {})
-
-            for slot_id in self._timeslots:
-                # If invigilator is explicitly marked as unavailable for this slot
-                is_available = invigilator_availability.get(
-                    slot_id, True
-                )  # Default to available
-
-                if not is_available:
-                    avail_key = (invigilator_id, slot_id)
-                    self.availability_viol_vars[avail_key] = self.model.NewBoolVar(
-                        f"availabilityViol_{invigilator_id}_{slot_id}"
-                    )
-
-    def _add_constraint_implementation(self):
-        """Add invigilator availability penalty constraints"""
+    def add_constraints(self):
+        """Add invigilator availability penalty constraints."""
         constraints_added = 0
-
-        if not hasattr(self.problem, "invigilators") or not self.problem.invigilators:
-            logger.info(f"{self.constraint_id}: No invigilators found")
-            self.constraint_count = 0
-            return
-
         if not self.u:
             logger.info(
-                f"{self.constraint_id}: No invigilator assignment variables found"
+                f"{self.constraint_id}: No invigilator variables found, skipping."
             )
-            self.constraint_count = 0
             return
 
         if not self.availability_viol_vars:
-            logger.info(f"{self.constraint_id}: No availability violations to track")
-            self.constraint_count = 0
+            logger.info(
+                f"{self.constraint_id}: No availability violations to track, skipping."
+            )
             return
 
-        # Get availability data
-        availability_data = self.precomputed_data.get("invigilator_availability", {})
-        if not availability_data and hasattr(self.problem, "invigilator_availability"):
-            availability_data = self.problem.invigilator_availability
+        for (inv_id, slot_id), viol_var in self.availability_viol_vars.items():
+            # Sum of all assignments for this invigilator in this unavailable slot
+            assignments_in_slot = [
+                u_var
+                for (u_inv, _, _, u_slot), u_var in self.u.items()
+                if u_inv == inv_id and u_slot == slot_id
+            ]
 
-        # For each invigilator-slot pair with availability violations
-        for (
-            invigilator_id,
-            slot_id,
-        ), avail_viol_var in self.availability_viol_vars.items():
+            if assignments_in_slot:
+                # If sum > 0, a violation occurred. viol_var must be 1.
+                self.model.Add(sum(assignments_in_slot) > 0).OnlyEnforceIf(viol_var)
+                self.model.Add(sum(assignments_in_slot) == 0).OnlyEnforceIf(
+                    viol_var.Not()
+                )
+                constraints_added += 2
 
-            # Find all u variables for this invigilator-slot combination
-            u_terms = []
-            for exam_id in self._exams:
-                for room_id in self._rooms:
-                    u_key = (invigilator_id, exam_id, room_id, slot_id)
-                    if u_key in self.u:
-                        u_terms.append(self.u[u_key])
-
-            if u_terms:
-                # availabilityViol_{i,s} ≥ ∑_{e,r} u_{i,e,r,s}
-                # Since u variables are binary and avail_viol_var is binary,
-                # this becomes: avail_viol_var >= any assignment to this invigilator at this slot
-                self.model.Add(avail_viol_var >= sum(u_terms))
-                constraints_added += 1
-            else:
-                # No u variables for this combination, so no violation possible
-                self.model.Add(avail_viol_var == 0)
-                constraints_added += 1
-
-        # Store penalty terms for objective function
-        self.penalty_terms = []
-        for avail_key, avail_viol_var in self.availability_viol_vars.items():
-            self.penalty_terms.append((self.penalty_weight, avail_viol_var))
-
-        self.constraint_count = constraints_added
-
-        if constraints_added == 0:
-            logger.info(
-                f"{self.constraint_id}: No availability penalty constraints needed"
-            )
-        else:
-            logger.info(
-                f"{self.constraint_id}: Added {constraints_added} invigilator availability penalty constraints"
-            )
-
-    def get_penalty_terms(self):
-        """Get penalty terms for the objective function"""
-        return getattr(self, "penalty_terms", [])
-
-    def get_statistics(self):
-        """Get constraint statistics"""
-        stats = super().get_constraint_statistics()
-        stats.update(
-            {
-                "penalty_weight": self.penalty_weight,
-                "unavailable_invigilator_slots": len(self.availability_viol_vars),
-                "penalty_terms": len(getattr(self, "penalty_terms", [])),
-            }
+        self.penalty_terms.extend(
+            (self.penalty_weight, var) for var in self.availability_viol_vars.values()
         )
-        return stats
+        self.constraint_count = constraints_added
+        logger.info(
+            f"{self.constraint_id}: Added {constraints_added} invigilator availability penalty constraints."
+        )

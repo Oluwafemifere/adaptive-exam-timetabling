@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column, declarative_base
 from sqlalchemy import func
 
-from app.models.hitl import TimetableScenario
+from .hitl import TimetableScenario
 
 from .base import Base, TimestampMixin
 
@@ -53,7 +53,9 @@ class TimetableVersion(Base, TimestampMixin):
     # Existing fields with enhanced functionality
     version_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     scenario_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("timetable_scenarios.id"), nullable=True
+        PG_UUID(as_uuid=True),
+        ForeignKey("timetable_scenarios.id", ondelete="CASCADE"),
+        nullable=True,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     approval_level: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -90,7 +92,9 @@ class TimetableVersion(Base, TimestampMixin):
         back_populates="depends_on_version",
     )
     scenario: Mapped[Optional["TimetableScenario"]] = relationship(
-        "TimetableScenario", back_populates="versions"
+        "TimetableScenario",
+        foreign_keys=[scenario_id],
+        back_populates="versions",
     )
 
     # Link to assignments

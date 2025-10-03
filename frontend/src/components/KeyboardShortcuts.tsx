@@ -1,3 +1,4 @@
+// frontend/src/components/KeyboardShortcuts.tsx
 import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Badge } from './ui/badge';

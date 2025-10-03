@@ -1,19 +1,25 @@
-import { useState, useEffect, useRef } from 'react';
-import { api, MockWebSocket, KPIData, AcademicSession } from '../services/api';
+// frontend/src/hooks/useApi.ts
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '../services/api';
 import { useAppStore } from '../store';
 import { toast } from 'sonner';
+import { JobStatus, DashboardKPIs, Conflict, StudentExam, StaffAssignment } from '../store/types';
 
-// KPI Data Hook
 export function useKPIData() {
-  const [data, setData] = useState<KPIData | null>(null);
+  const { activeSessionId } = useAppStore();
+  const [data, setData] = useState<DashboardKPIs | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    if (!activeSessionId) {
+      setIsLoading(false);
+      return;
+    };
+
     const fetchData = async () => {
       try {
-        setIsLoading(true);
-        const response = await api.getKPIData();
+        const response = await api.getDashboardKpis(activeSessionId);
         setData(response.data);
         setError(null);
       } catch (err) {
@@ -24,41 +30,52 @@ export function useKPIData() {
     };
 
     fetchData();
-    // Refetch every 30 seconds
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [activeSessionId]);
 
   return { data, isLoading, error };
 }
 
-// Academic Sessions Hook
-export function useAcademicSessions() {
-  const [data, setData] = useState<AcademicSession[] | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+export function useJobStatusPoller(jobId: string | null) {
+  const { setSchedulingStatus } = useAppStore();
 
   useEffect(() => {
-    const fetchData = async () => {
+    if (!jobId) {
+      return;
+    }
+
+    const poll = async () => {
       try {
-        setIsLoading(true);
-        const response = await api.getAcademicSessions();
-        setData(response.data);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err : new Error('Failed to fetch academic sessions'));
-      } finally {
-        setIsLoading(false);
+        const response = await api.getJobStatus(jobId);
+        const job: JobStatus = response.data;
+        
+        setSchedulingStatus({
+          jobId: job.id,
+          phase: job.solver_phase || job.status,
+          progress: job.progress_percentage,
+          isRunning: job.status === 'running' || job.status === 'queued',
+          metrics: { ...job },
+        });
+
+        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+          clearInterval(intervalId);
+          if (job.status === 'completed') toast.success('Scheduling job completed!');
+          if (job.status === 'failed') toast.error(`Scheduling failed: ${job.error_message}`);
+        }
+      } catch (error) {
+        toast.error('Could not retrieve job status.');
+        clearInterval(intervalId);
       }
     };
 
-    fetchData();
-  }, []);
+    const intervalId = setInterval(poll, 3000);
+    poll(); 
 
-  return { data, isLoading, error };
+    return () => clearInterval(intervalId);
+  }, [jobId, setSchedulingStatus]);
 }
 
-// File Upload Hook
 export function useFileUpload() {
   const [isPending, setIsPending] = useState(false);
 
@@ -66,7 +83,7 @@ export function useFileUpload() {
     try {
       setIsPending(true);
       const response = await api.uploadFile(formData, entityType);
-      toast.success(response.data.message);
+      toast.success('File uploaded successfully');
       return response.data;
     } catch (error) {
       const err = error instanceof Error ? error : new Error('Upload failed');
@@ -80,125 +97,140 @@ export function useFileUpload() {
   return { mutateAsync, isPending };
 }
 
-// Scheduling Hooks
-export function useScheduling() {
-  const { setSchedulingStatus } = useAppStore();
-  const [isPending, setIsPending] = useState(false);
+export function useLatestTimetable() {
+  const { setTimetable, setConflicts } = useAppStore();
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
-  const startScheduling = {
-    mutate: async (request: {
-      session_id: string;
-      start_date: string;
-      end_date: string;
-      options: {
-        timeLimit: number;
-        populationSize: number;
-        constraints: Record<string, number>;
-      };
-    }) => {
-      try {
-        setIsPending(true);
-        const response = await api.startScheduling(request);
-        setSchedulingStatus({
-          isRunning: true,
-          jobId: response.data.job_id,
-          phase: 'cp-sat',
-          progress: 0,
-        });
-        toast.success('Scheduling job started successfully!');
-      } catch (error) {
-        const err = error instanceof Error ? error : new Error('Failed to start scheduling');
-        toast.error(`Failed to start scheduling: ${err.message}`);
-      } finally {
-        setIsPending(false);
-      }
-    },
-    isPending
-  };
-
-  const cancelScheduling = {
-    mutate: async (jobId: string) => {
-      try {
-        setIsPending(true);
-        const response = await api.cancelScheduling(jobId);
-        setSchedulingStatus({
-          isRunning: false,
-          phase: 'cancelled',
-          jobId: null,
-        });
-        toast.success(response.data.message);
-      } catch (error) {
-        const err = error instanceof Error ? error : new Error('Failed to cancel scheduling');
-        toast.error(`Failed to cancel scheduling: ${err.message}`);
-      } finally {
-        setIsPending(false);
-      }
-    },
-    isPending
-  };
-
-  return {
-    startScheduling,
-    cancelScheduling,
-  };
-}
-
-// WebSocket Hook for Job Updates
-export function useJobSocket(jobId: string | null) {
-  const { setSchedulingStatus } = useAppStore();
-  const socketRef = useRef<MockWebSocket | null>(null);
-
-  useEffect(() => {
-    if (!jobId) {
-      return;
-    }
-
-    // Create mock WebSocket connection
-    socketRef.current = new MockWebSocket(jobId);
-    
-    socketRef.current.on('job_update', (update) => {
-      setSchedulingStatus({
-        phase: update.phase,
-        progress: update.progress,
-        metrics: update.metrics,
-        isRunning: !['completed', 'failed', 'cancelled'].includes(update.phase),
-      });
-
-      if (update.phase === 'completed') {
-        toast.success('Scheduling completed successfully!');
-      } else if (update.phase === 'failed') {
-        toast.error('Scheduling failed: ' + (update.metrics.error_message || 'Unknown error'));
-      }
-    });
-
-    socketRef.current.connect();
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
-    };
-  }, [jobId, setSchedulingStatus]);
-}
-
-// Reports Hook
-export function useGenerateReport() {
-  const [isPending, setIsPending] = useState(false);
-
-  const mutateAsync = async ({ report_type, options }: { report_type: string; options: Record<string, any> }) => {
+  const fetchTimetable = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
     try {
-      setIsPending(true);
-      const response = await api.generateReport(report_type, options);
-      toast.success('Report generated successfully!');
-      return response.data;
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error('Failed to generate report');
-      toast.error(`Failed to generate report: ${err.message}`);
-      throw err;
+      const response = await api.getLatestTimetableForActiveSession();
+      const apiPayload = response.data;
+      
+      if (apiPayload.success && apiPayload.data) {
+        // Pass the entire data object which contains the nested 'timetable' property
+        setTimetable(apiPayload.data);
+        
+        // Correctly path to conflicts array inside the nested timetable object
+        const conflicts = apiPayload.data.timetable?.solution?.conflicts || [];
+        setConflicts(conflicts as Conflict[]);
+      } else {
+        const errorMessage = apiPayload.message || 'No successful timetable found.';
+        setTimetable({} as any); // Clear timetable on failure
+        setConflicts([]);
+        throw new Error(errorMessage);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err : new Error('Failed to fetch timetable');
+      setError(errorMessage);
     } finally {
-      setIsPending(false);
+      setIsLoading(false);
     }
-  };
+  }, [setTimetable, setConflicts]);
 
-  return { mutateAsync, isPending };
+  return { isLoading, error, fetchTimetable };
+}
+
+// Custom hook to fetch and manage student portal data
+export function useStudentPortalData() {
+    const { user, setStudentExams, setConflictReports } = useAppStore();
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<Error | null>(null);
+
+    const fetchData = useCallback(async () => {
+        if (!user?.id) {
+            setIsLoading(false);
+            return;
+        }
+        setIsLoading(true);
+        try {
+            const response = await api.getPortalData(user.id);
+            if (response.data.success) {
+                const portalData = response.data.data;
+                // Map API response to the StudentExam type expected by the store
+                const schedule = (portalData.schedule?.schedule || []).map((exam: any, index: number) => ({
+                    id: `${exam.course_code}-${exam.exam_date}-${index}`, // Create a stable ID
+                    courseCode: exam.course_code,
+                    courseName: exam.course_title,
+                    date: exam.exam_date,
+                    startTime: exam.start_time,
+                    endTime: exam.end_time,
+                    room: exam.room_codes?.[0] || 'N/A',
+                    building: exam.building_name || 'N/A',
+                    duration: exam.duration_minutes,
+                }));
+                setStudentExams(schedule);
+                setConflictReports(portalData.conflictReports || []);
+            } else {
+                throw new Error(response.data.message || 'Failed to fetch portal data');
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err : new Error('An unknown error occurred'));
+        } finally {
+            setIsLoading(false);
+        }
+    }, [user, setStudentExams, setConflictReports]);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
+
+    return { isLoading, error, refetch: fetchData };
+}
+
+// Custom hook to fetch and manage staff portal data
+export function useStaffPortalData() {
+    const { user, setStaffSchedules } = useAppStore();
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<Error | null>(null);
+
+    const fetchData = useCallback(async () => {
+        if (!user?.id) {
+            setIsLoading(false);
+            return;
+        }
+        setIsLoading(true);
+        try {
+            const response = await api.getPortalData(user.id);
+            if (response.data.success) {
+                const portalData = response.data.data;
+                const mapToAssignment = (exam: any, role: StaffAssignment['role']): StaffAssignment => ({
+                    id: `${exam.course_code}-${exam.exam_date}-${role}`, // Create a stable ID
+                    examId: `${exam.course_code}-${exam.exam_date}`,
+                    courseCode: exam.course_code,
+                    courseName: exam.course_title,
+                    date: exam.exam_date,
+                    startTime: exam.start_time,
+                    endTime: exam.end_time,
+                    room: exam.room_codes?.[0] || 'N/A',
+                    building: exam.building_name,
+                    role,
+                    status: 'assigned', // Default status
+                });
+
+                const instructorSchedule = (portalData.schedule?.instructor?.schedule || []).map((exam: any) => mapToAssignment(exam, 'instructor'));
+                const invigilatorSchedule = (portalData.schedule?.invigilation?.schedule || []).map((exam: any) => mapToAssignment(exam, 'invigilator'));
+
+                setStaffSchedules({
+                    instructorSchedule,
+                    invigilatorSchedule,
+                    changeRequests: portalData.changeRequests || [],
+                });
+            } else {
+                throw new Error(response.data.message || 'Failed to fetch portal data');
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err : new Error('An unknown error occurred'));
+        } finally {
+            setIsLoading(false);
+        }
+    }, [user, setStaffSchedules]);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
+
+    return { isLoading, error, refetch: fetchData };
 }

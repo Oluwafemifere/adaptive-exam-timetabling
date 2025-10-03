@@ -2,219 +2,152 @@ import { useState, useMemo, useEffect } from 'react';
 import { TimetableGrid } from '../components/TimetableGrid';
 import { FilterControls } from '../components/FilterControls';
 import { ConflictPanel } from '../components/ConflictPanel';
-import { mockExamData, Exam } from '../data/mockExamData';
 import { Button } from '../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { AlertTriangle, Grid, List } from 'lucide-react';
+import { AlertTriangle, Grid, Loader2, Calendar, User, MapPin } from 'lucide-react';
 import { useAppStore } from '../store';
 import { toast } from 'sonner';
+import { useLatestTimetable } from '../hooks/useApi';
+import { RenderableExam } from '../store/types';
+
+// A simple card to display exam details in list views
+const ExamDetailsCard = ({ exam }: { exam: RenderableExam }) => (
+  <div className="p-3 border rounded-md bg-card hover:bg-muted/50">
+    <div className="font-semibold">{exam.courseCode} - {exam.courseName}</div>
+    <div className="text-sm text-muted-foreground">
+      {new Date(exam.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+      {' @ '}{exam.startTime} - {exam.endTime}
+    </div>
+    <div className="text-xs text-muted-foreground mt-1">
+      Room: {exam.room} ({exam.building}) | Invigilator: {exam.invigilator}
+    </div>
+  </div>
+);
 
 export function Timetable() {
+  const { exams, conflicts, user, addHistoryEntry, activeSessionId } = useAppStore();
+  const { isLoading, error, fetchTimetable } = useLatestTimetable();
+
+  // Component state for filters and view mode
+  const [viewMode, setViewMode] = useState<'date' | 'room' | 'invigilator'>('date');
+  const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedDepartments, setSelectedDepartments] = useState<string[]>([]);
   const [selectedFaculties, setSelectedFaculties] = useState<string[]>([]);
   const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
   const [selectedStaff, setSelectedStaff] = useState<string[]>([]);
-  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
-  const [searchTerm, setSearchTerm] = useState<string>('');
-  const [viewMode, setViewMode] = useState<'general' | 'department'>('general');
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [exams, setExams] = useState<Exam[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [filterPresets, setFilterPresets] = useState<any[]>([]);
-  
-  const { conflicts, user, addHistoryEntry } = useAppStore();
 
-  // Initialize exams data
   useEffect(() => {
-    try {
-      if (mockExamData && Array.isArray(mockExamData)) {
-        setExams(mockExamData);
-      }
-    } catch (error) {
-      console.error('Error loading exam data:', error);
-      setExams([]);
-    } finally {
-      setIsLoading(false);
+    if (activeSessionId) {
+      fetchTimetable();
     }
-  }, []);
+  }, [activeSessionId, fetchTimetable]);
 
-  const departments = useMemo(() => {
+  // Memoized selectors to get unique values for filters from the exam data
+  const { departments, faculties, rooms, staff } = useMemo(() => {
     const deptSet = new Set<string>();
-    if (Array.isArray(exams)) {
-      exams.forEach(exam => {
-        if (exam && Array.isArray(exam.departments)) {
-          exam.departments.forEach(dept => deptSet.add(dept));
-        }
-      });
-    }
-    return Array.from(deptSet).sort();
-  }, [exams]);
-
-  const faculties = useMemo(() => {
-    // Extract faculties from departments (simplified - in real app this would be proper data)
-    return ['Engineering', 'Science', 'Arts', 'Business', 'Medicine'];
-  }, []);
-
-  const rooms = useMemo(() => {
+    const facultySet = new Set<string>();
     const roomSet = new Set<string>();
-    if (Array.isArray(exams)) {
-      exams.forEach(exam => {
-        if (exam && exam.room) {
-          roomSet.add(exam.room);
-        }
-      });
-    }
-    return Array.from(roomSet).sort();
-  }, [exams]);
-
-  const staff = useMemo(() => {
     const staffSet = new Set<string>();
-    if (Array.isArray(exams)) {
-      exams.forEach(exam => {
-        if (exam && exam.invigilator) {
-          staffSet.add(exam.invigilator);
-        }
-      });
-    }
-    return Array.from(staffSet).sort();
+
+    exams.forEach(exam => {
+      exam.departments.forEach(dept => deptSet.add(dept));
+      if (exam.facultyName) facultySet.add(exam.facultyName);
+      if (exam.room) roomSet.add(exam.room);
+      exam.invigilator.split(', ').forEach(inv => staffSet.add(inv));
+    });
+
+    return {
+      departments: Array.from(deptSet).sort(),
+      faculties: Array.from(facultySet).sort(),
+      rooms: Array.from(roomSet).sort(),
+      staff: Array.from(staffSet).sort(),
+    };
   }, [exams]);
 
-  const students = useMemo(() => {
-    // Mock student data - in real app this would come from enrollment data
-    return ['John Smith', 'Emma Johnson', 'Michael Brown', 'Sarah Wilson', 'David Lee'];
-  }, []);
-
+  // Filter exams based on all active filter criteria
   const filteredExams = useMemo(() => {
-    if (!Array.isArray(exams)) return [];
-    
     return exams.filter(exam => {
-      if (!exam) return false;
-
-      // Department filter
-      if (selectedDepartments.length > 0) {
-        const hasMatchingDept = exam.departments.some(dept => 
-          selectedDepartments.includes(dept)
-        );
-        if (!hasMatchingDept) return false;
-      }
-
-      // Room filter
-      if (selectedRooms.length > 0 && !selectedRooms.includes(exam.room)) {
-        return false;
-      }
-
-      // Staff filter
-      if (selectedStaff.length > 0 && !selectedStaff.includes(exam.invigilator)) {
-        return false;
-      }
-
-      // Search term filter
+      if (selectedDepartments.length > 0 && !exam.departments.some(dept => selectedDepartments.includes(dept))) return false;
+      if (selectedFaculties.length > 0 && (!exam.facultyName || !selectedFaculties.includes(exam.facultyName))) return false;
+      if (selectedRooms.length > 0 && !selectedRooms.includes(exam.room)) return false;
+      if (selectedStaff.length > 0 && !exam.invigilator.split(', ').some(inv => selectedStaff.includes(inv))) return false;
+      
       if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase();
-        const searchableText = [
-          exam.courseCode,
-          exam.courseName,
-          exam.room,
-          exam.building,
-          exam.invigilator,
-          ...exam.departments
-        ].join(' ').toLowerCase();
-        
-        if (!searchableText.includes(term)) return false;
+        return (
+          exam.courseCode.toLowerCase().includes(term) ||
+          exam.courseName.toLowerCase().includes(term) ||
+          exam.room.toLowerCase().includes(term) ||
+          exam.invigilator.toLowerCase().includes(term)
+        );
       }
-
       return true;
     });
-  }, [selectedDepartments, selectedRooms, selectedStaff, searchTerm, exams]);
+  }, [exams, searchTerm, selectedDepartments, selectedFaculties, selectedRooms, selectedStaff]);
+  
+  // Group exams by room for the "Room View"
+  const examsByRoom = useMemo(() => {
+    return filteredExams.reduce((acc, exam) => {
+      const key = exam.room || 'Unassigned';
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(exam);
+      return acc;
+    }, {} as Record<string, RenderableExam[]>);
+  }, [filteredExams]);
+  
+  // Group exams by invigilator for the "Invigilator View"
+  const examsByInvigilator = useMemo(() => {
+    return filteredExams.reduce((acc, exam) => {
+      const invigilators = exam.invigilator ? exam.invigilator.split(', ') : ['Unassigned'];
+      invigilators.forEach(inv => {
+        if (!acc[inv]) acc[inv] = [];
+        acc[inv].push(exam);
+      });
+      return acc;
+    }, {} as Record<string, RenderableExam[]>);
+  }, [filteredExams]);
 
+  const handleMoveExam = (examId: string, newDate: string, newStartTime: string) => {
+    const originalExam = exams.find(e => e.id === examId);
+    if (!originalExam) return;
+
+    addHistoryEntry({
+      action: 'Manually moved exam',
+      entityType: 'exam',
+      entityId: originalExam.examId,
+      userId: user?.id || 'system',
+      userName: user?.name || 'System',
+      details: {
+        courseCode: originalExam.courseCode,
+        from: `${originalExam.date} @ ${originalExam.startTime}`,
+        to: `${newDate} @ ${newStartTime}`,
+      },
+    });
+
+    toast.info(`${originalExam.courseCode} moved. Note: This is a UI-only change. API for manual edit is needed.`);
+  };
+  
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-lg">Loading exam timetable...</div>
-        </div>
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] text-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+        <h2 className="text-xl font-semibold">Loading Timetable</h2>
+        <p className="text-muted-foreground mt-2">Fetching the latest exam schedule...</p>
       </div>
     );
   }
 
-  const handleMoveExam = (examId: string, newDate: string, newStartTime: string) => {
-    console.log('Moving exam:', examId, 'to', newDate, newStartTime);
-    setExams(prevExams => 
-      prevExams.map(exam => {
-        if (exam.id === examId) {
-          // Calculate duration to maintain exam length
-          const start = new Date(`1970-01-01T${exam.startTime}:00`);
-          const end = new Date(`1970-01-01T${exam.endTime}:00`);
-          const durationMs = end.getTime() - start.getTime();
-          
-          const newStart = new Date(`1970-01-01T${newStartTime}:00`);
-          const newEnd = new Date(newStart.getTime() + durationMs);
-          
-          const newEndTime = newEnd.toTimeString().slice(0, 5);
-          
-          // Add to history
-          addHistoryEntry({
-            action: 'Moved exam',
-            entityType: 'exam',
-            entityId: examId,
-            userId: user?.id || '',
-            userName: user?.name || '',
-            details: {
-              courseCode: exam.courseCode,
-              from: { date: exam.date, startTime: exam.startTime },
-              to: { date: newDate, startTime: newStartTime }
-            }
-          });
-          
-          toast.success(`Moved ${exam.courseCode} to ${newDate} at ${newStartTime}`);
-          
-          return {
-            ...exam,
-            date: newDate,
-            startTime: newStartTime,
-            endTime: newEndTime
-          };
-        }
-        return exam;
-      })
-    );
-  };
-
-  const handleSavePreset = (preset: any) => {
-    const newPreset = {
-      ...preset,
-      id: `preset_${Date.now()}`
-    };
-    setFilterPresets(prev => [...prev, newPreset]);
-    toast.success(`Saved filter preset: ${preset.name}`);
-  };
-
-  const handleLoadPreset = (preset: any) => {
-    setSelectedDepartments(preset.departments || []);
-    setSelectedFaculties(preset.faculties || []);
-    setSelectedRooms(preset.rooms || []);
-    setSelectedStaff(preset.staff || []);
-    setSearchTerm(preset.searchTerm || '');
-    toast.success(`Loaded filter preset: ${preset.name}`);
-  };
-
-  const handleResolveConflict = (conflictId: string) => {
-    // Mock conflict resolution
-    toast.success('Conflict resolved successfully');
-    addHistoryEntry({
-      action: 'Resolved conflict',
-      entityType: 'schedule',
-      entityId: conflictId,
-      userId: user?.id || '',
-      userName: user?.name || '',
-      details: { conflictId }
-    });
-  };
-
-  const handleAutoResolve = () => {
-    // This would be handled by the ConflictPanel component
-    console.log('Auto-resolving conflicts...');
-  };
+  if (error) {
+     return (
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] text-center">
+        <AlertTriangle className="h-12 w-12 text-destructive mb-4" />
+        <h2 className="text-xl font-semibold text-destructive">Failed to Load Timetable</h2>
+        <p className="text-muted-foreground mt-2">{error.message}</p>
+        <Button onClick={fetchTimetable} className="mt-4">Retry</Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -224,26 +157,17 @@ export function Timetable() {
           <p className="text-muted-foreground">
             {filteredExams.length} of {exams.length} exams shown
             {conflicts.length > 0 && (
-              <span className="text-destructive ml-2">
-                • {conflicts.length} conflict{conflicts.length !== 1 ? 's' : ''} detected
-              </span>
+              <span className="text-destructive ml-2">• {conflicts.length} conflict{conflicts.length !== 1 ? 's' : ''} detected</span>
             )}
           </p>
         </div>
-        
-        {conflicts.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-destructive border-destructive"
-          >
-            <AlertTriangle className="h-4 w-4 mr-2" />
-            {conflicts.length} Conflict{conflicts.length !== 1 ? 's' : ''}
-          </Button>
-        )}
       </div>
 
       <FilterControls
+        viewMode={viewMode}
+        onViewModeChange={(mode) => setViewMode(mode as any)}
+        searchTerm={searchTerm}
+        onSearchChange={setSearchTerm}
         departments={departments}
         selectedDepartments={selectedDepartments}
         onDepartmentsChange={setSelectedDepartments}
@@ -256,51 +180,66 @@ export function Timetable() {
         staff={staff}
         selectedStaff={selectedStaff}
         onStaffChange={setSelectedStaff}
-        students={students}
-        selectedStudents={selectedStudents}
-        onStudentsChange={setSelectedStudents}
-        searchTerm={searchTerm}
-        onSearchChange={setSearchTerm}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-        showAdvancedFilters={showAdvancedFilters}
-        onAdvancedFiltersToggle={() => setShowAdvancedFilters(!showAdvancedFilters)}
-        filterPresets={filterPresets}
-        onSavePreset={handleSavePreset}
-        onLoadPreset={handleLoadPreset}
       />
 
       <Tabs defaultValue="timetable" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="timetable" className="flex items-center gap-2">
-            <Grid className="h-4 w-4" />
-            Timetable View
+          <TabsTrigger value="timetable">
+            <Grid className="h-4 w-4 mr-2" />
+            Timetable Views
           </TabsTrigger>
           {conflicts.length > 0 && (
-            <TabsTrigger value="conflicts" className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" />
+            <TabsTrigger value="conflicts">
+              <AlertTriangle className="h-4 w-4 mr-2" />
               Conflicts ({conflicts.length})
             </TabsTrigger>
           )}
         </TabsList>
-
         <TabsContent value="timetable">
-          <TimetableGrid 
-            exams={filteredExams}
-            viewMode={viewMode}
-            departments={departments}
-            onMoveExam={handleMoveExam}
-          />
+          {viewMode === 'date' && (
+            <TimetableGrid 
+              exams={filteredExams}
+              viewMode={'general'} // or department based on another setting
+              departments={departments}
+              onMoveExam={handleMoveExam}
+            />
+          )}
+          {viewMode === 'room' && (
+             <div className="space-y-4">
+              {Object.entries(examsByRoom).sort(([roomA], [roomB]) => roomA.localeCompare(roomB)).map(([room, examsInRoom]) => (
+                <Card key={room}>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><MapPin className="w-5 h-5" /> {room}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {examsInRoom.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(exam => (
+                       <ExamDetailsCard key={exam.id} exam={exam} />
+                    ))}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+          {viewMode === 'invigilator' && (
+             <div className="space-y-4">
+              {Object.entries(examsByInvigilator).sort(([invA], [invB]) => invA.localeCompare(invB)).map(([invigilator, examsForInvigilator]) => (
+                <Card key={invigilator}>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><User className="w-5 h-5" /> {invigilator}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {examsForInvigilator.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(exam => (
+                      <ExamDetailsCard key={exam.id} exam={exam} />
+                    ))}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </TabsContent>
-
         {conflicts.length > 0 && (
           <TabsContent value="conflicts">
-            <ConflictPanel
-              conflicts={conflicts}
-              onResolveConflict={handleResolveConflict}
-              onAutoResolve={handleAutoResolve}
-              onExportReport={() => {}}
-            />
+            <ConflictPanel conflicts={conflicts} />
           </TabsContent>
         )}
       </Tabs>

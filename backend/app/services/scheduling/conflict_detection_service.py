@@ -7,15 +7,15 @@ Delegates complex conflict validation logic to a dedicated PostgreSQL function.
 import logging
 from typing import Dict, Any, List
 from uuid import UUID
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 import json
 
 logger = logging.getLogger(__name__)
 
 
 class ConflictDetectionService:
-    """Provides an interface for timetable conflict detection."""
+    """Provides an interface for timetable conflict detection using DB functions."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -24,58 +24,38 @@ class ConflictDetectionService:
         self, timetable_assignments: List[Dict[str, Any]], version_id: UUID
     ) -> Dict[str, Any]:
         """
-        Checks a proposed set of timetable assignments for any conflicts.
-
-        Args:
-            timetable_assignments: A list of assignment dictionaries, each containing
-                                   exam_id, room_id, exam_date, time_slot_period, etc.
-            version_id: The ID of the timetable version these assignments belong to.
-
-        Returns:
-            A dictionary containing a list of identified conflicts.
+        Checks a proposed set of timetable assignments for any conflicts by calling
+        the `validate_timetable` function.
         """
+        logger.info(f"Checking for conflicts in timetable version {version_id}")
         try:
-            logger.info(f"Checking for conflicts in timetable version {version_id}")
-            assignments_json = json.dumps(timetable_assignments, default=str)
-
             query = text(
-                """
-                SELECT exam_system.validate_timetable(
-                    p_assignments => :assignments,
-                    p_version_id => :version_id
-                )
-                """
+                "SELECT exam_system.validate_timetable(:p_assignments, :p_version_id)"
             )
             result = await self.session.execute(
-                query, {"assignments": assignments_json, "version_id": version_id}
+                query,
+                {
+                    "p_assignments": json.dumps(timetable_assignments, default=str),
+                    "p_version_id": version_id,
+                },
             )
-
-            conflict_result = result.scalar_one_or_none()
-
-            if conflict_result:
-                logger.info(
-                    f"Found {len(conflict_result.get('conflicts', []))} conflicts for version {version_id}"
-                )
-                return conflict_result
-            else:
-                logger.warning(
-                    f"Conflict check for version {version_id} returned no result."
-                )
-                return {
-                    "success": False,
-                    "conflicts": [
-                        {"type": "system", "message": "Conflict check failed to run."}
-                    ],
-                }
-
+            return result.scalar_one_or_none() or {"success": False, "conflicts": []}
         except Exception as e:
-            logger.error(
-                f"Error during conflict detection for version {version_id}: {e}",
-                exc_info=True,
+            logger.error(f"Error during conflict detection: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
+
+    async def update_and_get_conflicts(self, version_id: UUID) -> Dict[str, Any]:
+        """
+        Recalculates, stores, and then returns all scheduling conflicts for a version
+        by calling the `update_and_get_timetable_conflicts` function.
+        """
+        logger.info(f"Recalculating and retrieving conflicts for version {version_id}")
+        try:
+            query = text(
+                "SELECT exam_system.update_and_get_timetable_conflicts(:p_version_id)"
             )
-            return {
-                "success": False,
-                "conflicts": [
-                    {"type": "system", "message": f"An internal error occurred: {e}"}
-                ],
-            }
+            result = await self.session.execute(query, {"p_version_id": version_id})
+            return result.scalar_one_or_none() or {"success": False, "conflicts": []}
+        except Exception as e:
+            logger.error(f"Error updating and getting conflicts: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}

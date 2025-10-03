@@ -55,3 +55,4 @@ class RoomUpdate(BaseModel):
 
 class RoomRead(RoomBase):
     id: UUID
+    allowed_exam_ids: List[UUID] = Field(default_factory=list)

@@ -1,5 +1,7 @@
-export interface Exam {
+// frontend/src/store/types.ts
+export interface RenderableExam {
   id: string;
+  examId: string;
   courseCode: string;
   courseName: string;
   date: string;
@@ -12,29 +14,68 @@ export interface Exam {
   building: string;
   invigilator: string;
   departments: string[];
+  facultyName: string; // Added faculty name
+  notes?: string;
+  examType: string;
+  instructor: string;
+  conflicts?: string[];
   level: string;
   semester: string;
   academicYear: string;
 }
 
-export interface RenderableExam {
-  id: string;
-  courseCode: string;
-  courseName: string;
+// --- API Data Models ---
+
+// Represents a single assignment from the API response
+export interface TimetableAssignmentData {
+  exam_id: string;
+  course_code: string;
+  course_title: string;
+  duration_minutes: number;
+  student_count: number;
+  faculty_name: string; // Added faculty name
+  department_name: string;
+  is_practical: boolean;
+  instructor_name: string;
   date: string;
-  startTime: string;
-  endTime: string;
-  duration: number;
-  expectedStudents: number;
-  room: string;
-  roomCapacity: number;
-  building: string;
-  invigilator: string;
-  departments: string[];
-  level: string;
-  semester: string;
-  academicYear: string;
+  start_time: string;
+  end_time: string;
+  rooms: {
+    id: string;
+    code: string;
+    exam_capacity: number;
+    building_name: string;
+  }[];
+  invigilators: {
+    id: string;
+    name: string;
+  }[];
+  conflicts: { message: string }[];
 }
+
+// Represents the structure of the `solution` object
+export interface TimetableSolution {
+  status: string;
+  assignments: Record<string, TimetableAssignmentData>;
+  conflicts: any[]; // Or a more specific conflict type
+}
+
+// Represents the nested 'timetable' object from the API response
+export interface TimetableDetails {
+  solution: TimetableSolution;
+  statistics: { [key: string]: any };
+  is_enriched: boolean;
+  objective_value: number;
+  completion_percentage: number;
+}
+
+// Represents the top-level data structure for a timetable response from the API
+export interface TimetableResponseData {
+  job_id: string;
+  session_id: string;
+  timetable: TimetableDetails;
+}
+
 
 export interface Conflict {
   id: string;
@@ -51,25 +92,25 @@ export interface SystemStatus {
   dataSyncProgress: number;
 }
 
+export interface JobStatus {
+  id: string;
+  session_id: string;
+  status: 'running' | 'queued' | 'completed' | 'failed' | 'cancelled';
+  progress_percentage: number;
+  solver_phase: string | null;
+  error_message: string | null;
+  [key: string]: any;
+}
+
 export interface SchedulingStatus {
   isRunning: boolean;
-  phase: 'cp-sat' | 'genetic-algorithm' | 'completed' | 'failed' | 'cancelled' | 'idle';
-  progress: number;
   jobId: string | null;
-  startTime?: string;
-  estimatedEndTime?: string;
+  phase: string;
+  progress: number;
   canPause: boolean;
   canResume: boolean;
   canCancel: boolean;
-  metrics: {
-    hard_constraints_violations?: number;
-    soft_constraints_violations?: number;
-    fitness_score?: number;
-    generation?: number;
-    error_message?: string;
-    processed_exams?: number;
-    total_exams?: number;
-  };
+  metrics: Partial<JobStatus>;
 }
 
 export interface UploadStatus {
@@ -79,12 +120,7 @@ export interface UploadStatus {
 
 export interface AppSettings {
   theme: 'light' | 'dark';
-  constraintWeights: {
-    noOverlap: number;
-    roomCapacity: number;
-    instructorAvailability: number;
-    studentConflicts: number;
-  };
+  constraintWeights: Record<string, number>;
   notifications: {
     emailNotifications: boolean;
     conflictAlerts: boolean;
@@ -92,15 +128,7 @@ export interface AppSettings {
   };
 }
 
-export interface AcademicSession {
-  id: string;
-  name: string;
-  start_date: string;
-  end_date: string;
-  is_active: boolean;
-}
-
-export type UserRole = 'student' | 'staff' | 'administrator';
+export type UserRole = 'student' | 'staff' | 'admin' | 'superuser';
 
 export interface User {
   id: string;
@@ -108,8 +136,8 @@ export interface User {
   email: string;
   role: UserRole;
   department?: string;
-  studentId?: string; // For students
-  staffId?: string; // For staff
+  studentId?: string;
+  staffId?: string;
 }
 
 export interface StudentExam {
@@ -138,6 +166,12 @@ export interface StaffAssignment {
   status: 'assigned' | 'change-requested' | 'confirmed';
 }
 
+export interface StaffSchedules {
+  instructorSchedule: StaffAssignment[];
+  invigilatorSchedule: StaffAssignment[];
+  changeRequests: ChangeRequest[];
+}
+
 export interface ConflictReport {
   id: string;
   studentId: string;
@@ -157,9 +191,6 @@ export interface ChangeRequest {
   description?: string;
   status: 'pending' | 'approved' | 'denied';
   submittedAt: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
-  reviewNotes?: string;
 }
 
 export interface Notification {
@@ -170,7 +201,7 @@ export interface Notification {
   priority: 'low' | 'medium' | 'high' | 'urgent';
   isRead: boolean;
   createdAt: string;
-  relatedId?: string; // ID of related entity (conflict report, change request, etc.)
+  relatedId?: string;
   actionRequired?: boolean;
 }
 
@@ -183,108 +214,61 @@ export interface HistoryEntry {
   userName: string;
   timestamp: string;
   details: Record<string, any>;
-  changes?: {
-    before: Record<string, any>;
-    after: Record<string, any>;
-  };
+  changes?: { before: any, after: any };
 }
 
-export interface JobResult {
+export interface AcademicSession {
   id: string;
-  jobId: string;
   name: string;
-  status: 'success' | 'failed' | 'cancelled';
-  startTime: string;
-  endTime: string;
-  exams: Exam[];
-  metrics: {
-    totalExams: number;
-    hardConstraintViolations: number;
-    softConstraintViolations: number;
-    fitnessScore: number;
-    roomUtilization: number;
-    timeSlotUtilization: number;
-  };
-  constraints: Record<string, any>;
-  sessionId: string;
+  start_date: string;
+  end_date: string;
+  is_active: boolean;
 }
 
-export interface FilterOptions {
-  departments: string[];
-  faculties: string[];
-  rooms: string[];
-  students: string[];
-  staff: string[];
-  dateRange: {
-    start: string;
-    end: string;
-  };
-  timeSlots: string[];
-  examTypes: string[];
+export interface DashboardKPIs {
+  [key: string]: any;
 }
 
 export interface AppState {
-  // Navigation
   currentPage: string;
-  
-  // Authentication
   isAuthenticated: boolean;
   user: User | null;
-  
-  // Data
-  exams: Exam[];
+  exams: RenderableExam[];
   conflicts: Conflict[];
   activeSessionId: string | null;
-  
-  // Role-specific data
+  currentJobId: string | null;
   studentExams: StudentExam[];
-  staffAssignments: StaffAssignment[];
+  instructorSchedule: StaffAssignment[];
+  invigilatorSchedule: StaffAssignment[];
   conflictReports: ConflictReport[];
   changeRequests: ChangeRequest[];
-  
-  // Admin features
   notifications: Notification[];
   history: HistoryEntry[];
-  jobResults: JobResult[];
-  filterOptions: FilterOptions;
-  
-  // Status
   systemStatus: SystemStatus;
   schedulingStatus: SchedulingStatus;
   uploadStatus: UploadStatus;
-  
-  // Settings
   settings: AppSettings;
-  
-  // Actions
   setCurrentPage: (page: string) => void;
   setAuthenticated: (isAuth: boolean, user?: User | null) => void;
-  setExams: (exams: Exam[]) => void;
+  setTimetable: (timetableData: TimetableResponseData) => void;
   setConflicts: (conflicts: Conflict[]) => void;
   setSystemStatus: (status: Partial<SystemStatus>) => void;
   setSchedulingStatus: (status: Partial<SchedulingStatus>) => void;
   setUploadStatus: (status: Partial<UploadStatus>) => void;
   updateSettings: (settings: Partial<AppSettings>) => void;
   setStudentExams: (exams: StudentExam[]) => void;
-  setStaffAssignments: (assignments: StaffAssignment[]) => void;
-  addConflictReport: (report: Omit<ConflictReport, 'id' | 'submittedAt'>) => void;
-  addChangeRequest: (request: Omit<ChangeRequest, 'id' | 'submittedAt'>) => void;
+  setConflictReports: (reports: ConflictReport[]) => void;
+  setStaffSchedules: (schedules: StaffSchedules) => void;
+  addConflictReport: (report: Omit<ConflictReport, 'id' | 'status' | 'submittedAt'>) => void;
+  addChangeRequest: (request: Omit<ChangeRequest, 'id' | 'status' | 'submittedAt'>) => void;
   updateConflictReportStatus: (id: string, status: ConflictReport['status']) => void;
   updateChangeRequestStatus: (id: string, status: ChangeRequest['status']) => void;
-  
-  // Admin actions
   addNotification: (notification: Omit<Notification, 'id' | 'createdAt'>) => void;
   markNotificationAsRead: (id: string) => void;
   clearNotifications: () => void;
   addHistoryEntry: (entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => void;
-  addJobResult: (result: JobResult) => void;
-  updateFilterOptions: (options: Partial<FilterOptions>) => void;
-  
-  // Scheduling actions
-  startSchedulingJob: (sessionId: string) => Promise<void>;
-  pauseSchedulingJob: () => void;
-  resumeSchedulingJob: () => void;
-  cancelSchedulingJob: () => void;
-  
+  startSchedulingJob: () => Promise<void>;
+  cancelSchedulingJob: (jobId: string) => Promise<void>;
+  pollJobStatus: (jobId: string) => void;
   initializeApp: () => Promise<void>;
 }

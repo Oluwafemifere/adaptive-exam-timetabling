@@ -1,3 +1,4 @@
+// frontend/src/pages/History.tsx
 import React, { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -421,7 +422,7 @@ export function History() {
                           {formatTimestamp(entry.timestamp)}
                         </span>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {format(new Date(entry.timestamp), 'MMM d, yyyy HH:mm')}
+                          {new Date(entry.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'})}
                         </p>
                       </div>
                     </div>

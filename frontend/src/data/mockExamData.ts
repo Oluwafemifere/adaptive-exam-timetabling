@@ -1,3 +1,5 @@
+//frontend\src\data\mockExamData.ts
+// This file is now deprecated
 export interface Exam {
   id: string;
   courseCode: string;

@@ -19,15 +19,15 @@ from .scheduling import (
     ExamInvigilator,
     StaffUnavailability,
     TimetableAssignment,
-    TimeSlot,  # Added
-    AssignmentChangeRequest,  # Added
-    ConflictReport,  # Added
+    TimeSlotTemplate,  # Added
+    TimeSlotTemplatePeriod,  # Added
+    AssignmentChangeRequest,
+    ConflictReport,
 )
 from .infrastructure import (
     Building,
     RoomType,
     Room,
-    ExamAllowedRoom,
 )
 from .users import (
     User,
@@ -43,7 +43,7 @@ from .versioning import (
     VersionMetadata,
     VersionDependency,
     SessionTemplate,
-    TimetableConflict,  # Added
+    TimetableConflict,
 )
 from .constraints import (
     ConfigurationConstraint,
@@ -53,6 +53,7 @@ from .constraints import (
 from .audit_logs import AuditLog
 from .file_uploads import FileUploadSession, UploadedFile
 from .timetable_edits import TimetableEdit
+from .hitl import TimetableScenario, TimetableLock
 
 # Export all models for easy import
 __all__ = [
@@ -75,14 +76,14 @@ __all__ = [
     "ExamInvigilator",
     "StaffUnavailability",
     "TimetableAssignment",
-    "TimeSlot",
+    "TimeSlotTemplate",
+    "TimeSlotTemplatePeriod",
     "AssignmentChangeRequest",
     "ConflictReport",
     # Infrastructure models
     "Building",
     "RoomType",
     "Room",
-    "ExamAllowedRoom",
     # User and system models
     "User",
     "UserRole",
@@ -107,4 +108,7 @@ __all__ = [
     "FileUploadSession",
     "UploadedFile",
     "TimetableEdit",
+    # HITL models
+    "TimetableScenario",
+    "TimetableLock",
 ]

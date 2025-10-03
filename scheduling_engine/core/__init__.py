@@ -13,7 +13,7 @@ from .problem_model import (
 )
 from .solution import TimetableSolution, ExamAssignment, SolutionStatus
 from .constraint_registry import ConstraintRegistry
-from .metrics import SolutionMetrics, QualityScore, PerformanceMetrics
+from .metrics import SolutionMetrics, QualityScore
 from scheduling_engine.core.constraint_types import (
     ConstraintType,
     ConstraintCategory,
@@ -44,5 +44,4 @@ __all__ = [
     # Metrics and evaluation
     "SolutionMetrics",
     "QualityScore",
-    "PerformanceMetrics",
 ]

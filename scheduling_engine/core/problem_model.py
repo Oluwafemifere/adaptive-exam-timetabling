@@ -1,6 +1,5 @@
 # scheduling_engine/core/problem_model.py
 
-
 from __future__ import annotations
 import math
 import traceback
@@ -15,8 +14,13 @@ import uuid
 
 
 from scheduling_engine.core.constraint_registry import ConstraintRegistry
+from scheduling_engine.core.constraint_types import (
+    ConstraintDefinition,
+    ParameterDefinition,
+    ConstraintType,
+    ConstraintCategory,
+)
 
-# from ..data_flow_tracker import track_data_flow, DataFlowTracker
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,32 +65,6 @@ class Day:
     date: date
     timeslots: List[Timeslot] = field(default_factory=list)
 
-    def __post_init__(self):
-        if not self.timeslots:
-            logger.warning(
-                f"Day {self.id} is creating default timeslots as none were provided."
-            )
-            templates = [
-                ("Morning", time(9, 0), time(12, 0)),
-                ("Afternoon", time(12, 0), time(15, 0)),
-                ("Evening", time(15, 0), time(18, 0)),
-            ]
-
-            for name, start, end in templates:
-                slot = Timeslot(
-                    id=uuid4(),
-                    parent_day_id=self.id,
-                    name=name,
-                    start_time=start,
-                    end_time=end,
-                    duration_minutes=(end.hour - start.hour) * 60,
-                )
-                self.timeslots.append(slot)
-
-        # A day can have a variable number of timeslots based on user config
-        if len(self.timeslots) == 0:
-            logger.error(f"Day {self.id} has no timeslots.")
-
     def to_dict(self) -> Dict[str, Any]:
         """Converts the Day object to a dictionary."""
         return {
@@ -105,7 +83,6 @@ class Room:
     has_computers: bool = False
     adjacent_seat_pairs: List[Tuple[int, int]] = field(default_factory=list)
     building_name: Optional[str] = None
-    allowed_exams: Set[UUID] = field(default_factory=set)
 
     @property
     def overbookable(self) -> bool:
@@ -119,7 +96,6 @@ class Room:
         """Converts the Room object to a dictionary."""
         d = asdict(self)
         d["id"] = str(self.id)
-        d["allowed_exams"] = [str(eid) for eid in self.allowed_exams]
         return d
 
     @classmethod
@@ -145,7 +121,6 @@ class Room:
             has_computers=bool(data.get("has_computers", False)),
             adjacent_seat_pairs=adjacent_pairs_value,
             building_name=data.get("building_name"),
-            allowed_exams=data.get("allowed_exam_ids", set()),
         )
 
 
@@ -153,7 +128,9 @@ class Room:
 class Student:
     id: UUID
     department: Optional[str] = None
-    registered_courses: Set[UUID] = field(default_factory=set)
+    registered_courses: Dict[UUID, str] = field(
+        default_factory=dict
+    )  # CourseID -> RegistrationType
 
     @classmethod
     def from_backend_data(cls, data: Dict[str, Any]) -> "Student":
@@ -319,22 +296,30 @@ class Exam:
     is_practical: bool = False
     morning_only: bool = False
     actual_student_count: int = 0
-    department_name: Optional[str] = None
+    department_ids: Set[UUID] = field(default_factory=set)
     prerequisite_exams: Set[UUID] = field(default_factory=set)
     instructor_ids: Set[UUID] = field(default_factory=set)
+    instructors: List[Dict[str, Any]] = field(default_factory=list, repr=False)
+    departments: List[Dict[str, Any]] = field(default_factory=list, repr=False)
+    faculty_ids: Set[UUID] = field(default_factory=set)
+    faculties: List[Dict[str, Any]] = field(default_factory=list, repr=False)
 
     def __post_init__(self):
-        """Initialize internal student set"""
-        self._students: Set[UUID] = set()
+        """Initialize internal student dictionary to store registration type."""
+        self._students: Dict[UUID, str] = {}  # Student ID -> Registration Type
 
     @property
-    def students(self) -> Set[UUID]:
-        """Get students registered for this exam"""
+    def students(self) -> Dict[UUID, str]:
+        """Get students and their registration status for this exam."""
         return self._students
 
     @students.setter
-    def students(self, value: Set[UUID]) -> None:
-        """Set students with type safety"""
+    def students(self, value: Dict[UUID, str]) -> None:
+        """Set students with type safety, expecting a dictionary."""
+        if not isinstance(value, dict):
+            raise TypeError(
+                "Students must be a dictionary of {student_id: registration_type}"
+            )
         self._students = value
 
     @property
@@ -346,14 +331,6 @@ class Exam:
         """Alias for duration_minutes to maintain compatibility"""
         return self.duration_minutes
 
-    @property
-    def allowed_rooms(self) -> Set[UUID]:
-        return getattr(self, "_allowed_rooms", set())
-
-    @allowed_rooms.setter
-    def allowed_rooms(self, value: Set[UUID]):
-        self._allowed_rooms = value
-
     def to_dict(self) -> Dict[str, Any]:
         """Converts the Exam object to a dictionary."""
         return {
@@ -363,32 +340,38 @@ class Exam:
             "expected_students": self.expected_students,
             "is_practical": self.is_practical,
             "morning_only": self.morning_only,
-            "actual_student_count": self.actual_student_count,
+            "actual_student_count": len(self._students),
             "prerequisite_exams": [str(e) for e in self.prerequisite_exams],
-            "students": [str(s) for s in self._students],
+            "students": [
+                {"student_id": str(s_id), "registration_type": reg_type}
+                for s_id, reg_type in self._students.items()
+            ],
             "course_code": getattr(self, "course_code", "N/A"),
             "course_title": getattr(self, "course_title", "N/A"),
-            "allowed_rooms": [str(r) for r in self.allowed_rooms],
             "instructor_ids": [str(inst_id) for inst_id in self.instructor_ids],
-            "department_name": self.department_name,
+            "department_ids": [str(dept_id) for dept_id in self.department_ids],
+            "faculty_ids": [str(fac_id) for fac_id in self.faculty_ids],
+            "instructors": self.instructors,
+            "departments": self.departments,
+            "faculties": self.faculties,
         }
 
-    def set_students(self, student_ids: Set[UUID]) -> None:
-        """Set the complete student list for this exam"""
-        self._students = set(student_ids)
+    def set_students(self, students_with_status: Dict[UUID, str]) -> None:
+        """Set the complete student list for this exam with registration status."""
+        self._students = students_with_status
         if len(self._students) > self.expected_students:
             self.expected_students = len(self._students)
 
-    def add_student(self, student_id: UUID) -> None:
-        """Add a single student to this exam"""
-        self._students.add(student_id)
+    def add_student(self, student_id: UUID, registration_type: str = "normal") -> None:
+        """Add a single student to this exam with their registration status."""
+        self._students[student_id] = registration_type
 
     def remove_student(self, student_id: UUID) -> None:
-        """Remove a student from this exam"""
-        self._students.discard(student_id)
+        """Remove a student from this exam."""
+        self._students.pop(student_id, None)
 
     def has_student(self, student_id: UUID) -> bool:
-        """Check if a student is registered for this exam"""
+        """Check if a student is registered for this exam."""
         return student_id in self._students
 
     @classmethod
@@ -414,29 +397,50 @@ class Exam:
             prerequisite_exams=data.get("prerequisite_exams", set()),
         )
 
+        if "instructors" in data and data["instructors"]:
+            exam.instructors = data["instructors"]
+            exam.instructor_ids = {
+                UUID(str(inst["id"])) for inst in data["instructors"]
+            }
+
+        if "departments" in data and data["departments"]:
+            exam.departments = data["departments"]
+            exam.department_ids = {
+                UUID(str(dept["id"])) for dept in data["departments"]
+            }
+
+        if "faculties" in data and data["faculties"]:
+            exam.faculties = data["faculties"]
+            exam.faculty_ids = {
+                UUID(str(faculty["id"])) for faculty in data["faculties"]
+            }
+
         if "students" in data and data["students"]:
             exam.set_students(data["students"])
 
-        exam.department_name = data.get("department_name")
+        if "department_ids" in data and data["department_ids"]:
+            exam.department_ids = {
+                UUID(str(dept_id)) for dept_id in data["department_ids"]
+            }
+
+        if "faculty_ids" in data and data["faculty_ids"]:
+            exam.faculty_ids = {UUID(str(fac_id)) for fac_id in data["faculty_ids"]}
         setattr(exam, "course_code", data.get("course_code", "N/A"))
         setattr(exam, "course_title", data.get("course_title", "N/A"))
 
         if "instructor_ids" in data and data["instructor_ids"]:
             exam.instructor_ids = data["instructor_ids"]
 
-        if "actual_student_count" in data:
-            actual_count = int(data["actual_student_count"])
-            if actual_count > exam.expected_students:
-                exam.expected_students = actual_count
-
-        if "allowed_rooms" in data:
-            exam.allowed_rooms = data["allowed_rooms"]
+        # actual_student_count is now derived from the length of the students dict
+        actual_count = len(exam.students)
+        if actual_count > exam.expected_students:
+            exam.expected_students = actual_count
 
         return exam
 
 
 class ExamSchedulingProblem:
-    """ENHANCED: Problem model with robust backend data integration"""
+    """ENHANCED: Problem model with robust backend data integration and HITL support"""
 
     def __init__(
         self,
@@ -445,18 +449,15 @@ class ExamSchedulingProblem:
         exam_period_end: date,
         db_session: Optional["AsyncSession"] = None,
         deterministic_seed: Optional[int] = None,
-        exam_days_count: Optional[int] = None,
     ):
         self.id = uuid4()
         self.session_id = session_id
         self.exam_period_start = exam_period_start
         self.exam_period_end = exam_period_end
-        self.exam_days_count = exam_days_count
 
         # Core data structures
         self.holidays: Set[date] = set()
         self.days: Dict[UUID, Day] = {}
-        self._date_range_configured = True
         self.deterministic_seed = deterministic_seed
 
         # Entities with UUID keys
@@ -474,9 +475,34 @@ class ExamSchedulingProblem:
         self.invigilators: Dict[UUID, Invigilator] = {}
         self.staff: Dict[UUID, Staff] = {}
 
-        # HITL and Dynamic Configuration
+        # --- HITL and Dynamic Configuration ---
         self.locks: List[Dict[str, Any]] = []
-        self.constraints_config: Dict[str, Any] = {}
+        self.constraint_definitions: List[ConstraintDefinition] = []
+        self.module_map: Dict[str, str] = {
+            # --- CORE (Always Enforced by Manager) ---
+            "StartUniquenessConstraint": "scheduling_engine.constraints.hard_constraints.start_uniqueness.StartUniquenessConstraint",
+            "OccupancyDefinitionConstraint": "scheduling_engine.constraints.hard_constraints.occupancy_definition.OccupancyDefinitionConstraint",
+            "RoomAssignmentConsistencyConstraint": "scheduling_engine.constraints.hard_constraints.room_assignment_consistency.RoomAssignmentConsistencyConstraint",
+            "RoomContinuityConstraint": "scheduling_engine.constraints.hard_constraints.room_continuity.RoomContinuityConstraint",
+            "StartFeasibilityConstraint": "scheduling_engine.constraints.hard_constraints.start_feasibility.StartFeasibilityConstraint",
+            "InvigilatorSinglePresenceConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_single_presence.InvigilatorSinglePresenceConstraint",
+            # --- DYNAMIC HARD (Configurable) ---
+            "UNIFIED_STUDENT_CONFLICT": "scheduling_engine.constraints.hard_constraints.unified_student_conflict.UnifiedStudentConflictConstraint",
+            "MAX_EXAMS_PER_STUDENT_PER_DAY": "scheduling_engine.constraints.hard_constraints.max_exams_per_student_per_day.MaxExamsPerStudentPerDayConstraint",
+            "ROOM_CAPACITY_HARD": "scheduling_engine.constraints.hard_constraints.room_capacity_hard.RoomCapacityHardConstraint",
+            "MINIMUM_INVIGILATORS": "scheduling_engine.constraints.hard_constraints.minimum_invigilators.MinimumInvigilatorsConstraint",
+            "INSTRUCTOR_CONFLICT": "scheduling_engine.constraints.hard_constraints.instructor_conflict.InstructorConflictConstraint",
+            "ROOM_SEQUENTIAL_USE": "scheduling_engine.constraints.hard_constraints.room_sequential_use.RoomSequentialUseConstraint",
+            # --- DYNAMIC SOFT (Configurable) ---
+            "MINIMUM_GAP": "scheduling_engine.constraints.soft_constraints.minimum_gap.MinimumGapConstraint",
+            "OVERBOOKING_PENALTY": "scheduling_engine.constraints.soft_constraints.overbooking_penalty.OverbookingPenaltyConstraint",
+            "PREFERENCE_SLOTS": "scheduling_engine.constraints.soft_constraints.preference_slots.PreferenceSlotsConstraint",
+            "INVIGILATOR_LOAD_BALANCE": "scheduling_engine.constraints.soft_constraints.invigilator_load_balance.InvigilatorLoadBalanceConstraint",
+            "CARRYOVER_STUDENT_CONFLICT": "scheduling_engine.constraints.soft_constraints.carryover_student_conflict.CarryoverStudentConflictConstraint",
+            "INVIGILATOR_AVAILABILITY": "scheduling_engine.constraints.soft_constraints.invigilator_availability.InvigilatorAvailabilityConstraint",
+            "DAILY_WORKLOAD_BALANCE": "scheduling_engine.constraints.soft_constraints.daily_workload_balance.DailyWorkloadBalanceConstraint",
+            "ROOM_DURATION_HOMOGENEITY": "scheduling_engine.constraints.soft_constraints.room_duration_homogeneity.RoomDurationHomogeneityConstraint",
+        }
 
         self.constraint_registry = ConstraintRegistry()
         # Scheduling parameters
@@ -493,6 +519,9 @@ class ExamSchedulingProblem:
         self.min_gap_slots = 1
         self.max_exams_per_day = 3
         self.overbook_rate = 0.1
+        self.base_slot_duration_minutes: int = 180
+        self.slot_generation_mode: str = "flexible"  # 'fixed' or 'flexible'
+        self.flexible_slot_duration_minutes: int = 60  # Duration for flexible slots
 
         # Backend integration
         self.db_session = db_session
@@ -521,76 +550,85 @@ class ExamSchedulingProblem:
     def ensure_constraints_activated(self) -> None:
         """Ensure minimum constraints are activated - called from main.py"""
         if not self.constraint_registry.get_active_constraints():
-            self.constraint_registry.configure_basic()
-            logger.info("Activated basic constraints as fallback")
+            # Activate all constraints that were loaded and marked as enabled
+            for definition in self.constraint_definitions:
+                if definition.enabled:
+                    self.constraint_registry.activate(definition.id)
+            logger.info("Activated all enabled constraints from configuration.")
 
-    def _generate_days_with_timeslots(self) -> Dict[UUID, Day]:
-        """
-        Generates days with default timeslots based on configured exam period dates.
-        This is a FALLBACK for when no day/timeslot data is provided by the dataset.
-        """
-        days = {}
-        current_date = self.exam_period_start
-        days_generated = 0
+    def _parse_constraint_definitions(self, constraints_data: Dict[str, Any]) -> None:
+        """Parses the raw constraint JSON from the DB into structured dataclasses."""
+        self.constraint_definitions = []
+        rules = constraints_data.get("rules", [])
+        config_id = self._ensure_uuid(constraints_data.get("system_configuration_id"))
 
-        target_days = (
-            self.exam_days_count
-            if self.exam_days_count
-            else ((self.exam_period_end - self.exam_period_start).days + 1)
-        )
+        # Define a comprehensive map for known constraints to ensure correct categorization.
+        known_categories = {
+            # Core/Foundational
+            "StartUniquenessConstraint": ConstraintCategory.CORE,
+            "StartFeasibilityConstraint": ConstraintCategory.CORE,
+            "OccupancyDefinitionConstraint": ConstraintCategory.CORE,
+            "RoomContinuityConstraint": ConstraintCategory.CORE,
+            "RoomAssignmentConsistencyConstraint": ConstraintCategory.CORE,
+            # Student Constraints
+            "UnifiedStudentConflictConstraint": ConstraintCategory.STUDENT_CONSTRAINTS,
+            "MAX_EXAMS_PER_STUDENT_PER_DAY": ConstraintCategory.STUDENT_CONSTRAINTS,
+            "MaxExamsPerStudentPerDayConstraint": ConstraintCategory.STUDENT_CONSTRAINTS,
+            "MinimumGapConstraint": ConstraintCategory.STUDENT_CONSTRAINTS,
+            "MINIMUM_GAP": ConstraintCategory.STUDENT_CONSTRAINTS,
+            # Resource Constraints
+            "RoomCapacityHardConstraint": ConstraintCategory.RESOURCE_CONSTRAINTS,
+            "RoomSequentialUseConstraint": ConstraintCategory.RESOURCE_CONSTRAINTS,
+            # Invigilator Constraints
+            "MinimumInvigilatorsConstraint": ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+            "MINIMUM_INVIGILATORS": ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+            "InvigilatorSinglePresenceConstraint": ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+            # Optimization Constraints
+            "RoomDurationHomogeneityConstraint": ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
+        }
 
-        default_templates = [
-            {"name": "Morning", "start_time": "09:00:00", "end_time": "12:00:00"},
-            {"name": "Afternoon", "start_time": "12:00:00", "end_time": "15:00:00"},
-            {"name": "Evening", "start_time": "15:00:00", "end_time": "18:00:00"},
-        ]
+        for rule in rules:
+            try:
+                rule_code = rule["code"]
+                category_enum = known_categories.get(
+                    rule_code, ConstraintCategory.OTHER
+                )
+
+                custom_params_data = rule.get("custom_parameters") or []
+                params = [
+                    ParameterDefinition(
+                        key=p["key"],
+                        value=p.get("value"),
+                        type=p.get("type", "any"),
+                        default=p.get("default"),
+                        description=p.get("description"),
+                        options=p.get("options"),
+                        validation=p.get("validation", {}),
+                    )
+                    for p in custom_params_data
+                ]
+
+                definition = ConstraintDefinition(
+                    id=rule_code,
+                    name=rule.get("name", rule_code),
+                    description=rule.get("description", ""),
+                    constraint_type=ConstraintType(rule.get("type", "soft")),
+                    category=category_enum,
+                    enabled=rule.get("is_enabled", True),
+                    weight=float(rule.get("weight", 1.0)),
+                    parameters=params,
+                    config_id=config_id,
+                    database_rule_id=self._ensure_uuid(rule.get("id")),
+                )
+                self.constraint_definitions.append(definition)
+            except Exception as e:
+                logger.error(
+                    f"Failed to parse constraint rule {rule.get('code', 'N/A')}: {e}"
+                )
 
         logger.info(
-            f"Generating fallback weekdays from {self.exam_period_start} to {self.exam_period_end} "
-            f"(target: {target_days} days)"
+            f"Loaded and parsed {len(self.constraint_definitions)} constraint definitions."
         )
-        holidays_set = self.holidays
-
-        while days_generated < target_days and current_date <= self.exam_period_end:
-            if current_date.weekday() < 5 and current_date not in holidays_set:
-                day_id = uuid4()
-                day_timeslots = []
-
-                for template in default_templates:
-                    try:
-                        start_t = time.fromisoformat(template["start_time"])
-                        end_t = time.fromisoformat(template["end_time"])
-                        duration = (end_t.hour - start_t.hour) * 60 + (
-                            end_t.minute - start_t.minute
-                        )
-
-                        slot = Timeslot(
-                            id=uuid4(),
-                            parent_day_id=day_id,
-                            name=template["name"],
-                            start_time=start_t,
-                            end_time=end_t,
-                            duration_minutes=duration,
-                        )
-                        day_timeslots.append(slot)
-                    except (ValueError, KeyError) as e:
-                        logger.error(
-                            f"Skipping invalid default timeslot template {template}: {e}"
-                        )
-                        continue
-
-                day = Day(id=day_id, date=current_date, timeslots=day_timeslots)
-                days[day.id] = day
-                self.day_timeslot_map[day.id] = {slot.id for slot in day.timeslots}
-                days_generated += 1
-
-            current_date += timedelta(days=1)
-
-        logger.info(
-            f"Generated {len(days)} fallback days with {sum(len(day.timeslots) for day in days.values())} "
-            f"total timeslots."
-        )
-        return days
 
     @property
     def timeslots(self) -> Dict[UUID, Timeslot]:
@@ -616,6 +654,10 @@ class ExamSchedulingProblem:
         day = self.days.get(day_id)
         return day.timeslots if day else []
 
+    def get_students_for_course(self, course_id: UUID) -> Set[UUID]:
+        """Get all students registered for a specific course."""
+        return self.course_students.get(course_id, set())
+
     async def load_from_backend(self, dataset: "ProblemModelCompatibleDataset") -> None:
         """Enhanced loading with comprehensive logging AND FIXED DATA MAPPING"""
         logger.info("=== PROBLEM MODEL LOADING START ===")
@@ -630,35 +672,19 @@ class ExamSchedulingProblem:
 
             if hasattr(dataset, "instructors") and dataset.instructors:
                 for instructor_data in dataset.instructors:
-                    try:
-                        instructor = Instructor.from_backend_data(instructor_data)
-                        self.add_instructor(instructor)
-                    except Exception as e:
-                        logger.error(
-                            f"Error loading instructor {instructor_data.get('id', 'unknown')}: {e}"
-                        )
+                    self.add_instructor(Instructor.from_backend_data(instructor_data))
                 logger.info(f"✅ INSTRUCTORS: {len(self.instructors)} loaded")
-            else:
-                logger.warning("🟡 WARNING: No instructors loaded from dataset!")
-
-            for entity_type, count in entities_loaded.items():
-                if count == 0:
-                    if entity_type in ["exams", "rooms"]:
-                        logger.error(f"🔴 CRITICAL: No {entity_type} loaded!")
-                    else:
-                        logger.warning(f"🟡 WARNING: No {entity_type} loaded!")
-                else:
-                    logger.info(f"✅ {entity_type.upper()}: {count} loaded")
 
             # Phase 2: Load HITL and Configuration Data
             logger.info("📋 PHASE 2: Loading HITL data and constraints...")
             self.locks = dataset.locks
-            self.constraints_config = dataset.constraints
-            logger.info(
-                f"✅ Loaded {len(self.locks)} locks and constraint configuration."
+            self._parse_constraint_definitions(dataset.constraints)
+            self.constraint_registry.load_definitions(
+                self.constraint_definitions, self.module_map
             )
-            # TODO: The scheduling engine will now use self.locks as immutable hard constraints
-            # when building the model for the solver.
+            logger.info(
+                f"✅ Loaded {len(self.locks)} locks and {len(self.constraint_definitions)} constraint definitions."
+            )
 
             # Phase 3: Relationship validation
             logger.info("📋 PHASE 3: Validating relationships...")
@@ -666,30 +692,26 @@ class ExamSchedulingProblem:
 
             # Phase 4: Student-exam mapping application
             logger.info("📋 PHASE 4: Applying student-exam mappings...")
+            self._apply_exam_student_data(dataset.exams)
+            self._log_exam_student_statistics()
 
-            if dataset.course_registrations:
-                logger.info(
-                    f"Populating internal student-course mappings from {len(dataset.course_registrations)} registrations."
-                )
-                for reg in dataset.course_registrations:
-                    student_id = self._ensure_uuid(reg["student_id"])
-                    course_id = self._ensure_uuid(reg["course_id"])
-                    if student_id in self.students and course_id:
-                        self.register_student_course(student_id, course_id)
-            else:
-                logger.warning(
-                    "No course registrations found in the dataset to build internal mappings."
-                )
-
-            if dataset.student_exam_mappings:
-                self._apply_exact_student_exam_mappings(dataset.student_exam_mappings)
-                self._log_exam_student_statistics()
-
-            self.populate_exam_students()
+            # Phase 4a: Build course-student mappings for quick lookup
+            logger.info("📋 PHASE 4a: Building course-student mappings...")
+            self._build_course_student_mappings()
 
             # Phase 5: Day and timeslot configuration from dataset
             logger.info("📋 PHASE 5: Configuring days and timeslots from dataset...")
             self._configure_days_and_timeslots(dataset)
+
+            # --- START OF FIX: Process and translate locks after timeslots are created ---
+            # logger.info("📋 PHASE 5a: Translating HITL locks to specific timeslots...")
+            # self._process_and_translate_locks(dataset)
+            # --- END OF FIX ---
+
+            # --- START OF FIX: Conditionally activate constraints based on config ---
+            logger.info("📋 PHASE 5b: Activating constraints from configuration...")
+            self._activate_constraints_from_config()
+            # --- END OF FIX ---
 
             # Phase 6: Final validation
             logger.info("📋 PHASE 6: Final validation...")
@@ -699,8 +721,9 @@ class ExamSchedulingProblem:
                 logger.error(
                     f"🔴 VALIDATION FAILED: {validation_result.get('errors', [])}"
                 )
-                logger.warning("🔧 Attempting data recovery...")
-                self._attempt_data_recovery(validation_result)
+                raise ValueError(
+                    f"Problem data validation failed: {validation_result.get('errors')}"
+                )
 
             logger.info("✅ Problem model loading completed successfully")
 
@@ -709,280 +732,65 @@ class ExamSchedulingProblem:
             logger.error(f"📍 Stack trace: {traceback.format_exc()}")
             raise
 
+    # --- START OF FIX ---
+    def _activate_constraints_from_config(self) -> None:
+        """
+        Activates all constraints that are marked as 'enabled' in the loaded
+        database configuration. Also handles conditional activation based on
+        problem settings like slot generation mode.
+        """
+        # 1. Activate all constraints marked as enabled in the configuration.
+        activated_count = 0
+        for definition in self.constraint_definitions:
+            if definition.enabled:
+                self.constraint_registry.activate(definition.id)
+                activated_count += 1
+
+        logger.info(
+            f"Activated {activated_count} constraints based on 'enabled' flag in configuration."
+        )
+
+        # 2. Conditionally activate mode-specific constraints (if not already active).
+        if self.slot_generation_mode == "flexible":
+            logger.info(
+                "Flexible slot mode detected. Ensuring mode-specific constraints are active."
+            )
+            constraints_to_activate = [
+                "ROOM_SEQUENTIAL_USE",
+                "ROOM_DURATION_HOMOGENEITY",
+            ]
+            for constraint_id in constraints_to_activate:
+                if self.constraint_registry.get_definition(constraint_id):
+                    # The activate method handles duplicates, so it's safe to call again.
+                    self.constraint_registry.activate(constraint_id)
+                else:
+                    logger.warning(
+                        f"Attempted to activate '{constraint_id}' for flexible mode, but it is not defined."
+                    )
+        else:
+            logger.info(
+                "Fixed slot mode detected. No additional conditional constraints needed."
+            )
+
+    # --- END OF FIX ---
+
+    def _build_course_student_mappings(self):
+        """Populates the self.course_students dictionary for quick lookups."""
+        self.course_students.clear()
+        for exam in self.exams.values():
+            if exam.course_id and exam.students:
+                # The keys of the exam.students dict are the student UUIDs
+                self.course_students[exam.course_id].update(exam.students.keys())
+        logger.info(f"Built mappings for {len(self.course_students)} courses.")
+
     def _log_exam_student_statistics(self) -> None:
         """Log detailed exam-student mapping statistics"""
         logger.info("=== EXAM-STUDENT MAPPING STATISTICS ===")
-
-        total_mappings = 0
-        exams_with_students = 0
-        exams_without_students = []
-        student_distribution = []
-
-        for exam_id, exam in self.exams.items():
-            student_count = len(exam.students) if hasattr(exam, "students") else 0
-            total_mappings += student_count
-
-            if student_count > 0:
-                exams_with_students += 1
-                student_distribution.append(student_count)
-            else:
-                course_code = getattr(exam, "course_code", "Unknown")
-                exams_without_students.append(
-                    {
-                        "exam_id": exam_id,
-                        "course_code": course_code,
-                        "expected_students": getattr(exam, "expected_students", 0),
-                    }
-                )
-
-        logger.info(f"📊 MAPPING SUMMARY:")
-        logger.info(f"  📈 Total mappings: {total_mappings}")
+        total_mappings = sum(len(exam.students) for exam in self.exams.values())
+        exams_with_students = sum(1 for exam in self.exams.values() if exam.students)
         logger.info(
-            f"  ✅ Exams with students: {exams_with_students}/{len(self.exams)}"
+            f"📊 MAPPING SUMMARY: {total_mappings} total mappings across {exams_with_students}/{len(self.exams)} exams."
         )
-        logger.info(f"  ❌ Exams without students: {len(exams_without_students)}")
-
-        if student_distribution:
-            avg_students = sum(student_distribution) / len(student_distribution)
-            min_students = min(student_distribution)
-            max_students = max(student_distribution)
-            logger.info(
-                f"  📈 Students per exam - Min: {min_students}, Max: {max_students}, Avg: {avg_students:.1f}"
-            )
-
-        if exams_without_students:
-            logger.warning(f"🚨 EXAMS WITHOUT STUDENTS:")
-            for exam_info in exams_without_students[:5]:
-                logger.warning(
-                    f"  👻 {exam_info['course_code']} (ID: {exam_info['exam_id']})"
-                )
-
-    def _load_exams(self, exam_data_list: List[Dict[str, Any]]) -> int:
-        """Load exams with tracking"""
-        exams_loaded = 0
-        for exam_data in exam_data_list:
-            try:
-                self._validate_exam_data(exam_data)
-                exam = Exam.from_backend_data(exam_data)
-                self.add_exam(exam)
-                exams_loaded += 1
-            except Exception as e:
-                logger.error(
-                    f"Error loading exam {exam_data.get('id', 'unknown')}: {e}"
-                )
-                continue
-
-        return exams_loaded
-
-    def _load_rooms(self, room_data_list: List[Dict[str, Any]]) -> int:
-        """Load rooms with tracking"""
-        rooms_loaded = 0
-        for room_data in room_data_list:
-            try:
-                self._validate_room_data(room_data)
-                room = Room.from_backend_data(room_data)
-                self.add_room(room)
-                rooms_loaded += 1
-            except Exception as e:
-                logger.error(
-                    f"Error loading room {room_data.get('id', 'unknown')}: {e}"
-                )
-                continue
-
-        return rooms_loaded
-
-    def _validate_dataset_relationships(
-        self, dataset: ProblemModelCompatibleDataset, entities_loaded: Dict[str, int]
-    ) -> None:
-        """Validate relationships between entities in the dataset"""
-        validation_errors = []
-        warnings = []
-
-        if entities_loaded["exams"] > 0 and entities_loaded["students"] > 0:
-            if (
-                not hasattr(dataset, "student_exam_mappings")
-                or not dataset.student_exam_mappings
-            ):
-                warnings.append("No student-exam mappings found")
-
-            exams_with_students = 0
-            for exam in self.exams.values():
-                if hasattr(exam, "_students") and exam._students:
-                    exams_with_students += 1
-
-            if exams_with_students == 0 and len(self.exams) > 0:
-                warnings.append("No exams have students assigned")
-
-        if entities_loaded["exams"] > 0 and entities_loaded["rooms"] > 0:
-            max_exam_size = max(exam.expected_students for exam in self.exams.values())
-            max_room_capacity = max(room.exam_capacity for room in self.rooms.values())
-
-            if max_exam_size > max_room_capacity:
-                validation_errors.append(
-                    f"Largest exam ({max_exam_size} students) exceeds largest room capacity ({max_room_capacity})"
-                )
-
-        if entities_loaded["exams"] > 0 and entities_loaded["invigilators"] > 0:
-            total_invigilator_capacity = sum(
-                invigilator.max_students_per_exam
-                for invigilator in self.invigilators.values()
-            )
-            total_student_exams = sum(
-                exam.expected_students for exam in self.exams.values()
-            )
-
-            if total_invigilator_capacity < total_student_exams:
-                warnings.append(
-                    f"Insufficient invigilator capacity ({total_invigilator_capacity}) for total student exams ({total_student_exams})"
-                )
-
-        if validation_errors:
-            error_msg = f"Dataset relationship validation failed: {'; '.join(validation_errors)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        if warnings:
-            logger.warning(f"Dataset relationship warnings: {'; '.join(warnings)}")
-
-    def _attempt_data_recovery(self, validation_result: Dict[str, Any]) -> None:
-        """Attempt to recover from data validation errors"""
-        logger.warning("Attempting data recovery after validation failures...")
-
-        recovery_actions = []
-
-        if not self.days:
-            recovery_actions.append(
-                "No days loaded, attempting to generate fallback days."
-            )
-            self._generate_fallback_days()
-
-        if self.exams and self.rooms:
-            max_exam_size = max(exam.expected_students for exam in self.exams.values())
-            max_room_capacity = max(room.exam_capacity for room in self.rooms.values())
-
-            if max_exam_size > max_room_capacity:
-                for room in self.rooms.values():
-                    if room.exam_capacity < max_exam_size:
-                        room.exam_capacity = max_exam_size
-                        recovery_actions.append(
-                            f"Increased room {room.code} capacity to {max_exam_size}"
-                        )
-
-        if not self.invigilators and self.staff:
-            recovery_actions.append("Creating invigilators from staff")
-            for staff_member in self.staff.values():
-                if getattr(staff_member, "can_invigilate", True):
-                    invigilator = Invigilator.from_staff(staff_member)
-                    self.add_invigilator(invigilator)
-
-        if recovery_actions:
-            logger.info(f"Data recovery actions: {recovery_actions}")
-        else:
-            logger.warning("No specific recovery actions were taken")
-
-    def _validate_room_data(self, room_data: Dict[str, Any]) -> None:
-        """Validate room data before loading"""
-        required_fields = ["id", "code", "capacity"]
-        for field in required_fields:
-            if field not in room_data or room_data[field] is None:
-                raise ValueError(f"Room missing required field: {field}")
-
-        capacity = room_data.get("capacity", 0)
-        exam_capacity = room_data.get("exam_capacity", capacity)
-
-        if capacity <= 0:
-            raise ValueError(
-                f"Room {room_data['code']} has invalid capacity: {capacity}"
-            )
-
-        if exam_capacity <= 0:
-            raise ValueError(
-                f"Room {room_data['code']} has invalid exam capacity: {exam_capacity}"
-            )
-
-        if exam_capacity > capacity * 2:
-            logger.warning(
-                f"Room {room_data['code']} has high exam capacity ({exam_capacity}) compared to normal capacity ({capacity})"
-            )
-
-    def _validate_student_data(self, student_data: Dict[str, Any]) -> None:
-        """Validate student data before loading"""
-        required_fields = ["id"]
-        for field in required_fields:
-            if field not in student_data or student_data[field] is None:
-                raise ValueError(f"Student missing required field: {field}")
-
-        try:
-            student_id = student_data["id"]
-            if not isinstance(student_id, UUID):
-                UUID(str(student_id))
-        except ValueError as e:
-            raise ValueError(f"Invalid student ID format: {student_data['id']}") from e
-
-        department = student_data.get("department")
-        if department and not isinstance(department, str):
-            logger.warning(
-                f"Student {student_data['id']} has non-string department: {department}"
-            )
-
-    def _validate_invigilator_data(self, invigilator_data: Dict[str, Any]) -> None:
-        """Validate invigilator data before loading"""
-        required_fields = ["id", "name"]
-        for field in required_fields:
-            if field not in invigilator_data or invigilator_data[field] is None:
-                raise ValueError(f"Invigilator missing required field: {field}")
-
-        try:
-            invigilator_id = invigilator_data["id"]
-            if not isinstance(invigilator_id, UUID):
-                UUID(str(invigilator_id))
-        except ValueError as e:
-            raise ValueError(
-                f"Invalid invigilator ID format: {invigilator_data['id']}"
-            ) from e
-
-        max_concurrent = invigilator_data.get("max_concurrent_exams", 1)
-        if max_concurrent < 0:
-            raise ValueError(
-                f"Invigilator {invigilator_data['name']} has invalid max_concurrent_exams: {max_concurrent}"
-            )
-
-        max_students = invigilator_data.get("max_students_per_exam", 50)
-        if max_students <= 0:
-            raise ValueError(
-                f"Invigilator {invigilator_data['name']} has invalid max_students_per_exam: {max_students}"
-            )
-
-        availability = invigilator_data.get("availability", {})
-        if availability and not isinstance(availability, dict):
-            logger.warning(
-                f"Invigilator {invigilator_data['name']} has invalid availability format"
-            )
-
-    def _validate_dataset_completeness(
-        self, dataset: ProblemModelCompatibleDataset
-    ) -> None:
-        """Validate that dataset contains all required components"""
-        validation_errors = []
-
-        if not dataset.exams:
-            validation_errors.append("No exams in dataset")
-        if not dataset.rooms:
-            validation_errors.append("No rooms in dataset")
-        if not dataset.students:
-            validation_errors.append("No students in dataset")
-        if not dataset.course_registrations:
-            logger.warning("No course registrations in dataset")
-
-        if len(dataset.exams) < 1:
-            validation_errors.append("At least one exam required")
-        if len(dataset.rooms) < 1:
-            validation_errors.append("At least one room required")
-
-        if validation_errors:
-            error_msg = f"Dataset validation failed: {'; '.join(validation_errors)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
 
     def _load_entities_with_validation(
         self, dataset: ProblemModelCompatibleDataset
@@ -992,85 +800,173 @@ class ExamSchedulingProblem:
 
         for exam_data in dataset.exams:
             try:
-                self._validate_exam_data(exam_data)
-                exam = Exam.from_backend_data(exam_data)
-                self.add_exam(exam)
+                self.add_exam(Exam.from_backend_data(exam_data))
                 entities_loaded["exams"] += 1
             except Exception as e:
                 logger.error(
                     f"Error loading exam {exam_data.get('id', 'unknown')}: {e}"
                 )
-                continue
-
         for room_data in dataset.rooms:
             try:
-                self._validate_room_data(room_data)
-                room = Room.from_backend_data(room_data)
-                self.add_room(room)
+                self.add_room(Room.from_backend_data(room_data))
                 entities_loaded["rooms"] += 1
             except Exception as e:
                 logger.error(
                     f"Error loading room {room_data.get('id', 'unknown')}: {e}"
                 )
-                continue
-
         for student_data in dataset.students:
             try:
-                self._validate_student_data(student_data)
-                student = Student.from_backend_data(student_data)
-                self.add_student(student)
+                self.add_student(Student.from_backend_data(student_data))
                 entities_loaded["students"] += 1
             except Exception as e:
                 logger.error(
                     f"Error loading student {student_data.get('id', 'unknown')}: {e}"
                 )
-                continue
-
         for invigilator_data in dataset.invigilators:
             try:
-                self._validate_invigilator_data(invigilator_data)
-                invigilator = Invigilator.from_backend_data(invigilator_data)
-                self.add_invigilator(invigilator)
+                self.add_invigilator(Invigilator.from_backend_data(invigilator_data))
                 entities_loaded["invigilators"] += 1
             except Exception as e:
                 logger.error(
                     f"Error loading invigilator {invigilator_data.get('id', 'unknown')}: {e}"
                 )
-                continue
 
         logger.info(f"Entities loaded: {entities_loaded}")
         return entities_loaded
 
-    def _validate_exam_data(self, exam_data: Dict[str, Any]) -> None:
-        """Validate exam data before loading"""
-        required_fields = ["id", "course_id", "duration_minutes"]
-        for field in required_fields:
-            if field not in exam_data or exam_data[field] is None:
-                raise ValueError(f"Missing required field: {field}")
+    def _validate_dataset_relationships(
+        self, dataset: ProblemModelCompatibleDataset, entities_loaded: Dict[str, int]
+    ) -> None:
+        """Validate relationships between entities in the dataset"""
+        if entities_loaded["exams"] > 0 and entities_loaded["rooms"] > 0:
+            max_exam_size = max(exam.expected_students for exam in self.exams.values())
+            max_room_capacity = max(room.exam_capacity for room in self.rooms.values())
+            if max_exam_size > max_room_capacity:
+                raise ValueError(
+                    f"Largest exam ({max_exam_size} students) exceeds largest room capacity ({max_room_capacity})"
+                )
 
-        if exam_data.get("expected_students", 0) < 0:
-            raise ValueError("expected_students cannot be negative")
+    def _generate_fallback_days(self) -> None:
+        """
+        Generates a default set of weekdays and timeslots as a fallback mechanism
+        only when the dataset provides no schedule information.
+        """
+        logger.warning(
+            "Executing fallback day generation. The schedule will be based on a default Mon-Fri, 3-slots-per-day structure."
+        )
+        # Default timeslot definitions if none are provided
+        default_timeslots_def = [
+            {"name": "Morning", "start": "09:00", "end": "12:00"},
+            {"name": "Afternoon", "start": "13:00", "end": "16:00"},
+            {"name": "Evening", "start": "17:00", "end": "20:00"},
+        ]
+
+        current_date = self.exam_period_start
+        while current_date <= self.exam_period_end:
+            # Skip weekends (Saturday=5, Sunday=6) and holidays
+            if current_date.weekday() >= 5 or current_date in self.holidays:
+                current_date += timedelta(days=1)
+                continue
+
+            day_id = uuid4()
+            day_timeslots = []
+            for ts_def in default_timeslots_def:
+                start_t = time.fromisoformat(ts_def["start"])
+                end_t = time.fromisoformat(ts_def["end"])
+                duration = (
+                    datetime.combine(date.min, end_t)
+                    - datetime.combine(date.min, start_t)
+                ).seconds // 60
+
+                timeslot = Timeslot(
+                    id=uuid4(),
+                    parent_day_id=day_id,
+                    name=ts_def["name"],
+                    start_time=start_t,
+                    end_time=end_t,
+                    duration_minutes=duration,
+                )
+                day_timeslots.append(timeslot)
+
+            day = Day(id=day_id, date=current_date, timeslots=day_timeslots)
+            self.days[day.id] = day
+            self.day_timeslot_map[day.id] = {slot.id for slot in day.timeslots}
+            current_date += timedelta(days=1)
+
+        logger.info(
+            f"Generated {len(self.days)} fallback days with {len(self.timeslots)} total timeslots."
+        )
 
     def _configure_days_and_timeslots(
-        self, dataset: ProblemModelCompatibleDataset
+        self, dataset: "ProblemModelCompatibleDataset"
     ) -> None:
-        """Configure days and timeslots from the dataset's nested structure."""
-        if dataset.days:
-            try:
-                for day_data in dataset.days:
-                    day_id = self._ensure_uuid(day_data["day_id"])
-                    day_date = date.fromisoformat(day_data["exam_date"])
+        """
+        FIXED: Configures days and timeslots from the dataset, supporting both
+        fixed and flexible slot generation, with enhanced logging.
+        """
+        self.slot_generation_mode = getattr(dataset, "slot_generation_mode", "fixed")
+        logger.info(
+            f"Slot generation mode received from dataset: '{self.slot_generation_mode}'"
+        )
 
-                    day_timeslots = []
-                    for ts_data in day_data.get("time_slots", []):
+        if not hasattr(dataset, "days") or not dataset.days:
+            logger.warning(
+                "Dataset contains no day/timeslot info. Using fallback generation."
+            )
+            self._generate_fallback_days()
+            return
+
+        logger.info(
+            f"Loading {len(dataset.days)} days from dataset with mode '{self.slot_generation_mode}'."
+        )
+        for day_data in dataset.days:
+            try:
+                day_id = uuid4()
+                day_date = date.fromisoformat(day_data["exam_date"])
+                day_timeslots = []
+
+                for ts_data in day_data.get("time_periods", []):
+                    if self.slot_generation_mode == "flexible":
+                        logger.debug(
+                            f"Executing FLEXIBLE slot generation for {day_date}."
+                        )
+                        # Generate granular, hour-based slots
+                        period_start_time = time.fromisoformat(ts_data["start_time"])
+                        period_end_time = time.fromisoformat(ts_data["end_time"])
+                        slot_duration = timedelta(
+                            minutes=self.flexible_slot_duration_minutes
+                        )
+                        current_time = datetime.combine(date.today(), period_start_time)
+                        end_datetime = datetime.combine(date.today(), period_end_time)
+
+                        slot_counter = 1
+                        while current_time < end_datetime:
+                            slot_end_time = current_time + slot_duration
+                            if slot_end_time > end_datetime:
+                                break
+
+                            timeslot = Timeslot(
+                                id=uuid4(),
+                                parent_day_id=day_id,
+                                name=f"{ts_data['period_name']}_Slot{slot_counter}",
+                                start_time=current_time.time(),
+                                end_time=slot_end_time.time(),
+                                duration_minutes=self.flexible_slot_duration_minutes,
+                            )
+                            day_timeslots.append(timeslot)
+                            current_time = slot_end_time
+                            slot_counter += 1
+                    else:
+                        logger.debug(f"Executing FIXED slot generation for {day_date}.")
+                        # Original fixed-slot logic
                         start_t = time.fromisoformat(ts_data["start_time"])
                         end_t = time.fromisoformat(ts_data["end_time"])
-                        duration = (end_t.hour - start_t.hour) * 60 + (
-                            end_t.minute - start_t.minute
-                        )
-
+                        duration = (
+                            datetime.combine(date.min, end_t)
+                            - datetime.combine(date.min, start_t)
+                        ).seconds // 60
                         timeslot = Timeslot(
-                            id=self._ensure_uuid(ts_data["id"]),
+                            id=uuid4(),
                             parent_day_id=day_id,
                             name=ts_data["period_name"],
                             start_time=start_t,
@@ -1079,287 +975,83 @@ class ExamSchedulingProblem:
                         )
                         day_timeslots.append(timeslot)
 
-                    day = Day(id=day_id, date=day_date, timeslots=day_timeslots)
-                    self.days[day.id] = day
-                    self.day_timeslot_map[day.id] = {slot.id for slot in day.timeslots}
+                if not day_timeslots:
+                    logger.warning(f"Day {day_date} has no time periods. Skipping.")
+                    continue
 
-                logger.info(
-                    f"Loaded {len(self.days)} days and {len(self.timeslots)} timeslots from dataset"
-                )
+                day = Day(id=day_id, date=day_date, timeslots=day_timeslots)
+                self.days[day.id] = day
+                self.day_timeslot_map[day.id] = {slot.id for slot in day.timeslots}
 
             except Exception as e:
-                logger.error(
-                    f"Error loading days from dataset: {e}, using fallback generation"
-                )
-                self._generate_fallback_days()
-        else:
-            logger.warning("No days in dataset, generating fallback days")
-            self._generate_fallback_days()
-
-    def _generate_fallback_days(self) -> None:
-        """Generate fallback days when dataset doesn't provide them"""
-        try:
-            if not self.exam_period_start or not self.exam_period_end:
-                self.exam_period_start = date.today() + timedelta(days=30)
-                self.exam_period_end = self.exam_period_start + timedelta(days=14)
-
-            self.days = self._generate_days_with_timeslots()
-            logger.info(f"Generated {len(self.days)} fallback days successfully")
-
-        except Exception as e:
-            logger.error(f"Failed to generate fallback days: {e}")
-            raise
-
-    async def _attempt_dataset_recovery(
-        self, dataset: ProblemModelCompatibleDataset, error_msg: str
-    ) -> None:
-        """Attempt to recover from dataset loading errors"""
-        logger.warning(f"Attempting dataset recovery after error: {error_msg}")
-
-        try:
-            if not self.exams and dataset.exams:
-                logger.info("Attempting to load exams in recovery mode")
-                for exam_data in dataset.exams[:10]:
-                    try:
-                        exam = Exam.from_backend_data(exam_data)
-                        self.add_exam(exam)
-                    except Exception:
-                        continue
-
-            if not self.rooms and dataset.rooms:
-                logger.info("Attempting to load rooms in recovery mode")
-                for room_data in dataset.rooms[:5]:
-                    try:
-                        room = Room.from_backend_data(room_data)
-                        self.add_room(room)
-                    except Exception:
-                        continue
-
-            if not self.days:
-                self._generate_fallback_days()
-
-            logger.info("Dataset recovery completed with limited data")
-
-        except Exception as recovery_error:
-            logger.error(f"Dataset recovery failed: {recovery_error}")
-
-    def _apply_exact_student_exam_mappings(
-        self, student_exam_mappings: Dict[str, Set[str]]
-    ) -> None:
-        """Apply student-exam mappings with exact compatibility"""
-        logger.info("Applying EXACT student-exam mappings...")
-
-        mappings_applied = 0
-        for student_id_str, exam_ids in student_exam_mappings.items():
-            try:
-                student_id = UUID(student_id_str)
-                for exam_id_str in exam_ids:
-                    exam_id = UUID(exam_id_str)
-                    if exam_id in self.exams:
-                        self.exams[exam_id].add_student(student_id)
-                        mappings_applied += 1
-            except Exception as e:
-                logger.error(f"Error applying mapping student {student_id_str}: {e}")
-
-        logger.info(f"Applied {mappings_applied} exact student-exam mappings")
-
-    def _generate_days_based_on_period(self) -> None:
-        """Generate days based on the exam period dates"""
-        if not self._date_range_configured:
-            logger.warning("Date range not configured, using default generation")
-            if not self.exam_period_start or not self.exam_period_end:
-                self.exam_period_start = date.today() + timedelta(days=30)
-                self.exam_period_end = self.exam_period_start + timedelta(days=14)
-
-            self._date_range_configured = True
-
-    def get_room_capacity_info(self, room_id: UUID) -> Dict[str, Any]:
-        """Get detailed capacity information for a room"""
-        room = self.rooms.get(room_id)
-        if not room:
-            return {}
-
-        return {
-            "id": room.id,
-            "code": room.code,
-            "normal_capacity": room.capacity,
-            "exam_capacity": room.exam_capacity,
-            "has_computers": room.has_computers,
-            "overbookable": getattr(room, "overbookable", False),
-        }
-
-    def get_exam_student_info(self, exam_id: UUID) -> Dict[str, Any]:
-        """Get detailed student information for an exam"""
-        exam = self.exams.get(exam_id)
-        if not exam:
-            return {}
-
-        return {
-            "id": exam.id,
-            "course_id": exam.course_id,
-            "expected_students": exam.expected_students,
-            "actual_students": len(exam.students) if hasattr(exam, "students") else 0,
-            "duration_minutes": exam.duration_minutes,
-            "is_practical": exam.is_practical,
-            "course_code": getattr(exam, "course_code", "N/A"),
-            "course_title": getattr(exam, "course_title", "N/A"),
-        }
-
-    def get_capacity_utilization_stats(self) -> Dict[str, Any]:
-        """Get capacity utilization statistics for the problem"""
-        total_room_capacity = sum(room.exam_capacity for room in self.rooms.values())
-        total_student_exams = sum(
-            len(exam.students)
-            for exam in self.exams.values()
-            if hasattr(exam, "students")
-        )
-
-        if total_room_capacity == 0:
-            utilization = 0
-        else:
-            utilization = (total_student_exams / total_room_capacity) * 100
-
-        return {
-            "total_room_capacity": total_room_capacity,
-            "total_student_exams": total_student_exams,
-            "utilization_percentage": utilization,
-            "rooms_count": len(self.rooms),
-            "exams_count": len(self.exams),
-        }
-
-    def configure_exam_days(self, days_count: int) -> None:
-        """Configure the number of exam days and regenerate day structure"""
-        if days_count <= 0:
-            raise ValueError(f"days_count must be positive, got {days_count}")
-
-        logger.info(f"Configuring exam schedule for {days_count} days")
-
-        self._generate_days_based_on_period()
-
-        self.exam_days_count = days_count
-        self.day_timeslot_map.clear()
-        self.days = self._generate_days_with_timeslots()
+                logger.error(f"Failed to process day data: {day_data}. Error: {e}")
+                continue
 
         if not self.days:
-            logger.warning(
-                f"No days generated with normal method. Creating {days_count} default days."
+            logger.error("CRITICAL: Failed to load any valid days. Using fallback.")
+            self._generate_fallback_days()
+        else:
+            logger.info(
+                f"Successfully loaded {len(self.days)} days and {len(self.timeslots)} total timeslots."
             )
-            self.days = self._create_default_days(days_count)
 
+        # Set base slot duration for calculations
+        if self.slot_generation_mode == "flexible":
+            self.base_slot_duration_minutes = self.flexible_slot_duration_minutes
+        elif self.timeslots:
+            self.base_slot_duration_minutes = next(
+                iter(self.timeslots.values())
+            ).duration_minutes
+        else:
+            logger.warning("No timeslots loaded; using default duration of 180 mins.")
+            self.base_slot_duration_minutes = 180
         logger.info(
-            f"Generated {len(self.days)} days with {len(self.timeslots)} total timeslots"
+            f"Base slot duration for calculations set to {self.base_slot_duration_minutes} minutes."
         )
 
-        self.timeslots_cache = None
-        self.timeslot_to_day = None
+    def get_exam_duration_in_slots(self, exam_id: UUID) -> int:
+        """Calculates how many slots an exam occupies based on the base slot duration."""
+        exam = self.exams.get(exam_id)
+        if not exam or self.base_slot_duration_minutes <= 0:
+            return 1
+        return math.ceil(exam.duration_minutes / self.base_slot_duration_minutes)
 
-    def _create_default_days(self, days_count: int) -> Dict[UUID, Day]:
-        """Create default days as fallback when normal generation fails"""
-        days = {}
-        start_date = self.exam_period_start or date.today()
+    def is_start_feasible(self, exam_id: UUID, start_slot_id: UUID) -> bool:
+        """Checks if an exam can start at a given slot and complete within the same day."""
+        exam = self.exams.get(exam_id)
+        if not exam:
+            return False
 
-        for i in range(days_count):
-            day_date = start_date + timedelta(days=i)
-            day = Day(id=uuid4(), date=day_date)
-            days[day.id] = day
-            self.day_timeslot_map[day.id] = {slot.id for slot in day.timeslots}
+        day = self.get_day_for_timeslot(start_slot_id)
+        if not day:
+            return False
 
-        logger.info(f"Created {len(days)} default days as fallback")
-        return days
+        try:
+            start_index = [ts.id for ts in day.timeslots].index(start_slot_id)
+        except ValueError:
+            return False
+
+        duration_slots = self.get_exam_duration_in_slots(exam_id)
+        return start_index + duration_slots <= len(day.timeslots)
 
     def _ensure_uuid(self, value: Any) -> UUID:
         """Ensure a value is a UUID object, converting from string if necessary"""
-        if isinstance(value, UUID):
-            return value
-        elif isinstance(value, str):
-            try:
-                return UUID(value)
-            except ValueError:
-                from hashlib import md5
-
-                return UUID(md5(value.encode()).hexdigest()[:32])
-        else:
-            try:
-                return self._ensure_uuid(str(value))
-            except:
-                from uuid import uuid4
-
-                return uuid4()
+        return value if isinstance(value, UUID) else UUID(str(value))
 
     def _apply_exam_student_data(self, exam_data_list: List[Dict[str, Any]]) -> None:
         """Apply student data directly from exam objects in dataset"""
-        logger.info("Applying exam student data from dataset...")
-
         for exam_data in exam_data_list:
-            try:
-                exam_id = UUID(str(exam_data["id"]))
-
-                if exam_id in self.exams:
-                    exam_obj = self.exams[exam_id]
-
-                    students_in_data = exam_data.get("students", set())
-                    actual_student_count = exam_data.get("actual_student_count", 0)
-
-                    if students_in_data:
-                        student_uuids = set()
-                        for student_id_str in students_in_data:
-                            try:
-                                student_uuid = UUID(str(student_id_str))
-                                student_uuids.add(student_uuid)
-                                exam_obj.add_student(student_uuid)
-                            except Exception as e:
-                                logger.error(
-                                    f"Error converting student ID {student_id_str}: {e}"
-                                )
-
-                        logger.debug(
-                            f"Added {len(student_uuids)} students to exam {exam_id}"
-                        )
-
-                    if actual_student_count > exam_obj.expected_students:
-                        exam_obj.expected_students = actual_student_count
-                        logger.debug(
-                            f"Updated expected students for exam {exam_id} to {actual_student_count}"
-                        )
-
-            except Exception as e:
-                logger.error(
-                    f"Error applying student data for exam {exam_data.get('id', 'unknown')}: {e}"
-                )
-
-    def _populate_exam_students_from_mappings(
-        self, student_exam_mappings: Dict[str, Set[str]]
-    ) -> None:
-        """Populate exam students using pre-computed mappings"""
-        logger.info("Populating exam students from mappings...")
-
-        for student_id_str, exam_id_set in student_exam_mappings.items():
-            try:
-                student_id = UUID(student_id_str)
-
-                for exam_id_str in exam_id_set:
-                    try:
-                        exam_id = UUID(exam_id_str)
-
-                        if exam_id in self.exams:
-                            self.exams[exam_id].add_student(student_id)
-
-                    except Exception as e:
-                        logger.error(
-                            f"Error mapping student {student_id_str} to exam {exam_id_str}: {e}"
-                        )
-                        continue
-
-            except Exception as e:
-                logger.error(f"Error processing student mapping {student_id_str}: {e}")
-                continue
-
-        for exam in self.exams.values():
-            if hasattr(exam, "_students") and exam._students:
-                exam.expected_students = len(exam._students)
-
-        total_mappings = sum(len(exam._students) for exam in self.exams.values())
-        logger.info(f"Populated {total_mappings} student-exam mappings from dataset")
+            exam_id = self._ensure_uuid(exam_data["id"])
+            if exam_id in self.exams:
+                exam_obj = self.exams[exam_id]
+                students_in_data = exam_data.get("students", {})
+                if students_in_data:
+                    # Convert student_id keys to UUID
+                    students_with_uuid_keys = {
+                        self._ensure_uuid(sid): reg_type
+                        for sid, reg_type in students_in_data.items()
+                    }
+                    exam_obj.set_students(students_with_uuid_keys)
 
     def add_exam(self, exam: Exam) -> None:
         self.exams[exam.id] = exam
@@ -1371,120 +1063,24 @@ class ExamSchedulingProblem:
         self.students[student.id] = student
 
     def add_invigilator(self, invigilator: Invigilator) -> None:
-        """Add an invigilator to the problem"""
         self.invigilators[invigilator.id] = invigilator
 
     def add_instructor(self, instructor: Instructor) -> None:
-        """Add an Instructor to the problem"""
         self.instructors[instructor.id] = instructor
-
-    def register_student_course(self, student_id: UUID, course_id: UUID) -> None:
-        """Register student-course relationship with UUIDs"""
-        self._student_courses[student_id].add(course_id)
-        self.course_students[course_id].add(student_id)
-
-    def populate_exam_students(self):
-        """Populate exam students using pre-mapped data from dataset - FIXED VERSION"""
-        logger.info("Populating exam students using pre-mapped data...")
-
-        students_added = 0
-        exams_with_students = 0
-
-        if not self.exams:
-            logger.warning("No exams available to populate students")
-            return False
-
-        for exam in self.exams.values():
-            if hasattr(exam, "_students") and exam._students:
-                student_count = len(exam._students)
-                if student_count > 0:
-                    exams_with_students += 1
-                    students_added += student_count
-                    logger.debug(f"Exam {exam.id} already has {student_count} students")
-                continue
-
-            course_id = exam.course_id
-            if course_id in self.course_students:
-                student_ids = self.course_students[course_id]
-                exam.set_students(student_ids)
-                student_count = len(student_ids)
-                if student_count > 0:
-                    exams_with_students += 1
-                    students_added += student_count
-                    logger.info(
-                        f"Exam {exam.id} (course {course_id}) has {student_count} students"
-                    )
-                else:
-                    logger.warning(
-                        f"Exam {exam.id} (course {course_id}) has no students via course registrations"
-                    )
-            else:
-                logger.warning(
-                    f"Exam {exam.id} (course {course_id}) not found in course registrations"
-                )
-
-        logger.info(
-            f"Student population complete: {exams_with_students}/{len(self.exams)} exams have students, {students_added} total assignments"
-        )
-
-        if exams_with_students == 0 and len(self.exams) > 0:
-            logger.error("CRITICAL: No exams have students assigned!")
-            return False
-        elif exams_with_students < len(self.exams):
-            logger.warning(
-                f"{len(self.exams) - exams_with_students} exams have no students"
-            )
-
-        return True
-
-    def get_students_for_course(self, course_id: UUID) -> Set[UUID]:
-        """Get all students registered for a specific course"""
-        return self.course_students.get(course_id, set())
-
-    def get_courses_for_student(self, student_id: UUID) -> Set[UUID]:
-        """Get all courses a student is registered for"""
-        return self._student_courses.get(student_id, set())
-
-    def get_students_for_exam(self, exam_id: UUID) -> Set[UUID]:
-        """Get students registered for the course of this exam"""
-        exam = self.exams[exam_id]
-        return self.course_students.get(exam.course_id, set())
 
     def validate_problem_data(self) -> Dict[str, Any]:
         """Comprehensive problem data validation"""
         validation = {"valid": True, "errors": [], "warnings": [], "stats": {}}
-
-        entities = {
-            "exams": len(self.exams),
-            "days": len(self.days),
-            "rooms": len(self.rooms),
-            "students": len(self.students),
-        }
-
-        for entity_name, count in entities.items():
-            if count == 0:
-                validation["errors"].append(f"No {entity_name} defined")
-                validation["valid"] = False
-
-        validation["stats"].update(entities)
-
-        for day_id, day in self.days.items():
-            if len(day.timeslots) == 0:
-                validation["warnings"].append(f"Day {day_id} has no timeslots defined")
-
-        total_registrations = sum(
-            len(courses) for courses in self._student_courses.values()
-        )
-        if total_registrations == 0 and len(self.students) > 0:
-            validation["warnings"].append("No student-course registrations found")
-        validation["stats"]["student_registrations"] = total_registrations
-
-        inv_validation = self.validate_invigilator_data()
-        validation["valid"] = validation["valid"] and inv_validation["valid"]
-        validation["errors"].extend(inv_validation["errors"])
-        validation["warnings"].extend(inv_validation["warnings"])
-        validation["stats"]["invigilators"] = inv_validation["stats"]
-
+        if not self.exams:
+            validation["errors"].append("No exams defined")
+        if not self.days:
+            validation["errors"].append("No days defined")
+        if not self.rooms:
+            validation["errors"].append("No rooms defined")
+        if not self.students:
+            validation["errors"].append("No students defined")
+        if validation["errors"]:
+            validation["valid"] = False
         return validation
 
     def validate_invigilator_data(self) -> Dict[str, Any]:
@@ -1544,3 +1140,71 @@ class ExamSchedulingProblem:
             validation_result["errors"].append("No valid invigilators found")
 
         return validation_result
+
+    def _process_and_translate_locks(self, dataset: "ProblemModelCompatibleDataset"):
+        """Translates high-level locks (by period) into low-level locks (by specific timeslot)."""
+        if not dataset.locks:
+            logger.info("No HITL locks to process.")
+            self.locks = []
+            return
+
+        # 1. Create a lookup for period start times from the raw dataset
+        period_id_to_start_time = {}
+        for day_data in dataset.days:
+            for period in day_data.get("time_periods", []):
+                period_id_to_start_time[period["id"]] = time.fromisoformat(
+                    period["start_time"]
+                )
+
+        # 2. Create a lookup for the generated timeslot IDs based on date and start time
+        date_time_to_slot_id = {}
+        for day in self.days.values():
+            for slot in day.timeslots:
+                date_time_to_slot_id[(day.date, slot.start_time)] = slot.id
+
+        # 3. Process the raw locks
+        processed_locks = []
+        for raw_lock in dataset.locks:
+            try:
+                period_id = raw_lock.get("timeslot_period_id")
+                lock_date_str = raw_lock.get("exam_date")
+
+                if not period_id or not lock_date_str:
+                    logger.warning(f"Skipping incomplete lock: {raw_lock}")
+                    continue
+
+                lock_date = date.fromisoformat(lock_date_str)
+                start_time = period_id_to_start_time.get(period_id)
+
+                if not start_time:
+                    logger.warning(
+                        f"Could not find start time for period_id {period_id} in lock. Skipping."
+                    )
+                    continue
+
+                # Find the specific timeslot ID for the lock
+                target_slot_id = date_time_to_slot_id.get((lock_date, start_time))
+
+                if not target_slot_id:
+                    logger.error(
+                        f"Could not translate lock for date {lock_date} and time {start_time} to a specific timeslot. The timeslot may not exist. Skipping lock."
+                    )
+                    continue
+
+                # Create the new lock structure that the constraint manager can use
+                processed_lock = {
+                    "exam_id": self._ensure_uuid(raw_lock["exam_id"]),
+                    "time_slot_id": target_slot_id,
+                    "room_ids": [
+                        self._ensure_uuid(rid) for rid in raw_lock.get("room_ids") or []
+                    ],
+                }
+                processed_locks.append(processed_lock)
+
+            except Exception as e:
+                logger.error(f"Failed to process lock {raw_lock}: {e}")
+
+        self.locks = processed_locks
+        logger.info(
+            f"Successfully processed and translated {len(self.locks)} HITL locks."
+        )

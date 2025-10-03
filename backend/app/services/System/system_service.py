@@ -1,19 +1,21 @@
-# backend\app\services\System\system_service.py
+# backend/app/services/system_service.py
 """
-Service for managing system-level configurations, auditing, and reporting.
+Service for managing system-level configurations, academic sessions, and notifications.
 """
+
 import logging
 import json
 from typing import Dict, Any, List, Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from datetime import date
 
 logger = logging.getLogger(__name__)
 
 
 class SystemService:
-    """Handles system configuration, reports, and audit logging."""
+    """Handles system configuration, sessions, and administrative notifications."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -28,88 +30,117 @@ class SystemService:
         constraints: List[Dict[str, Any]],
         config_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
-        """Creates a new or updates an existing system configuration."""
+        """
+        Creates or updates a system configuration by calling `create_or_update_system_configuration`.
+        """
         action = "Updating" if config_id else "Creating"
         logger.info(f"{action} system configuration '{config_name}' by user {user_id}")
-        try:
-            query = text(
-                """
-                SELECT exam_system.create_or_update_system_configuration(
-                    :p_user_id, :p_config_name, :p_description, :p_is_default,
-                    :p_solver_parameters, :p_constraints, :p_config_id
-                )
-                """
-            )
-            result = await self.session.execute(
-                query,
-                {
-                    "p_user_id": user_id,
-                    "p_config_name": config_name,
-                    "p_description": description,
-                    "p_is_default": is_default,
-                    "p_solver_parameters": json.dumps(solver_parameters),
-                    "p_constraints": json.dumps(constraints),
-                    "p_config_id": config_id,
-                },
-            )
-            config_result = result.scalar_one()
-            await self.session.commit()
-            return config_result
-        except Exception as e:
-            await self.session.rollback()
-            logger.error(f"Error saving system configuration: {e}", exc_info=True)
-            return {"success": False, "error": "Failed to save configuration."}
-
-    async def generate_report(
-        self, report_type: str, session_id: UUID, options: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Generates a system report (e.g., conflict summary, room utilization)."""
-        logger.info(f"Generating report '{report_type}' for session {session_id}")
         query = text(
-            "SELECT exam_system.generate_report(:p_report_type, :p_session_id, :p_options)"
+            """
+            SELECT exam_system.create_or_update_system_configuration(
+                :p_user_id, :p_config_name, :p_description, :p_is_default,
+                :p_solver_parameters, :p_constraints, :p_config_id
+            )
+            """
         )
         result = await self.session.execute(
             query,
             {
-                "p_report_type": report_type,
-                "p_session_id": session_id,
-                "p_options": json.dumps(options),
+                "p_user_id": user_id,
+                "p_config_name": config_name,
+                "p_description": description,
+                "p_is_default": is_default,
+                "p_solver_parameters": json.dumps(solver_parameters),
+                "p_constraints": json.dumps(constraints),
+                "p_config_id": config_id,
             },
         )
         return result.scalar_one()
 
-    async def log_audit_activity(
-        self,
-        user_id: UUID,
-        action: str,
-        entity_type: str,
-        entity_id: Optional[UUID] = None,
-        notes: Optional[str] = None,
-    ) -> None:
-        """Logs an audit trail event."""
-        logger.debug(
-            f"Logging audit action '{action}' on '{entity_type}' by user {user_id}"
+    async def update_system_configuration_constraints(
+        self, config_id: UUID, user_id: UUID, constraints_payload: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Updates only the constraints for a specific system configuration by calling
+        `update_system_configuration_constraints`.
+        """
+        logger.info(
+            f"User {user_id} updating constraints for configuration {config_id}"
         )
-        try:
-            # This function returns void, so we just execute it.
-            query = text(
-                """
-                SELECT exam_system.log_audit_activity(
-                    :p_user_id, :p_action, :p_entity_type, :p_entity_id, :p_notes
-                )
-                """
+        query = text(
+            "SELECT exam_system.update_system_configuration_constraints(:p_config_id, :p_user_id, :p_constraints_payload)"
+        )
+        result = await self.session.execute(
+            query,
+            {
+                "p_config_id": config_id,
+                "p_user_id": user_id,
+                "p_constraints_payload": json.dumps(constraints_payload),
+            },
+        )
+        await self.session.commit()
+        return result.scalar_one()
+
+    async def set_active_academic_session(
+        self, session_id: UUID, user_id: UUID
+    ) -> None:
+        """
+        Sets the globally active academic session by calling `set_active_academic_session`.
+        """
+        logger.info(f"User {user_id} setting active academic session to {session_id}")
+        query = text(
+            "SELECT exam_system.set_active_academic_session(:p_session_id, :p_user_id)"
+        )
+        await self.session.execute(
+            query, {"p_session_id": session_id, "p_user_id": user_id}
+        )
+        await self.session.commit()
+
+    async def create_academic_session(
+        self,
+        p_name: str,
+        p_start_date: date,
+        p_end_date: date,
+        p_timeslot_template_id: Optional[UUID],
+        p_template_id: Optional[UUID] = None,
+    ) -> Dict[str, Any]:
+        """
+        Creates a new academic session by calling the corresponding DB function.
+        """
+        logger.info(f"Creating new academic session: {p_name}")
+        query = text(
+            """
+            SELECT exam_system.create_academic_session(
+                :p_name, :p_start_date, :p_end_date, :p_timeslot_template_id, :p_template_id
             )
-            await self.session.execute(
-                query,
-                {
-                    "p_user_id": user_id,
-                    "p_action": action,
-                    "p_entity_type": entity_type,
-                    "p_entity_id": entity_id,
-                    "p_notes": notes,
-                },
-            )
-            await self.session.commit()
-        except Exception as e:
-            await self.session.rollback()
-            logger.error(f"Failed to log audit activity: {e}", exc_info=True)
+            """
+        )
+        result = await self.session.execute(
+            query,
+            {
+                "p_name": p_name,
+                "p_start_date": p_start_date,
+                "p_end_date": p_end_date,
+                "p_timeslot_template_id": p_timeslot_template_id,
+                "p_template_id": p_template_id,
+            },
+        )
+        return result.scalar_one()
+
+    async def mark_notifications_as_read(
+        self, notification_ids: List[UUID], admin_user_id: UUID
+    ) -> Dict[str, Any]:
+        """
+        Marks administrative notifications as read by calling `mark_notifications_as_read`.
+        """
+        logger.info(
+            f"Admin {admin_user_id} marking {len(notification_ids)} notifications as read"
+        )
+        query = text(
+            "SELECT exam_system.mark_notifications_as_read(:p_notification_ids, :p_admin_user_id)"
+        )
+        result = await self.session.execute(
+            query,
+            {"p_notification_ids": notification_ids, "p_admin_user_id": admin_user_id},
+        )
+        return result.scalar_one()

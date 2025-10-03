@@ -1,14 +1,10 @@
+# scheduling_engine/constraints/soft_constraints/preference_slots.py
 """
-PreferenceSlotsConstraint - S2 Implementation
-
-S2: Preference slots penalty (enhanced)
-
-For each exam e, define prefViol_e ∈ {0,1}:
-prefViol_e = 1 iff ∑_{s ∈ prefSlots_e} x_{e,s} = 0
-Penalty: W_pref × ∑_e prefViol_e where W_pref = 500.
+PreferenceSlotsConstraint - S2 Implementation (PARAMETERIZED & FIXED)
 """
 
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
+from scheduling_engine.core.constraint_types import ConstraintDefinition
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,92 +14,50 @@ class PreferenceSlotsConstraint(CPSATBaseConstraint):
     """S2: Preference slots penalty for exams not scheduled in preferred time slots"""
 
     dependencies = []
-    constraint_category = "SOFT_CONSTRAINTS"
-    is_critical = False
-    min_expected_constraints = 0  # May be 0 if no exam preferences
 
-    def __init__(self, constraint_id, problem, shared_vars, model, factory=None):
-        super().__init__(constraint_id, problem, shared_vars, model, factory)
-        self.penalty_weight = 500  # W_pref
+    def __init__(self, definition: ConstraintDefinition, problem, shared_vars, model):
+        super().__init__(definition, problem, shared_vars, model)
+        self.penalty_weight = self.definition.weight
         logger.info(
-            f"🟡 Initializing SOFT constraint {constraint_id} with weight {self.penalty_weight}"
+            f"🟡 Initializing SOFT constraint {self.constraint_id} with weight {self.penalty_weight}"
         )
 
-    def _create_local_variables(self):
-        """Create auxiliary variables for preference violations"""
+    def initialize_variables(self):
+        """Create auxiliary variables for preference violations."""
         self.pref_viol_vars = {}
-
-        # Create preference violation variables for exams with preferences
-        for exam_id in self._exams:
-            exam = self._exams[exam_id]
-            pref_slots = getattr(exam, "preferred_slots", set())
-
-            if pref_slots:
+        for exam_id, exam in self._exams.items():
+            if getattr(exam, "morning_only", False):
                 self.pref_viol_vars[exam_id] = self.model.NewBoolVar(
                     f"prefViol_{exam_id}"
                 )
 
-    def _add_constraint_implementation(self):
-        """Add preference slots penalty constraints"""
+    def add_constraints(self):
+        """Add preference slots penalty constraints."""
         constraints_added = 0
-
         if not self.pref_viol_vars:
-            logger.info(f"{self.constraint_id}: No exam preferences found")
-            self.constraint_count = 0
+            logger.info(f"{self.constraint_id}: No exam preferences found.")
             return
 
-        # For each exam with preferences
-        for exam_id in self._exams:
-            exam = self._exams[exam_id]
-            pref_slots = getattr(exam, "preferred_slots", set())
+        for exam_id, viol_var in self.pref_viol_vars.items():
+            # An exam is morning_only. Penalize if scheduled in a non-morning slot.
+            non_morning_x_vars = []
+            for slot_id, timeslot in self._timeslots.items():
+                if "morning" not in timeslot.name.lower():
+                    if (key := (exam_id, slot_id)) in self.x:
+                        non_morning_x_vars.append(self.x[key])
 
-            if not pref_slots or exam_id not in self.pref_viol_vars:
-                continue
+            if non_morning_x_vars:
+                # If any non-morning var is 1, the violation is 1.
+                self.model.AddBoolOr(non_morning_x_vars).OnlyEnforceIf(viol_var)
+                self.model.Add(sum(non_morning_x_vars) == 0).OnlyEnforceIf(
+                    viol_var.Not()
+                )
+                constraints_added += 2
 
-            pref_viol_var = self.pref_viol_vars[exam_id]
-
-            # Collect x variables for preferred slots
-            pref_x_vars = []
-            for slot_id in pref_slots:
-                x_key = (exam_id, slot_id)
-                if x_key in self.x:
-                    pref_x_vars.append(self.x[x_key])
-
-            if pref_x_vars:
-                # prefViol_e = 1 iff ∑_{s ∈ prefSlots_e} x_{e,s} = 0
-                # This means: prefViol_e = 1 - max(∑_{s ∈ prefSlots_e} x_{e,s}, 1)
-                # Since ∑_{s ∈ prefSlots_e} x_{e,s} is binary (0 or 1), we can use:
-                # prefViol_e + ∑_{s ∈ prefSlots_e} x_{e,s} = 1
-
-                self.model.Add(pref_viol_var + sum(pref_x_vars) == 1)
-                constraints_added += 1
-
-        # Store penalty weight for objective function
-        self.penalty_terms = []
-        for exam_id, pref_viol_var in self.pref_viol_vars.items():
-            self.penalty_terms.append((self.penalty_weight, pref_viol_var))
-
-        self.constraint_count = constraints_added
-
-        if constraints_added == 0:
-            logger.info(f"{self.constraint_id}: No preference constraints needed")
-        else:
-            logger.info(
-                f"{self.constraint_id}: Added {constraints_added} preference penalty constraints"
-            )
-
-    def get_penalty_terms(self):
-        """Get penalty terms for the objective function"""
-        return getattr(self, "penalty_terms", [])
-
-    def get_statistics(self):
-        """Get constraint statistics"""
-        stats = super().get_constraint_statistics()
-        stats.update(
-            {
-                "penalty_weight": self.penalty_weight,
-                "exams_with_preferences": len(self.pref_viol_vars),
-                "penalty_terms": len(getattr(self, "penalty_terms", [])),
-            }
+        self.penalty_terms.extend(
+            (self.penalty_weight, var) for var in self.pref_viol_vars.values()
         )
-        return stats
+        self.constraint_count = constraints_added
+        logger.info(
+            f"{self.constraint_id}: Added {constraints_added} preference penalty constraints."
+        )

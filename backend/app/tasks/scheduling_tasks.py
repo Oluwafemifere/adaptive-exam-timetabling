@@ -77,15 +77,16 @@ class SchedulingTask(Task):
             )
 
 
+# --- START OF FIX ---
+# The function signature is updated to only accept the arguments passed from the service:
+# self (from bind=True), job_id, and options.
 @celery_app.task(bind=True, base=SchedulingTask, name="generate_timetable")
 def generate_timetable_task(
     self,
     job_id: str,
-    session_id: str,
-    configuration_id: str,
-    user_id: str,
     options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    # --- END OF FIX ---
     """
     Main timetable generation task using the CP-SAT scheduling engine.
     Runs asynchronously with progress updates.
@@ -95,11 +96,7 @@ def generate_timetable_task(
 
     try:
         logger.info(f"Starting timetable generation for job {job_id}")
-        result = _run_coro_in_new_loop(
-            _async_generate_timetable(
-                self, job_id, session_id, configuration_id, user_id, options
-            )
-        )
+        result = _run_coro_in_new_loop(_async_generate_timetable(self, job_id, options))
         return result
 
     except Exception as exc:
@@ -121,12 +118,11 @@ def generate_timetable_task(
         raise
 
 
+# The internal logic of this function remains the same, as it was already
+# correctly designed to fetch data using the job_id.
 async def _async_generate_timetable(
     task: SchedulingTask,
     job_id: str,
-    session_id: str,
-    configuration_id: str,
-    user_id: str,
     options: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Async implementation of timetable generation using CP-SAT solver."""
@@ -139,12 +135,18 @@ async def _async_generate_timetable(
 
     try:
         async with async_session_factory() as db:
-            # Use the DB function to update status
             await db.execute(
                 text(
-                    "SELECT exam_system.update_job_status(:p_job_id, :p_status, :p_set_started_at)"
+                    "SELECT exam_system.update_job_status(:p_job_id, :p_status, :p_progress, :p_solver_phase, :p_metrics, :p_set_started_at)"
                 ),
-                {"p_job_id": job_uuid, "p_status": "running", "p_set_started_at": True},
+                {
+                    "p_job_id": job_uuid,
+                    "p_status": "running",
+                    "p_progress": 0,
+                    "p_solver_phase": "initializing",
+                    "p_metrics": None,
+                    "p_set_started_at": True,
+                },
             )
             await db.commit()
 
@@ -152,40 +154,42 @@ async def _async_generate_timetable(
                 5, "preparing_data", "Preparing scheduling dataset..."
             )
             data_prep = ExactDataFlowService(db)
-            dataset = await data_prep.build_exact_problem_model_dataset(
-                UUID(session_id)
-            )
+            dataset = await data_prep.build_exact_problem_model_dataset(job_uuid)
+
+            session_id = dataset.session_id
 
             assert options is not None
-            start_date_str = options.get("start_date")
-            end_date_str = options.get("end_date")
 
-            if not start_date_str or not end_date_str:
-                raise SchedulingError(
-                    "Scheduling task requires 'start_date' and 'end_date' in options."
+            try:
+                start_date = date.fromisoformat(options["start_date"])
+                end_date = date.fromisoformat(options["end_date"])
+                logger.info(
+                    f"Using date range from user options: {start_date} to {end_date}"
+                )
+            except (KeyError, ValueError):
+                start_date = dataset.exam_period_start
+                end_date = dataset.exam_period_end
+                logger.warning(
+                    f"Using full date range from dataset as fallback: {start_date} to {end_date}"
                 )
 
-            start_date = date.fromisoformat(start_date_str)
-            end_date = date.fromisoformat(end_date_str)
-            logger.info(
-                f"Using date range from task options: {start_date} to {end_date}"
-            )
+            if not start_date or not end_date:
+                raise SchedulingError(
+                    "Could not determine a valid exam period start or end date."
+                )
 
             await task.update_progress(
                 15, "building_problem", "Building problem model..."
             )
             problem = ExamSchedulingProblem(
-                session_id=UUID(session_id),
+                session_id=session_id,
                 exam_period_start=start_date,
                 exam_period_end=end_date,
                 db_session=db,
             )
             await problem.load_from_backend(dataset)
+            problem.ensure_constraints_activated()
 
-            # --- START: GATHER LOOKUP METADATA FOR ENRICHMENT ---
-            # This data will be saved alongside the raw solution so a
-            # post-processing task can enrich the results without
-            # rebuilding the problem state.
             lookup_metadata = {
                 "exams": {str(e.id): e.to_dict() for e in problem.exams.values()},
                 "rooms": {str(r.id): r.to_dict() for r in problem.rooms.values()},
@@ -205,7 +209,6 @@ async def _async_generate_timetable(
                     for ts_id in ts_set
                 },
             }
-            # --- END: GATHER LOOKUP METADATA ---
 
             await task.update_progress(
                 25, "initializing_solver", "Initializing CP-SAT solver..."
@@ -223,10 +226,9 @@ async def _async_generate_timetable(
             await task.update_progress(85, "post_processing", "Processing solution...")
             solution.update_statistics()
 
-            # --- Prepare payload with RAW solution and metadata ---
             results_payload = {
-                "solution": solution.to_dict(),  # Raw solution
-                "lookup_metadata": lookup_metadata,  # Data for enrichment task
+                "solution": solution.to_dict(),
+                "lookup_metadata": lookup_metadata,
                 "objective_value": solution.objective_value,
                 "completion_percentage": solution.get_completion_percentage(),
                 "statistics": solution.statistics.to_dict(),
@@ -236,7 +238,6 @@ async def _async_generate_timetable(
             await task.update_progress(
                 90, "saving_results", "Saving results to database..."
             )
-            # Use the DB function to save results
             await db.execute(
                 text(
                     "SELECT exam_system.update_job_results(:p_job_id, :p_results_data)"
@@ -248,16 +249,13 @@ async def _async_generate_timetable(
             )
             await db.commit()
 
-            # --- START: CHAIN THE ENRICHMENT TASK ---
             logger.info(f"Chaining enrichment task for job {job_id}")
             enrich_timetable_result_task.delay(job_id=job_id)
-            # --- END: CHAIN THE ENRICHMENT TASK ---
 
-            # Update websocket with initial completion, enrichment will send final update
             await publish_job_update(
                 job_id,
                 {
-                    "status": "post_processing",  # New status
+                    "status": "post_processing",
                     "progress": 95,
                     "phase": "pending_enrichment",
                     "message": "Timetable generated, preparing final view.",
@@ -279,7 +277,6 @@ async def _async_generate_timetable(
             exc_info=True,
         )
         async with async_session_factory() as error_db:
-            # Use the DB function to mark the job as failed
             await error_db.execute(
                 text(
                     "SELECT exam_system.update_job_failed(:p_job_id, :p_error_message)"

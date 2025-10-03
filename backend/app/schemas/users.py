@@ -1,8 +1,12 @@
 # backend/app/schemas/users.py
 from __future__ import annotations
-from pydantic import BaseModel, EmailStr, ConfigDict
-from typing import Optional
+from pydantic import BaseModel, EmailStr, ConfigDict, Field
+from typing import Optional, List
 from uuid import UUID
+from datetime import datetime
+
+# Import the UserRoleEnum from the models to ensure consistency
+from ..models.users import UserRoleEnum
 
 MODEL_CONFIG = ConfigDict(from_attributes=True)
 
@@ -13,16 +17,40 @@ class UserBase(BaseModel):
     email: EmailStr
     first_name: str
     last_name: str
-    phone: Optional[str] = None
+    phone_number: Optional[str] = None
     is_active: bool = True
-    is_superuser: bool = True
+    is_superuser: bool = False
+    role: UserRoleEnum
 
 
 class UserCreate(UserBase):
-    password: str
-    is_active: bool = True
-    is_superuser: bool = False
+    password: str = Field(..., min_length=8)
+
+
+class UserUpdate(BaseModel):
+    model_config = MODEL_CONFIG
+
+    email: Optional[EmailStr] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    is_active: Optional[bool] = None
+    role: Optional[UserRoleEnum] = None
 
 
 class UserRead(UserBase):
     id: UUID
+    last_login: Optional[datetime] = None
+
+
+class UserManagementRecord(UserRead):
+    # This keeps the detailed roles from the association table
+    assigned_roles: List[str] = Field(default_factory=list, alias="roles")
+
+
+class PaginatedUserResponse(BaseModel):
+    total_items: int
+    total_pages: int
+    page: int
+    page_size: int
+    items: List[UserManagementRecord]

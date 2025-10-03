@@ -82,18 +82,3 @@ class Room(Base, TimestampMixin):
     timetable_assignments: Mapped[List["TimetableAssignment"]] = relationship(
         back_populates="room"
     )
-    allowed_exams: Mapped[List["ExamAllowedRoom"]] = relationship(back_populates="room")
-
-
-class ExamAllowedRoom(Base):
-    __tablename__ = "exam_allowed_rooms"
-
-    exam_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("exams.id"), primary_key=True
-    )
-    room_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("rooms.id"), primary_key=True
-    )
-
-    exam: Mapped["Exam"] = relationship(back_populates="allowed_rooms")
-    room: Mapped["Room"] = relationship(back_populates="allowed_exams")

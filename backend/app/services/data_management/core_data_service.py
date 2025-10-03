@@ -26,20 +26,11 @@ class CoreDataService:
     ) -> Dict[str, Any]:
         """
         Generic helper for Create, Update, Delete (CUD) operations.
-
-        Args:
-            function_name: The name of the PostgreSQL function to call.
-            params: A dictionary of parameters for the function.
-            entity_name: The name of the entity for logging.
-
-        Returns:
-            The result from the database function.
         """
         try:
             logger.info(
                 f"Executing {function_name} for {entity_name} with params: {params}"
             )
-            # The payload is passed as a JSON string to a JSONB parameter in PostgreSQL
             if "p_data" in params and isinstance(params["p_data"], dict):
                 params["p_data"] = json.dumps(params["p_data"])
 
@@ -124,4 +115,27 @@ class CoreDataService:
     async def delete_exam(self, exam_id: UUID, user_id: UUID) -> Dict[str, Any]:
         return await self._execute_cud_function(
             "delete_exam", {"p_exam_id": exam_id, "p_user_id": user_id}, "exam"
+        )
+
+    # --- User Management (NEW) ---
+    async def update_user(
+        self, user_id: UUID, user_data: Dict[str, Any], admin_user_id: UUID
+    ) -> Dict[str, Any]:
+        """Calls the `update_user` DB function."""
+        return await self._execute_cud_function(
+            "update_user",
+            {
+                "p_user_id": user_id,
+                "p_data": user_data,
+                "p_admin_user_id": admin_user_id,
+            },
+            "user",
+        )
+
+    async def delete_user(self, user_id: UUID, admin_user_id: UUID) -> Dict[str, Any]:
+        """Calls the `delete_user` DB function for a soft delete."""
+        return await self._execute_cud_function(
+            "delete_user",
+            {"p_user_id": user_id, "p_admin_user_id": admin_user_id},
+            "user",
         )

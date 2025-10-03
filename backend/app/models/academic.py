@@ -33,7 +33,13 @@ from sqlalchemy.ext.associationproxy import association_proxy, AssociationProxy
 # Use TYPE_CHECKING for type hints only
 
 if TYPE_CHECKING:
-    from .scheduling import Exam, StaffUnavailability, Staff, ExamDepartment
+    from .scheduling import (
+        Exam,
+        StaffUnavailability,
+        Staff,
+        ExamDepartment,
+        TimeSlotTemplate,
+    )
     from .jobs import TimetableJob
     from .file_uploads import FileUploadSession
     from .versioning import SessionTemplate
@@ -62,6 +68,11 @@ class AcademicSession(Base, TimestampMixin):
     archived_at: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
     session_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # NEW timeslot template field to match schema
+    timeslot_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("timeslot_templates.id"), nullable=True
+    )
+
     # Use string references to avoid circular imports
     exams: Mapped[List["Exam"]] = relationship("Exam", back_populates="session")
     registrations: Mapped[List["CourseRegistration"]] = relationship(
@@ -88,6 +99,10 @@ class AcademicSession(Base, TimestampMixin):
         "SessionTemplate",
         foreign_keys="SessionTemplate.source_session_id",
         back_populates="source_session",
+    )
+    # NEW relationship for timeslot template
+    timeslot_template: Mapped[Optional["TimeSlotTemplate"]] = relationship(
+        "TimeSlotTemplate", back_populates="academic_sessions"
     )
 
     # Add indexes for performance
@@ -317,7 +332,7 @@ class CourseRegistration(Base):
         PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
     )
     registration_type: Mapped[str] = mapped_column(
-        String, default="regular", nullable=True
+        String, default="normal", nullable=False
     )
     registered_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, server_default=func.now(), nullable=True

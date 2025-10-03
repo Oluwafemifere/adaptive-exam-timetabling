@@ -1,19 +1,30 @@
+// frontend/src/pages/Login.tsx
 import React, { useState } from 'react';
-import { Lock, Mail } from 'lucide-react';
+import { Lock, Mail, UserPlus, Building, GraduationCap, User as UserIcon } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { useAuth } from '../hooks/useAuth';
+import { toast } from 'sonner';
 
 export function Login() {
   const [username, setUsername] = useState('admin@baze.edu');
   const [password, setPassword] = useState('demo');
   const { login, isLoggingIn, error } = useAuth();
+  const [isCreateAccountOpen, setCreateAccountOpen] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await login(username, password);
+  };
+
+  const handleCreateAccount = () => {
+    // In a real app, this would call an API endpoint to register a new user.
+    toast.success('Account creation request sent. Please check your email for confirmation.');
+    setCreateAccountOpen(false);
   };
 
   return (
@@ -58,29 +69,6 @@ export function Login() {
               </div>
             </div>
             
-            {/* Demo Credentials */}
-            <div className="bg-muted p-3 rounded-md space-y-2">
-              <p className="text-sm font-medium">Demo Credentials:</p>
-              <div className="text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span>Administrator:</span>
-                  <span className="font-mono">admin@baze.edu</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Staff:</span>
-                  <span className="font-mono">staff@baze.edu</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Student:</span>
-                  <span className="font-mono">student@baze.edu</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Password (all):</span>
-                  <span className="font-mono">demo</span>
-                </div>
-              </div>
-            </div>
-            
             {error && (
               <p className="text-sm text-destructive text-center">{error}</p>
             )}
@@ -88,45 +76,61 @@ export function Login() {
               {isLoggingIn ? 'Signing In...' : 'Sign In'}
             </Button>
           </form>
-          
-          {/* Quick Login Buttons */}
-          <div className="mt-4 space-y-2">
-            <p className="text-xs text-center text-muted-foreground">Quick Login:</p>
-            <div className="grid grid-cols-3 gap-2">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => {
-                  setUsername('admin@baze.edu');
-                  setPassword('demo');
-                }}
-                disabled={isLoggingIn}
-              >
-                Admin
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => {
-                  setUsername('staff@baze.edu');
-                  setPassword('demo');
-                }}
-                disabled={isLoggingIn}
-              >
-                Staff
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => {
-                  setUsername('student@baze.edu');
-                  setPassword('demo');
-                }}
-                disabled={isLoggingIn}
-              >
-                Student
-              </Button>
-            </div>
+
+          <div className="mt-4 text-center">
+            <Dialog open={isCreateAccountOpen} onOpenChange={setCreateAccountOpen}>
+              <DialogTrigger asChild>
+                <Button variant="link" className="text-sm">
+                  Don't have an account? Create one
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Create Account</DialogTitle>
+                  <DialogDescription>
+                    Create a new staff or student account. Admin accounts must be created by an existing administrator.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="firstName">First Name</Label>
+                      <Input id="firstName" placeholder="John" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="lastName">Last Name</Label>
+                      <Input id="lastName" placeholder="Doe" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="create-email">Email</Label>
+                    <Input id="create-email" type="email" placeholder="john.doe@university.edu" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="create-password">Password</Label>
+                    <Input id="create-password" type="password" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="role-select">Role</Label>
+                    <Select>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select your role..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="staff"><UserIcon className="h-4 w-4 mr-2 inline-block" />Staff</SelectItem>
+                        <SelectItem value="student"><GraduationCap className="h-4 w-4 mr-2 inline-block" />Student</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <Button onClick={handleCreateAccount}>
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Create Account
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </CardContent>
       </Card>

@@ -1,25 +1,85 @@
 # backend/app/api/v1/routes/roles.py
 """API endpoints for Role-Based Access Control (RBAC)."""
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List
 
 from ....api.deps import db_session, current_user
 from ....models.users import User
 from ....services.user_management.authorization_service import AuthorizationService
-from ....schemas.role import RoleAssignment, UserRolesResponse, PermissionCheckResponse
+from ....services.data_retrieval import DataRetrievalService
+from ....schemas.role import (
+    RoleAssignment,
+    UserRolesResponse,
+    PermissionCheckResponse,
+    RolePermissionsUpdate,
+    RoleWithPermissionsRead,
+)
 from ....schemas.system import GenericResponse
 
 router = APIRouter()
+
+
+@router.get("/", response_model=List[RoleWithPermissionsRead])
+async def get_all_roles(
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """Get all roles and their associated permissions."""
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
+        )
+
+    service = DataRetrievalService(db)
+    roles = await service.get_all_roles_with_permissions()
+    return roles if roles else []
+
+
+@router.put("/{role_name}/permissions", response_model=GenericResponse)
+async def update_role_permissions(
+    role_name: str,
+    payload: RolePermissionsUpdate,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """Update the permissions for a specific role."""
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
+        )
+
+    service = AuthorizationService(db)
+    result = await service.update_role_permissions(
+        role_name=role_name,
+        permissions=payload.permissions,
+        admin_user_id=user.id,
+    )
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=400, detail=result.get("error", "Failed to update permissions.")
+        )
+
+    return GenericResponse(
+        success=True,
+        message="Role permissions updated successfully.",
+        data=result.get("role"),
+    )
 
 
 @router.post("/assign", response_model=GenericResponse)
 async def assign_role(
     assignment: RoleAssignment,
     db: AsyncSession = Depends(db_session),
-    user: User = Depends(current_user),  # Requester must be admin
+    user: User = Depends(current_user),
 ):
     """Assign a role to a user."""
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
+        )
+
     service = AuthorizationService(db)
     result = await service.assign_role_to_user(
         user_id=assignment.user_id, role_name=assignment.role_name

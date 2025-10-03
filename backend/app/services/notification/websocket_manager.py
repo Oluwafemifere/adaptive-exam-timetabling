@@ -305,9 +305,11 @@ async def subscribe_job(
                 logger.error(f"Error closing Redis pubsub: {e}")
 
 
+# --- START OF FIX ---
 async def publish_job_update(job_id: str, update_data: Dict[str, Any]) -> None:
     """
     Publish job update to WebSocket clients and Redis if available.
+    This version creates a short-lived Redis client to avoid event loop issues in Celery.
     """
     try:
         logger.info(
@@ -318,50 +320,62 @@ async def publish_job_update(job_id: str, update_data: Dict[str, Any]) -> None:
             f"message={update_data.get('message', 'N/A')}"
         )
 
-        # Send via WebSocket manager
+        # Send via in-memory WebSocket manager (for directly connected clients)
         await connection_manager.send_job_update(job_id, update_data)
 
-        # Send via Redis if available
-        redis = await connection_manager.get_redis()
-        if redis:
-            channel_name = f"job_updates_{job_id}"
-            message = json.dumps(update_data, default=str)
-            await redis.publish(channel_name, message)
+        # Publish to Redis pub/sub for scaling across multiple server instances/workers
+        redis_client = None
+        try:
+            from ...core.config import settings
+
+            if hasattr(settings, "REDIS_URL") and settings.REDIS_URL:
+                from redis.asyncio import Redis
+
+                redis_client = Redis.from_url(
+                    settings.REDIS_URL, encoding="utf-8", decode_responses=True
+                )
+                channel_name = f"job_updates_{job_id}"
+                message = json.dumps(update_data, default=str)
+                await redis_client.publish(channel_name, message)
+        except Exception as e:
+            # Log the error but don't fail the whole update if Redis publish fails.
+            # The in-memory update might have succeeded.
+            logger.error(f"Failed to publish job update to Redis for {job_id}: {e}")
+        finally:
+            if redis_client:
+                await redis_client.close()
 
     except Exception as e:
         logger.error(f"Failed to publish job update for {job_id}: {e}")
 
 
+# --- END OF FIX ---
+
+
 async def get_initial_job_status(
     job_id: str, db: AsyncSession
 ) -> Optional[Dict[str, Any]]:
-    """Get initial job status for new WebSocket connections."""
+    """Get initial job status for new WebSocket connections by calling the DB function."""
     try:
-        from ...models import TimetableJob
+        from ...services.scheduling.scheduling_service import SchedulingService
 
         job_uuid = UUID(job_id)
-        query = select(TimetableJob).where(TimetableJob.id == job_uuid)
-        result = await db.execute(query)
-        job = result.scalar_one_or_none()
 
-        if not job:
+        # Use the service layer to call the DB function
+        scheduling_service = SchedulingService(db)
+        job_status = await scheduling_service.get_job_status(job_uuid)
+
+        if not job_status:
             return None
 
-        # Convert datetime objects to ISO format strings safely
-        def safe_isoformat(dt: Any) -> Optional[str]:
-            if dt is None:
-                return None
-            if hasattr(dt, "isoformat"):
-                return dt.isoformat()
-            return str(dt)
-
+        # The data from get_job_status is already a dict, just select the fields needed for the WS
         return {
-            "status": job.status or "unknown",
-            "progress": job.progress_percentage or 0,
-            "phase": job.solver_phase or "",
-            "message": getattr(job, "status_message", ""),
-            "started_at": safe_isoformat(job.started_at),
-            "estimated_completion": None,  # Could calculate based on progress
+            "status": job_status.get("status", "unknown"),
+            "progress": job_status.get("progress_percentage", 0),
+            "phase": job_status.get("solver_phase", ""),
+            "message": job_status.get("error_message") or "",
+            "started_at": job_status.get("started_at"),
+            "estimated_completion": None,
         }
 
     except (ValueError, TypeError) as e:

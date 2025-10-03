@@ -36,3 +36,11 @@ class TimetableJobRead(TimetableJobBase):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     created_at: datetime
+    scenario_id: Optional[UUID] = None
+    constraint_config_id: Optional[UUID] = None
+    cp_sat_runtime_seconds: Optional[int] = None
+    total_runtime_seconds: Optional[int] = None
+    hard_constraint_violations: int = 0
+    soft_constraints_violations: Optional[float] = None
+    room_utilization_percentage: Optional[float] = None
+    version_ids: List[UUID] = Field(default_factory=list)

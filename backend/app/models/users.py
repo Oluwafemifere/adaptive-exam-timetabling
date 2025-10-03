@@ -1,7 +1,17 @@
-# C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\models\users.py
+# backend/app/models/users.py
 import uuid
-from typing import TYPE_CHECKING, List
-from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, ARRAY, func, Index
+from typing import TYPE_CHECKING, List, Optional
+from sqlalchemy import (
+    String,
+    Boolean,
+    DateTime,
+    Text,
+    ForeignKey,
+    ARRAY,
+    func,
+    Index,
+    Enum,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
@@ -12,8 +22,18 @@ from .base import Base, TimestampMixin
 if TYPE_CHECKING:
     from .jobs import TimetableJob
     from .constraints import ConfigurationConstraint
-    from .academic import Faculty, Department
-    from .scheduling import Staff  # Added Staff to TYPE_CHECKING for relationship hint
+    from .academic import Faculty, Department, Student  # Added Student
+    from .scheduling import Staff
+
+
+# Define the UserRoleEnum to match the one in PostgreSQL
+import enum
+
+
+class UserRoleEnum(enum.Enum):
+    admin = "admin"
+    staff = "staff"
+    student = "student"
 
 
 class User(Base, TimestampMixin):
@@ -22,14 +42,19 @@ class User(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     first_name: Mapped[str] = mapped_column(String, nullable=False)
     last_name: Mapped[str] = mapped_column(String, nullable=False)
-    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    # MODIFIED: Changed 'phone' to 'phone_number' to match schema
+    phone_number: Mapped[str | None] = mapped_column(String, nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_login: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
+    # NEW: Added role column to directly store the user's primary role.
+    role: Mapped[UserRoleEnum] = mapped_column(
+        Enum(UserRoleEnum, name="user_role_enum", create_type=False), nullable=False
+    )
 
     # Use string references to avoid circular imports
     roles: Mapped[List["UserRoleAssignment"]] = relationship(back_populates="user")
@@ -39,7 +64,14 @@ class User(Base, TimestampMixin):
     initiated_jobs: Mapped[List["TimetableJob"]] = relationship(
         back_populates="initiated_by_user"
     )
-    staff: Mapped["Staff"] = relationship("Staff", back_populates="user", uselist=False)
+    # Defines the one-to-one relationship to a staff profile
+    staff: Mapped[Optional["Staff"]] = relationship(
+        "Staff", back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+    # NEW: Defines the one-to-one relationship to a student profile
+    student: Mapped[Optional["Student"]] = relationship(
+        "Student", back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class UserRole(Base, TimestampMixin):
@@ -50,7 +82,7 @@ class UserRole(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    permissions: Mapped[dict] = mapped_column(JSONB, default={})
+    permissions: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
 
     assignments: Mapped[List["UserRoleAssignment"]] = relationship(
         back_populates="role"
@@ -81,7 +113,6 @@ class UserRoleAssignment(Base):
 
     user: Mapped["User"] = relationship(back_populates="roles")
     role: Mapped["UserRole"] = relationship(back_populates="assignments")
-    # Remove faculty and department relationships for now to avoid more circular imports
 
 
 class UserNotification(Base, TimestampMixin):

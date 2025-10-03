@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
+# backend\Scripts\seeders\fake_seed.py
 
 # Baze University Adaptive Exam Timetabling System - Comprehensive Fake Seeder
 
-
+from collections import defaultdict
 import os
 import sys
 import asyncio
@@ -11,7 +11,7 @@ import logging
 import math
 import random
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, time, timedelta
 from typing import Any, Dict, Set, List, Optional
 from uuid import uuid4
 
@@ -23,10 +23,11 @@ from sqlalchemy.orm import selectinload
 
 # --- Project Setup ---
 # Add the backend directory to the Python path to import app modules.
-# This might need adjustment based on your project structure.
 try:
-    BACKEND_DIR = Path(__file__).parent.parent.parent
-    sys.path.insert(0, str(BACKEND_DIR))
+    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    if str(BACKEND_DIR) not in sys.path:
+        sys.path.insert(0, str(BACKEND_DIR))
+
     from app.database import db_manager, init_db
     from app.models import (
         AcademicSession,
@@ -40,7 +41,6 @@ try:
         CourseInstructor,
         Department,
         Exam,
-        ExamAllowedRoom,
         ExamDepartment,
         ExamInvigilator,
         Faculty,
@@ -56,6 +56,8 @@ try:
         SystemConfiguration,
         SystemEvent,
         TimetableAssignment,
+        TimeSlotTemplate,
+        TimeSlotTemplatePeriod,
         TimetableEdit,
         TimetableJob,
         TimetableVersion,
@@ -66,7 +68,15 @@ try:
         UserRoleAssignment,
         VersionDependency,
         VersionMetadata,
+        TimetableScenario,
+        TimetableLock,
+        AssignmentChangeRequest,
+        ConflictReport,
+        TimetableConflict,
     )
+
+    # MODIFIED: Import UserRoleEnum for type-safe role assignment
+    from app.models.users import UserRoleEnum
     from app.core.security import hash_password
 except ImportError as e:
     print(
@@ -93,7 +103,7 @@ SCALE_LIMITS = {}
 
 class ComprehensiveFakeSeeder:
     """
-    Generates realistic fake data for the exam timetabling system.
+    Generates realistic and schema-compliant fake data for the exam timetabling system.
     """
 
     def __init__(
@@ -108,8 +118,9 @@ class ComprehensiveFakeSeeder:
         )
         self.seed = seed
         self.magnitude = magnitude
-        self.seeded_data: Dict[str, int] = {}
+        self.seeded_data: Dict[str, int] = defaultdict(int)
         self.generated_matrics: Set[str] = set()
+        self.demo_users: Dict[str, User] = {}
         self._set_magnitude_level(self.magnitude)
         self._initialize_rng()
 
@@ -122,7 +133,7 @@ class ComprehensiveFakeSeeder:
 
     def _set_magnitude_level(self, level: int):
         """
-        Sets the data magnitude level, updating SCALE_LIMITS for the instance.
+        Sets the data magnitude level, updating SCALE_LIMITS for all entities.
         Levels range from 1 (basic) to 5 (enterprise).
         """
         MAGNITUDE_LEVELS = {
@@ -133,7 +144,6 @@ class ComprehensiveFakeSeeder:
                 "courses": 80,
                 "students": 100,
                 "staff": 30,
-                "users": 40,
                 "buildings": 4,
                 "rooms": 40,
                 "exams": 50,
@@ -146,7 +156,6 @@ class ComprehensiveFakeSeeder:
                 "courses": 200,
                 "students": 500,
                 "staff": 75,
-                "users": 100,
                 "buildings": 6,
                 "rooms": 80,
                 "exams": 150,
@@ -159,7 +168,6 @@ class ComprehensiveFakeSeeder:
                 "courses": 500,
                 "students": 2000,
                 "staff": 200,
-                "users": 250,
                 "buildings": 10,
                 "rooms": 150,
                 "exams": 400,
@@ -172,7 +180,6 @@ class ComprehensiveFakeSeeder:
                 "courses": 800,
                 "students": 5000,
                 "staff": 400,
-                "users": 500,
                 "buildings": 12,
                 "rooms": 250,
                 "exams": 700,
@@ -185,7 +192,6 @@ class ComprehensiveFakeSeeder:
                 "courses": 1200,
                 "students": 10000,
                 "staff": 600,
-                "users": 800,
                 "buildings": 15,
                 "rooms": 400,
                 "exams": 1000,
@@ -200,29 +206,27 @@ class ComprehensiveFakeSeeder:
 
         base_counts = MAGNITUDE_LEVELS[level]
 
-        # Derive other counts based on ratios
+        # REWRITTEN: User count is now derived from students and staff
+        base_counts["users"] = base_counts["students"] + base_counts["staff"] + 5
+
         global SCALE_LIMITS
         SCALE_LIMITS = {
             **base_counts,
+            "timeslot_templates": 3,
+            "timeslot_template_periods": 3 * 3,
             "student_enrollments": base_counts["students"]
             * base_counts["academic_sessions"],
-            "course_registrations": base_counts["students"]
-            * 8,  # Avg 8 courses per student
+            "course_registrations": int(base_counts["students"] * 6.0),
             "course_instructors": int(base_counts["courses"] * 1.5),
             "exam_departments": int(base_counts["exams"] * 1.2),
-            "exam_allowed_rooms": base_counts["exams"] * 3,
             "exam_prerequisites": int(base_counts["exams"] * 0.2),
-            "user_roles": 8,
-            "user_role_assignments": int(base_counts["users"] * 1.1),
-            "staff_unavailability": int(base_counts["staff"] * 1.5),
+            "user_roles": 6,
+            "user_role_assignments": base_counts["users"],
+            "staff_unavailability": int(base_counts["staff"] * 2),
             "timetable_jobs": 5,
             "timetable_versions": 10,
-            "timetable_assignments": int(
-                base_counts["exams"] * 1.5
-            ),  # Exams might split into rooms
-            "exam_invigilators": int(
-                base_counts["exams"] * 2
-            ),  # Avg 2 invigilators per exam
+            "timetable_assignments": int(base_counts["exams"] * 1.1),
+            "exam_invigilators": int(base_counts["exams"] * 2),
             "timetable_edits": 50,
             "audit_logs": 500,
             "system_configurations": 3,
@@ -236,6 +240,11 @@ class ComprehensiveFakeSeeder:
             "session_templates": 5,
             "version_metadata": 10,
             "version_dependencies": 8,
+            "timetable_scenarios": 3,
+            "timetable_locks": int(base_counts["exams"] * 0.1),
+            "timetable_conflicts": 40,
+            "assignment_change_requests": 20,
+            "conflict_reports": 30,
         }
         logger.info(
             f"Seeding magnitude set to level {level} (students: {SCALE_LIMITS['students']})"
@@ -258,12 +267,16 @@ class ComprehensiveFakeSeeder:
                 logger.warning("🧹 Clearing all existing data from database...")
                 await self._clear_all_data()
 
-            # Seeding order is crucial to respect foreign key constraints.
+            # REWRITTEN: Seeding order is crucial and has been adjusted.
             await self._seed_core_entities()
             await self._seed_academic_structure()
-            await self._seed_people_and_users()
+            await self._seed_people_and_users()  # This now handles students, staff, and their users together
+            await self._seed_course_instructors_and_unavailability()
             await self._seed_scheduling_data()
+            await self._seed_hitl_and_versioning()
             await self._seed_system_and_logging()
+
+            await self._log_data_complexity_analysis()
 
             logger.info("🎉 Comprehensive fake data seeding completed successfully!")
             await self.print_summary()
@@ -272,46 +285,40 @@ class ComprehensiveFakeSeeder:
             logger.error(
                 f"💥 An unexpected error occurred during seeding: {e}", exc_info=True
             )
-            logger.error("Performing rollback...")
-            # Note: Transaction handling is within each seeder method.
-            # This is a top-level catch for critical failures.
             raise
 
     async def _clear_all_data(self):
         """Clears all data from tables in reverse dependency order."""
         async with db_manager.get_db_transaction() as session:
-            # The order here is critical to avoid foreign key violations.
-            # Start from tables that are referenced by others and move inwards.
             tables_to_clear = [
                 "audit_logs",
                 "user_notifications",
                 "system_events",
-                "uploaded_files",
-                "file_upload_sessions",
+                "assignment_change_requests",
+                "conflict_reports",
+                "timetable_conflicts",
                 "timetable_edits",
                 "exam_invigilators",
                 "timetable_assignments",
+                "timetable_locks",
                 "version_dependencies",
                 "version_metadata",
-                "exam_prerequisites_association",
-                "exam_allowed_rooms",
-                "exam_departments",
-                "staff_unavailability",
+                "uploaded_files",
                 "timetable_versions",
                 "timetable_jobs",
+                "timetable_scenarios",
+                "file_upload_sessions",
+                "exam_prerequisites_association",
+                "exam_departments",
                 "configuration_constraints",
-                "constraint_rules",
-                "constraint_categories",
-                "system_configurations",
                 "course_instructors",
                 "course_registrations",
                 "student_enrollments",
+                "staff_unavailability",
                 "exams",
                 "courses",
                 "staff",
                 "user_role_assignments",
-                "user_roles",
-                "users",
                 "students",
                 "programmes",
                 "departments",
@@ -319,12 +326,18 @@ class ComprehensiveFakeSeeder:
                 "rooms",
                 "room_types",
                 "buildings",
+                "timeslot_template_periods",
+                "timeslot_templates",
                 "academic_sessions",
                 "session_templates",
+                "constraint_rules",
+                "constraint_categories",
+                "system_configurations",
+                "user_roles",
+                "users",
             ]
             for table in tables_to_clear:
                 try:
-                    # Using TRUNCATE ... CASCADE is efficient for clearing related tables.
                     await session.execute(
                         text(
                             f'TRUNCATE TABLE exam_system."{table}" RESTART IDENTITY CASCADE'
@@ -342,6 +355,7 @@ class ComprehensiveFakeSeeder:
         await self._seed_infrastructure()
         await self._seed_constraints_and_config()
         await self._seed_session_templates()
+        await self._seed_timeslot_templates()
 
     async def _seed_academic_structure(self):
         logger.info("Phase 2: Seeding Academic Structure...")
@@ -350,25 +364,34 @@ class ComprehensiveFakeSeeder:
         await self._seed_courses()
 
     async def _seed_people_and_users(self):
-        logger.info("Phase 3: Seeding People and Users...")
-        await self._seed_users_and_roles()
-        await self._seed_students_and_enrollments()
-        await self._seed_staff()
+        logger.info("Phase 3: Seeding People and Linking Users...")
+        await self._seed_users_and_roles()  # Now seeds only roles and admin
+        await self._seed_students_and_create_users()
+        await self._seed_staff_and_create_users()
+
+    async def _seed_course_instructors_and_unavailability(self):
+        logger.info("Phase 4: Seeding Staff-Course Relations...")
         await self._seed_course_instructors()
+        await self._seed_staff_unavailability()
 
     async def _seed_scheduling_data(self):
-        logger.info("Phase 4: Seeding Scheduling Data...")
+        logger.info("Phase 5: Seeding Core Scheduling Data...")
         await self._seed_exams_and_registrations()
         await self._seed_exam_relations()
+
+    async def _seed_hitl_and_versioning(self):
+        logger.info("Phase 6: Seeding Timetabling, HITL, and Versioning...")
         await self._seed_timetable_jobs_and_versions()
         await self._seed_timetable_assignments_and_invigilators()
+        await self._seed_hitl_entities()
 
     async def _seed_system_and_logging(self):
-        logger.info("Phase 5: Seeding System and Logging Entities...")
+        logger.info("Phase 7: Seeding System, Logging, and Feedback Entities...")
         await self._seed_timetable_edits()
         await self._seed_file_uploads()
         await self._seed_system_events_and_notifications()
         await self._seed_audit_logs()
+        await self._seed_feedback_and_reporting_entities()
 
     # --- Detailed Seeding Methods ---
 
@@ -376,7 +399,6 @@ class ComprehensiveFakeSeeder:
         """Seed buildings, room types, and rooms."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  🏢 Seeding infrastructure (buildings, rooms)...")
-            # Buildings
             building_codes = {
                 "ENG",
                 "SCI",
@@ -389,15 +411,14 @@ class ComprehensiveFakeSeeder:
                 "TECH",
                 "ADMIN",
             }
-            buildings = []
-            for code in list(building_codes)[: SCALE_LIMITS["buildings"]]:
-                b = Building(code=code, name=f"{code} Building", is_active=True)
-                buildings.append(b)
+            buildings = [
+                Building(code=code, name=f"{code} Building", is_active=True)
+                for code in list(building_codes)[: SCALE_LIMITS["buildings"]]
+            ]
             session.add_all(buildings)
             await session.flush()
             self.seeded_data["buildings"] = len(buildings)
 
-            # Room Types
             room_type_names = [
                 "Classroom",
                 "Laboratory",
@@ -406,29 +427,25 @@ class ComprehensiveFakeSeeder:
                 "Workshop",
                 "Office",
             ]
-            room_types = []
-            for name in room_type_names:
-                rt = RoomType(name=name, description=f"{name} space", is_active=True)
-                room_types.append(rt)
+            room_types = [
+                RoomType(name=name, description=f"{name} space", is_active=True)
+                for name in room_type_names
+            ]
             session.add_all(room_types)
             await session.flush()
             self.seeded_data["room_types"] = len(room_types)
 
-            # Rooms
             rooms = []
-            generated_room_codes = (
-                set()
-            )  # FIX: Track generated codes to ensure uniqueness
+            generated_room_codes = set()
             for _ in range(SCALE_LIMITS["rooms"]):
                 building = random.choice(buildings)
                 room_type = random.choice(room_types)
                 capacity = {
                     "Auditorium": random.randint(200, 500),
-                    "Classroom": random.randint(30, 120),
-                    "Laboratory": random.randint(20, 50),
-                }.get(room_type.name, random.randint(15, 40))
+                    "Classroom": random.randint(40, 150),
+                    "Laboratory": random.randint(30, 60),
+                }.get(room_type.name, random.randint(20, 40))
 
-                # FIX: Loop until a unique room code is generated
                 while True:
                     code = f"{building.code}-{random.randint(100, 999)}"
                     if code not in generated_room_codes:
@@ -436,19 +453,19 @@ class ComprehensiveFakeSeeder:
                         break
 
                 r = Room(
-                    code=code,  # Use the guaranteed unique code
-                    name=f"{building.name} Room {random.randint(1, 50)}",
+                    code=code,
+                    name=f"{building.name} Room {code.split('-')[1]}",
                     building_id=building.id,
                     room_type_id=room_type.id,
                     capacity=capacity,
-                    exam_capacity=max(
-                        15, int(capacity * 0.7)
-                    ),  # Social distancing capacity
+                    exam_capacity=max(20, int(capacity * 0.7)),
                     has_projector=random.choice([True, False]),
                     has_computers=room_type.name == "Laboratory",
                     is_active=True,
                     has_ac=random.choice([True, True, False]),
-                    max_inv_per_room=max(1, capacity // 100),
+                    max_inv_per_room=max(1, math.ceil(capacity / 50)),
+                    notes=fake.sentence() if random.random() < 0.2 else None,
+                    overbookable=random.random() < 0.1,
                 )
                 rooms.append(r)
             session.add_all(rooms)
@@ -458,108 +475,291 @@ class ComprehensiveFakeSeeder:
             )
 
     async def _seed_constraints_and_config(self):
-        """Seed system configurations and constraints."""
+        """Seed system configurations and constraints with realistic parameters."""
         async with db_manager.get_db_transaction() as session:
-            logger.info("  ⚙️ Seeding system configurations and constraints...")
-            # This requires a user, so we create a temporary admin user first.
-            admin_user = User(
-                email="config_admin@baze.edu.ng",
-                first_name="Config",
-                last_name="Admin",
-                is_active=True,
-                is_superuser=True,
-                password_hash=hash_password("temp"),
+            logger.info(
+                "  ⚙️ Seeding realistic system configurations and constraints..."
             )
-            session.add(admin_user)
-            await session.flush()
-
-            # System Configurations
-            configs = []
-            for name in ["Default", "Fast", "High-Quality"]:
-                c = SystemConfiguration(
-                    name=f"{name} Config",
-                    description=f"{name} scheduling parameters",
-                    created_by=admin_user.id,
-                    is_default=(name == "Default"),
-                )
-                configs.append(c)
-            session.add_all(configs)
-            await session.flush()
-            self.seeded_data["system_configurations"] = len(configs)
-
-            # Constraint Categories & Rules
-            categories = [
-                ConstraintCategory(name=c)
-                for c in ["Temporal", "Spatial", "Resource", "Pedagogical"]
+            categories_data = [
+                "Student Constraints",
+                "Resource",
+                "Spatial",
+                "Pedagogical",
+                "Fairness",
             ]
+            categories = [ConstraintCategory(name=c) for c in categories_data]
             session.add_all(categories)
             await session.flush()
             self.seeded_data["constraint_categories"] = len(categories)
+            cat_map = {c.name: c for c in categories}
 
             rules_data = [
                 (
-                    "NO_EXAM_OVERLAP",
-                    "No overlapping exams for students",
+                    "UNIFIED_STUDENT_CONFLICT",
+                    "Student Time Conflict",
+                    "A student cannot take two exams at the same time.",
                     "hard",
-                    categories[0].id,
+                    "Student Constraints",
+                    100.0,
+                    {},
                 ),
                 (
-                    "ROOM_CAPACITY",
-                    "Room capacity not exceeded",
+                    "ROOM_CAPACITY_HARD",
+                    "Room Capacity Exceeded",
+                    "The number of students in a room cannot exceed its exam capacity.",
                     "hard",
-                    categories[1].id,
+                    "Spatial",
+                    100.0,
+                    {},
                 ),
                 (
-                    "MAX_EXAMS_PER_DAY",
-                    "Max exams per day for students",
+                    "MINIMUM_INVIGILATORS",
+                    "Minimum Invigilators",
+                    "Ensure enough invigilators are assigned per room based on student count.",
+                    "hard",
+                    "Resource",
+                    100.0,
+                    {"students_per_invigilator": 50},
+                ),
+                (
+                    "INSTRUCTOR_CONFLICT",
+                    "Instructor Self-Invigilation",
+                    "An instructor for a course cannot invigilate the exam for that same course.",
+                    "hard",
+                    "Pedagogical",
+                    100.0,
+                    {},
+                ),
+                (
+                    "MAX_EXAMS_PER_STUDENT_PER_DAY",
+                    "Max Exams Per Student Per Day",
+                    "A student cannot take more than a specified number of exams in a single day.",
+                    "hard",
+                    "Student Constraints",
+                    100.0,
+                    {"max_exams_per_day": 2},
+                ),
+                (
+                    "MINIMUM_GAP",
+                    "Minimum Gap Between Exams",
+                    "Penalizes scheduling a student's exams too close together on the same day.",
                     "soft",
-                    categories[0].id,
+                    "Student Constraints",
+                    80.0,
+                    {"min_gap_slots": 1},
+                ),
+                (
+                    "OVERBOOKING_PENALTY",
+                    "Room Overbooking Penalty",
+                    "Penalize assigning more students to a room than its capacity (for overbookable rooms).",
+                    "soft",
+                    "Spatial",
+                    5.0,
+                    {},
+                ),
+                (
+                    "PREFERENCE_SLOTS",
+                    "Course Slot Preference",
+                    "Penalize scheduling exams outside of their preferred slots (e.g., 'morning only').",
+                    "soft",
+                    "Pedagogical",
+                    10.0,
+                    {},
+                ),
+                (
+                    "INVIGILATOR_LOAD_BALANCE",
+                    "Invigilator Workload Balance",
+                    "Penalize uneven distribution of total invigilation slots among staff.",
+                    "soft",
+                    "Fairness",
+                    15.0,
+                    {},
+                ),
+                (
+                    "CARRYOVER_STUDENT_CONFLICT",
+                    "Carryover Student Conflict",
+                    "Allow, but penalize, scheduling conflicts for students with a 'carryover' registration status.",
+                    "soft",
+                    "Student Constraints",
+                    50.0,
+                    {"max_allowed_conflicts": 3},
+                ),
+                (
+                    "INVIGILATOR_AVAILABILITY",
+                    "Invigilator Availability",
+                    "Penalize assigning invigilators during their stated unavailable times.",
+                    "soft",
+                    "Resource",
+                    75.0,
+                    {},
+                ),
+                (
+                    "DAILY_WORKLOAD_BALANCE",
+                    "Daily Exam Load Balance",
+                    "Penalize uneven distribution of the total number of exams scheduled across different days.",
+                    "soft",
+                    "Fairness",
+                    10.0,
+                    {},
                 ),
             ]
             rules = []
-            for code, name, c_type, cat_id in rules_data:
+            for code, name, desc, c_type, cat_name, weight, params in rules_data:
+                category = cat_map.get(cat_name)
+                if not category:
+                    continue
                 rule = ConstraintRule(
                     code=code,
                     name=name,
+                    description=desc,
                     constraint_type=c_type,
-                    category_id=cat_id,
+                    category_id=category.id,
                     is_active=True,
-                    constraint_definition={},
-                    default_weight=1.0,
+                    default_weight=weight,
+                    constraint_definition={
+                        "description": desc,
+                        "parameters": [
+                            {"key": p_key, "value": p_val, "type": type(p_val).__name__}
+                            for p_key, p_val in params.items()
+                        ],
+                    },
                 )
                 rules.append(rule)
             session.add_all(rules)
             await session.flush()
             self.seeded_data["constraint_rules"] = len(rules)
 
-            # Configuration Constraints
-            config_constraints = []
-            for config in configs:
-                for rule in rules:
-                    cc = ConfigurationConstraint(
-                        configuration_id=config.id,
-                        constraint_id=rule.id,
-                        weight=1.0,
-                        is_enabled=True,
-                    )
-                    config_constraints.append(cc)
+            admin_user_result = await session.execute(
+                select(User).where(User.email == "config_admin@baze.edu.ng")
+            )
+            admin_user = admin_user_result.scalars().first()
+            if not admin_user:
+                admin_user = User(
+                    email="config_admin@baze.edu.ng",
+                    first_name="Config",
+                    last_name="Admin",
+                    is_active=True,
+                    is_superuser=True,
+                    password_hash=hash_password("temp"),
+                    role=UserRoleEnum.admin,
+                )
+                session.add(admin_user)
+                await session.flush()
+                self.seeded_data["users"] += 1
+
+            config_names = [
+                "Default",
+                "Fast Solve",
+                "High Quality scheduling parameters",
+            ]
+            configs = [
+                SystemConfiguration(
+                    name=name,
+                    description=f"Parameters for {name}",
+                    created_by=admin_user.id,
+                    is_default=(name == "Default"),
+                )
+                for name in config_names
+            ]
+            session.add_all(configs)
+            await session.flush()
+            self.seeded_data["system_configurations"] = len(configs)
+
+            config_constraints = [
+                ConfigurationConstraint(
+                    configuration_id=config.id,
+                    constraint_id=rule.id,
+                    weight=rule.default_weight,
+                    is_enabled=True,
+                )
+                for config in configs
+                for rule in rules
+            ]
             session.add_all(config_constraints)
             self.seeded_data["configuration_constraints"] = len(config_constraints)
-            logger.info(f"  ✓ Seeded {len(configs)} configs and {len(rules)} rules.")
+            logger.info(
+                f"  ✓ Seeded {len(categories)} categories, {len(rules)} rules, {len(configs)} configs, and {len(config_constraints)} links."
+            )
 
     async def _seed_session_templates(self):
         """Seed session templates."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  📄 Seeding session templates...")
-            templates = []
-            for name in ["Standard Semester", "Fast-Track", "Postgraduate"]:
-                t = SessionTemplate(
+            templates_data = ["Standard Semester", "Fast-Track", "Postgraduate"]
+            templates = [
+                SessionTemplate(
                     name=name, description=f"Template for {name}", is_active=True
                 )
-                templates.append(t)
+                for name in templates_data
+            ]
             session.add_all(templates)
             self.seeded_data["session_templates"] = len(templates)
             logger.info(f"  ✓ Seeded {len(templates)} session templates.")
+
+    async def _seed_timeslot_templates(self):
+        """Seed timeslot templates and their periods."""
+        async with db_manager.get_db_transaction() as session:
+            logger.info("  🕰️  Seeding timeslot templates...")
+            templates, periods = [], []
+
+            std_template = TimeSlotTemplate(
+                name="Standard Weekday", description="9am, 12pm, 3pm slots"
+            )
+            templates.append(std_template)
+            session.add(std_template)
+            await session.flush()
+            periods.extend(
+                [
+                    TimeSlotTemplatePeriod(
+                        timeslot_template_id=std_template.id,
+                        period_name="Morning",
+                        start_time=time(9, 0),
+                        end_time=time(12, 0),
+                    ),
+                    TimeSlotTemplatePeriod(
+                        timeslot_template_id=std_template.id,
+                        period_name="Afternoon",
+                        start_time=time(12, 0),
+                        end_time=time(15, 0),
+                    ),
+                    TimeSlotTemplatePeriod(
+                        timeslot_template_id=std_template.id,
+                        period_name="Evening",
+                        start_time=time(15, 0),
+                        end_time=time(18, 0),
+                    ),
+                ]
+            )
+
+            con_template = TimeSlotTemplate(
+                name="Condensed Day", description="Two longer slots per day"
+            )
+            templates.append(con_template)
+            session.add(con_template)
+            await session.flush()
+            periods.extend(
+                [
+                    TimeSlotTemplatePeriod(
+                        timeslot_template_id=con_template.id,
+                        period_name="AM",
+                        start_time=time(9, 30),
+                        end_time=time(12, 30),
+                    ),
+                    TimeSlotTemplatePeriod(
+                        timeslot_template_id=con_template.id,
+                        period_name="PM",
+                        start_time=time(13, 30),
+                        end_time=time(16, 30),
+                    ),
+                ]
+            )
+
+            session.add_all(periods)
+            self.seeded_data["timeslot_templates"] = len(templates)
+            self.seeded_data["timeslot_template_periods"] = len(periods)
+            logger.info(
+                f"  ✓ Seeded {len(templates)} timeslot templates with {len(periods)} periods."
+            )
 
     async def _seed_faculties_departments_programmes(self):
         """Seed faculties, departments, and programmes."""
@@ -582,19 +782,20 @@ class ComprehensiveFakeSeeder:
                 "SCI": ["CSC", "BIO", "PHY"],
                 "MGT": ["ACC", "BUS", "ECO"],
                 "CSI": ["IFT", "CYB", "SWE"],
+                "LAW": ["PUB", "PRV"],
+                "ART": ["ENG", "HIS"],
             }
 
-            # Faculties
-            faculties = []
-            for code, name in list(faculty_data.items())[: SCALE_LIMITS["faculties"]]:
-                faculties.append(
-                    Faculty(code=code, name=f"Faculty of {name}", is_active=True)
-                )
+            faculties = [
+                Faculty(code=code, name=f"Faculty of {name}", is_active=True)
+                for code, name in list(faculty_data.items())[
+                    : SCALE_LIMITS["faculties"]
+                ]
+            ]
             session.add_all(faculties)
             await session.flush()
             self.seeded_data["faculties"] = len(faculties)
 
-            # Departments and Programmes
             departments, programmes = [], []
             for fac in faculties:
                 if fac.code in dept_data:
@@ -610,8 +811,6 @@ class ComprehensiveFakeSeeder:
                         session.add(dept)
                         await session.flush()
                         departments.append(dept)
-
-                        # Add a programme for the department
                         if len(programmes) < SCALE_LIMITS["programmes"]:
                             prog = Programme(
                                 code=f"B.{dept.code}",
@@ -629,59 +828,98 @@ class ComprehensiveFakeSeeder:
             )
 
     async def _seed_academic_sessions(self):
-        """Seed academic sessions."""
+        """Seed academic sessions representing exam periods."""
         async with db_manager.get_db_transaction() as session:
-            logger.info("  🗓️ Seeding academic sessions...")
-            sessions = []
-            current_year = datetime.now().year
-            for i in range(SCALE_LIMITS["academic_sessions"]):
-                year = current_year - i
-                s = AcademicSession(
-                    name=f"{year}/{year+1}",
-                    semester_system="semester",
-                    start_date=date(year, 9, 15),
-                    end_date=date(year + 1, 6, 30),
-                    is_active=(i == 0),  # Only the most recent session is active
+            logger.info("  🗓️ Seeding academic sessions (exam periods)...")
+            templates = (
+                (await session.execute(select(TimeSlotTemplate))).scalars().all()
+            )
+            if not templates:
+                logger.error(
+                    "  ❌ No timeslot templates found. Cannot create academic sessions."
                 )
-                sessions.append(s)
+                return
+
+            std_template = next(
+                (t for t in templates if t.name == "Standard Weekday"), templates[0]
+            )
+            sessions, current_year = [], datetime.now().year
+            for i in range(SCALE_LIMITS["academic_sessions"]):
+                year, is_active_session = current_year - i, i == 0
+                start_date = (
+                    date(year, 11, 15) if is_active_session else date(year, 5, 10)
+                )
+                end_date = start_date + timedelta(days=14 if is_active_session else 21)
+                template_id = (
+                    std_template.id
+                    if is_active_session
+                    else random.choice(templates).id
+                )
+                sessions.append(
+                    AcademicSession(
+                        name=f"{year}/{year+1} Exam Period",
+                        semester_system="semester",
+                        start_date=start_date,
+                        end_date=end_date,
+                        is_active=is_active_session,
+                        timeslot_template_id=template_id,
+                    )
+                )
             session.add_all(sessions)
             self.seeded_data["academic_sessions"] = len(sessions)
-            logger.info(f"  ✓ Seeded {len(sessions)} academic sessions.")
+            logger.info(f"  ✓ Seeded {len(sessions)} academic sessions (exam periods).")
 
     async def _seed_courses(self):
         """Seed courses."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  📚 Seeding courses...")
             departments = (await session.execute(select(Department))).scalars().all()
-            courses = []
+            if not departments:
+                return
 
-            # --- Start of fix ---
-            generated_course_codes = set()  # Use a set for efficient lookups
-            # --- End of fix ---
+            courses, generated_course_codes = [], set()
+            course_titles = [
+                "Introduction to {topic}",
+                "Advanced {topic}",
+                "{topic} Theory",
+                "Applied {topic}",
+                "Principles of {topic}",
+            ]
+            course_topics = [
+                "Algorithms",
+                "Databases",
+                "Networking",
+                "Software Engineering",
+                "Artificial Intelligence",
+                "Calculus",
+                "Linear Algebra",
+                "Mechanics",
+                "Thermodynamics",
+                "Microeconomics",
+                "Marketing",
+            ]
 
             for _ in range(SCALE_LIMITS["courses"]):
                 dept = random.choice(departments)
                 level = random.choice([100, 200, 300, 400])
-
-                # --- Start of fix ---
-                # Loop until a unique code is generated
                 while True:
-                    code = f"{dept.code}{level+random.randint(1, 99)}"  # Increased random range
+                    code = f"{dept.code}{level+random.randint(1, 99)}"
                     if code not in generated_course_codes:
                         generated_course_codes.add(code)
                         break
-                # --- End of fix ---
 
+                # REWRITTEN: Exam duration limited to 60, 120, 180
                 c = Course(
-                    code=code,  # Use the guaranteed unique code
-                    title=fake.catch_phrase(),
+                    code=code,
+                    title=random.choice(course_titles).format(
+                        topic=random.choice(course_topics)
+                    ),
                     department_id=dept.id,
                     credit_units=random.choice([2, 3, 4]),
                     course_level=level,
-                    is_practical=random.choice(
-                        [True, False, False]
-                    ),  # 1/3 are practical
-                    exam_duration_minutes=random.choice([120, 180]),
+                    is_practical=random.random() < 0.15,
+                    exam_duration_minutes=random.choice([60, 120, 180]),
+                    morning_only=random.random() < 0.1,
                 )
                 courses.append(c)
             session.add_all(courses)
@@ -689,17 +927,17 @@ class ComprehensiveFakeSeeder:
             logger.info(f"  ✓ Seeded {len(courses)} courses.")
 
     async def _seed_users_and_roles(self):
-        """Seed user roles, an admin user, and other fake users."""
+        """REWRITTEN: Seeds only UserRoles and the primary admin user."""
         async with db_manager.get_db_transaction() as session:
-            logger.info("  👥 Seeding users and roles...")
-            # User Roles
+            logger.info("  👥 Seeding user roles and demo admin account...")
             roles_def = {
                 "super_admin": {"*": ["*"]},
-                "admin": {},
+                "admin": {"scope": "admin"},
+                "staff": {"scope": "staff"},
+                "student": {"scope": "student"},
                 "dean": {},
                 "hod": {},
                 "scheduler": {},
-                "staff": {},
             }
             roles = [
                 UserRole(name=name, permissions=perms)
@@ -710,176 +948,296 @@ class ComprehensiveFakeSeeder:
             self.seeded_data["user_roles"] = len(roles)
             roles_map = {r.name: r for r in roles}
 
-            # Admin User
+            # Create Demo Admin User
+            demo_password = hash_password("demo")
             admin_user = User(
                 email="admin@baze.edu.ng",
-                first_name="System",
+                first_name="Demo",
                 last_name="Admin",
-                password_hash=hash_password("admin123"),
+                password_hash=demo_password,
                 is_active=True,
                 is_superuser=True,
+                role=UserRoleEnum.admin,
             )
             session.add(admin_user)
             await session.flush()
-            session.add(
-                UserRoleAssignment(
-                    user_id=admin_user.id, role_id=roles_map["super_admin"].id
-                )
-            )
+            self.demo_users["admin"] = admin_user
 
-            # Fake Users
-            users = [admin_user]
-            for _ in range(SCALE_LIMITS["users"] - 1):
-                first_name, last_name = fake.first_name(), fake.last_name()
-                users.append(
-                    User(
-                        email=f"{first_name}.{last_name}{random.randint(1,99)}@fake.baze.edu.ng".lower(),
-                        first_name=first_name,
-                        last_name=last_name,
-                        password_hash=hash_password("password123"),
-                        is_active=True,
+            # Assign super_admin role
+            if "super_admin" in roles_map:
+                session.add(
+                    UserRoleAssignment(
+                        user_id=admin_user.id, role_id=roles_map["super_admin"].id
                     )
                 )
-            session.add_all(users[1:])  # Add all except the admin that's already added
-            self.seeded_data["users"] = len(users)
-            logger.info(f"  ✓ Seeded {len(roles)} roles and {len(users)} users.")
+                self.seeded_data["user_role_assignments"] += 1
 
-    async def _seed_students_and_enrollments(self):
-        """Seed students and their enrollments in academic sessions."""
+            self.seeded_data["users"] += 1
+            logger.info(f"  ✓ Seeded {len(roles)} roles and 1 demo admin user.")
+
+    async def _seed_students_and_create_users(self):
+        """FIXED: Seeds students and creates a corresponding user account for each, ensuring the link."""
         async with db_manager.get_db_transaction() as session:
-            logger.info("  👨‍🎓 Seeding students and enrollments...")
-
-            # --- Start of FIX ---
-            # Eagerly load the 'department' relationship to prevent lazy-loading issues.
-            from sqlalchemy.orm import selectinload
-
-            programmes = (
-                (
-                    await session.execute(
-                        select(Programme).options(selectinload(Programme.department))
-                    )
-                )
-                .scalars()
-                .all()
+            logger.info("  👨‍🎓 Seeding students and their user accounts...")
+            programmes_result = await session.execute(
+                select(Programme).options(selectinload(Programme.department))
             )
-            # --- End of FIX ---
-
-            sessions = (await session.execute(select(AcademicSession))).scalars().all()
-            if not programmes or not sessions:
-                logger.error("  Cannot seed students: No programmes or sessions exist.")
+            programmes = programmes_result.scalars().all()
+            if not programmes:
+                logger.warning("  - Skipping student seeding: no programmes found.")
                 return
 
-            students, enrollments = [], []
+            students_created = []
             current_year = datetime.now().year
-            for i in range(SCALE_LIMITS["students"]):
+            default_password = hash_password("password123")
+            demo_password = hash_password("demo")
+
+            # Create Demo Student and User
+            demo_prog = random.choice(programmes)
+            demo_entry_year = current_year - random.randint(
+                0, demo_prog.duration_years - 1
+            )
+            demo_user = User(
+                email="student@baze.edu.ng",
+                first_name="Demo",
+                last_name="Student",
+                password_hash=demo_password,
+                is_active=True,
+                role=UserRoleEnum.student,
+            )
+            session.add(demo_user)
+            await session.flush([demo_user])  # Get the ID
+
+            demo_student = Student(
+                user_id=demo_user.id,  # Guaranteed link
+                matric_number=f"BU/{str(demo_entry_year)[-2:]}/{demo_prog.department.code}/0000",
+                first_name="Demo",
+                last_name="Student",
+                entry_year=demo_entry_year,
+                programme_id=demo_prog.id,
+            )
+            session.add(demo_student)
+            students_created.append(demo_student)
+
+            # Create other fake students
+            for i in range(SCALE_LIMITS["students"] - 1):
+                first_name = fake.first_name()
+                last_name = fake.last_name()
+
+                user = User(
+                    email=f"{first_name}.{last_name}{random.randint(1,99)}@fake.baze.edu.ng".lower(),
+                    first_name=first_name,
+                    last_name=last_name,
+                    password_hash=default_password,
+                    is_active=True,
+                    role=UserRoleEnum.student,
+                )
+                session.add(user)
+                await session.flush([user])  # Get ID
+
                 prog = random.choice(programmes)
                 entry_year = current_year - random.randint(0, prog.duration_years - 1)
 
-                # This line will now work without causing an error.
-                matric = f"BU/{str(entry_year)[-2:]}/{prog.department.code}/{i:04d}"
-
-                s = Student(
-                    matric_number=matric,
-                    first_name=fake.first_name(),
-                    last_name=fake.last_name(),
+                student = Student(
+                    user_id=user.id,  # Guaranteed link
+                    matric_number=f"BU/{str(entry_year)[-2:]}/{prog.department.code}/{i+1:04d}",
+                    first_name=first_name,
+                    last_name=last_name,
                     entry_year=entry_year,
                     programme_id=prog.id,
                 )
-                session.add(s)
-                await session.flush()
-                students.append(s)
+                session.add(student)
+                students_created.append(student)
 
-                for sess in sessions:
-                    level = (int(sess.name.split("/")[0]) - s.entry_year + 1) * 100
+            self.seeded_data["students"] = len(students_created)
+            self.seeded_data["users"] += len(students_created)
+
+            # Create Enrollments for the created students
+            sessions_list = (
+                (await session.execute(select(AcademicSession))).scalars().all()
+            )
+            enrollments = []
+            for student in students_created:
+                # Find the program for the student from the eagerly loaded list
+                prog = next(p for p in programmes if p.id == student.programme_id)
+                for sess in sessions_list:
+                    level = (
+                        int(sess.name.split("/")[0]) - student.entry_year + 1
+                    ) * 100
                     if 100 <= level <= (prog.duration_years * 100):
                         enrollments.append(
                             StudentEnrollment(
-                                student_id=s.id, session_id=sess.id, level=level
+                                student_id=student.id, session_id=sess.id, level=level
                             )
                         )
-
             session.add_all(enrollments)
-            self.seeded_data["students"] = len(students)
             self.seeded_data["student_enrollments"] = len(enrollments)
             logger.info(
-                f"  ✓ Seeded {len(students)} students and {len(enrollments)} enrollments."
+                f"  ✓ Seeded {len(students_created)} students, created {len(students_created)} linked users, and {len(enrollments)} enrollments."
             )
 
-    async def _seed_staff(self):
-        """Seed staff members."""
+    async def _seed_staff_and_create_users(self):
+        """FIXED: Seeds staff and creates a corresponding user account for each, ensuring the link."""
         async with db_manager.get_db_transaction() as session:
-            logger.info("  👨‍🏫 Seeding staff...")
+            logger.info("  👨‍🏫 Seeding staff and their user accounts...")
             departments = (await session.execute(select(Department))).scalars().all()
-            users = (await session.execute(select(User))).scalars().all()
+            if not departments:
+                return
 
-            assigned_user_ids = set(
-                (
-                    await session.execute(
-                        select(Staff.user_id).where(Staff.user_id.is_not(None))
-                    )
-                )
-                .scalars()
-                .all()
+            staff_created = 0
+            default_password = hash_password("password123")
+            demo_password = hash_password("demo")
+
+            # Create Demo Staff and User
+            demo_user = User(
+                email="staff@baze.edu.ng",
+                first_name="Demo",
+                last_name="Staff",
+                password_hash=demo_password,
+                is_active=True,
+                role=UserRoleEnum.staff,
             )
-            available_users = [u for u in users if u.id not in assigned_user_ids]
+            session.add(demo_user)
+            await session.flush([demo_user])  # Get ID
 
-            staff_list = []
-            for i in range(SCALE_LIMITS["staff"]):
-                user = available_users.pop() if available_users else None
-                staff = Staff(
-                    staff_number=f"ST{1000+i}",
-                    first_name=user.first_name if user else fake.first_name(),
-                    last_name=user.last_name if user else fake.last_name(),
+            demo_staff = Staff(
+                user_id=demo_user.id,  # Guaranteed link
+                staff_number="ST0000",
+                first_name="Demo",
+                last_name="Staff",
+                department_id=random.choice(departments).id,
+                staff_type="academic",
+                can_invigilate=True,
+                is_active=True,
+            )
+            session.add(demo_staff)
+            staff_created += 1
+
+            # Create other fake staff
+            for i in range(SCALE_LIMITS["staff"] - 1):
+                first_name = fake.first_name()
+                last_name = fake.last_name()
+
+                user = User(
+                    email=f"{first_name}.{last_name}{random.randint(1,99)}@fake.baze.edu.ng".lower(),
+                    first_name=first_name,
+                    last_name=last_name,
+                    password_hash=default_password,
+                    is_active=True,
+                    role=UserRoleEnum.staff,
+                )
+                session.add(user)
+                await session.flush([user])  # Get ID
+
+                staff_member = Staff(
+                    user_id=user.id,  # Guaranteed link
+                    staff_number=f"ST{1001+i}",
+                    first_name=first_name,
+                    last_name=last_name,
                     department_id=random.choice(departments).id,
-                    user_id=user.id if user else None,
                     staff_type="academic",
                     can_invigilate=True,
                     is_active=True,
-                    max_daily_sessions=2,
-                    max_consecutive_sessions=2,
-                    max_concurrent_exams=1,
-                    max_students_per_invigilator=50,
                 )
-                staff_list.append(staff)
-            session.add_all(staff_list)
-            self.seeded_data["staff"] = len(staff_list)
-            logger.info(f"  ✓ Seeded {len(staff_list)} staff members.")
+                session.add(staff_member)
+                staff_created += 1
 
-    # MODIFIED: New method to handle course instructors
+            self.seeded_data["staff"] = staff_created
+            self.seeded_data["users"] += staff_created
+            logger.info(
+                f"  ✓ Seeded {staff_created} staff and created {staff_created} linked users."
+            )
+
     async def _seed_course_instructors(self):
         """Seed the many-to-many relationship between courses and staff."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  🧑‍🏫 Seeding course instructors...")
             courses = (await session.execute(select(Course))).scalars().all()
-            staff = (await session.execute(select(Staff))).scalars().all()
-
+            staff_q = await session.execute(
+                select(Staff).where(Staff.staff_type == "academic")
+            )
+            staff = staff_q.scalars().all()
             if not courses or not staff:
-                logger.warning("  Cannot seed instructors: No courses or staff exist.")
                 return
 
             instructors = []
             for course in courses:
-                # Assign 1 to 3 instructors per course
-                num_instructors = random.randint(1, 3)
-                assigned_staff = random.sample(staff, min(num_instructors, len(staff)))
-
-                for staff_member in assigned_staff:
+                num = random.randint(1, 2)
+                assigned = random.sample(staff, min(num, len(staff)))
+                for staff_member in assigned:
                     instructors.append(
                         CourseInstructor(course_id=course.id, staff_id=staff_member.id)
                     )
-
-            # Ensure we don't exceed the defined magnitude limit
-            if len(instructors) > SCALE_LIMITS["course_instructors"]:
-                instructors = random.sample(
-                    instructors, SCALE_LIMITS["course_instructors"]
-                )
 
             session.add_all(instructors)
             self.seeded_data["course_instructors"] = len(instructors)
             logger.info(f"  ✓ Seeded {len(instructors)} course instructor links.")
 
+    async def _seed_staff_unavailability(self):
+        """Seed staff unavailability for the active session."""
+        async with db_manager.get_db_transaction() as session:
+            logger.info("  🚫 Seeding staff unavailability...")
+            staff_members_q = await session.execute(
+                select(Staff).where(Staff.can_invigilate == True)
+            )
+            staff_members = staff_members_q.scalars().all()
+
+            # EAGER LOADING
+            active_session_q = await session.execute(
+                select(AcademicSession)
+                .where(AcademicSession.is_active == True)
+                .options(
+                    selectinload(AcademicSession.timeslot_template).selectinload(
+                        TimeSlotTemplate.periods
+                    )
+                )
+            )
+            active_session = active_session_q.scalars().first()
+            if (
+                not staff_members
+                or not active_session
+                or not active_session.timeslot_template
+            ):
+                return
+
+            exam_period_start = active_session.start_date
+            exam_period_duration = (
+                active_session.end_date - active_session.start_date
+            ).days
+            exam_dates = [
+                exam_period_start + timedelta(days=i)
+                for i in range(exam_period_duration + 1)
+                if (exam_period_start + timedelta(days=i)).weekday() < 5
+            ]
+            periods = active_session.timeslot_template.periods
+            unavailabilities = []
+
+            for staff in random.sample(staff_members, k=int(len(staff_members) * 0.7)):
+                for _ in range(random.randint(1, 3)):
+                    if len(unavailabilities) >= SCALE_LIMITS["staff_unavailability"]:
+                        break
+                    unavailabilities.append(
+                        StaffUnavailability(
+                            staff_id=staff.id,
+                            session_id=active_session.id,
+                            unavailable_date=random.choice(exam_dates),
+                            time_slot_period=random.choice(
+                                [p.period_name for p in periods]
+                            ),
+                            reason=random.choice(
+                                ["Personal Appointment", "Medical", "Meeting"]
+                            ),
+                        )
+                    )
+
+            session.add_all(unavailabilities)
+            self.seeded_data["staff_unavailability"] = len(unavailabilities)
+            logger.info(
+                f"  ✓ Seeded {len(unavailabilities)} staff unavailability records."
+            )
+
     async def _seed_exams_and_registrations(self):
-        """Seed exams and ensure course registrations meet minimums."""
+        """Seed exams and course registrations based on natural enrollment."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  📝 Seeding exams and course registrations...")
             active_session = (
@@ -892,9 +1250,9 @@ class ComprehensiveFakeSeeder:
                 .first()
             )
             if not active_session:
-                logger.error("  Cannot seed exams: No active academic session found.")
                 return
 
+            # EAGER LOADING
             courses = (
                 (
                     await session.execute(
@@ -904,240 +1262,170 @@ class ComprehensiveFakeSeeder:
                 .scalars()
                 .all()
             )
-            students = (await session.execute(select(Student))).scalars().all()
-            staff = (
-                (await session.execute(select(Staff))).scalars().all()
-            )  # Fetch staff for instructor assignment
-
-            if not courses or not students or not staff:
-                logger.error("Cannot seed exams: Missing courses, students, or staff.")
+            students = (
+                (
+                    await session.execute(
+                        select(Student).options(selectinload(Student.programme))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not courses or not students:
                 return
 
-            student_dept_map = {}
-            prog_dept_map_result = await session.execute(
-                select(Programme.id, Programme.department_id)
-            )
-            prog_dept_map = {
-                prog_id: dept_id for prog_id, dept_id in prog_dept_map_result
+            student_details = {
+                s.id: {
+                    "dept_id": s.programme.department_id,
+                    "level": (int(active_session.name.split("/")[0]) - s.entry_year + 1)
+                    * 100,
+                }
+                for s in students
             }
-            for s in students:
-                student_dept_map[s.id] = prog_dept_map.get(s.programme_id)
+            registrations, course_enrollment = [], defaultdict(list)
+            course_map = {c.id: c for c in courses}
 
-            exams, registrations = [], []
-
-            for student in students:
-                student_level = (
-                    int(active_session.name.split("/")[0]) - student.entry_year + 1
-                ) * 100
-                student_dept = student_dept_map.get(student.id)
+            for student_id, details in student_details.items():
                 eligible_courses = [
                     c
                     for c in courses
-                    if c.department_id == student_dept
-                    and c.course_level == student_level
+                    if c.department_id == details["dept_id"]
+                    and c.course_level == details["level"]
                 ]
-                num_courses = random.randint(6, 10)
+                num_courses = random.randint(3, 9)
                 for course in random.sample(
                     eligible_courses, min(num_courses, len(eligible_courses))
                 ):
-                    registrations.append(
-                        CourseRegistration(
-                            student_id=student.id,
-                            course_id=course.id,
-                            session_id=active_session.id,
-                        )
+                    reg = CourseRegistration(
+                        student_id=student_id,
+                        course_id=course.id,
+                        session_id=active_session.id,
+                        registration_type=(
+                            "carryover" if random.random() < 0.05 else "normal"
+                        ),
                     )
+                    registrations.append(reg)
+                    course_enrollment[course.id].append(student_id)
+
             session.add_all(registrations)
-            await session.flush()
+            self.seeded_data["course_registrations"] = len(registrations)
 
-            courses_with_regs = (
-                await session.execute(
-                    select(
-                        CourseRegistration.course_id,
-                        func.count(CourseRegistration.id).label("reg_count"),
-                    )
-                    .where(CourseRegistration.session_id == active_session.id)
-                    .group_by(CourseRegistration.course_id)
-                )
-            ).all()
-            course_reg_counts = {c[0]: c[1] for c in courses_with_regs}
-            all_course_map = {c.id: c for c in courses}
+            exams, courses_with_students = [], list(course_enrollment.keys())
+            exam_course_ids = random.sample(
+                courses_with_students,
+                min(len(courses_with_students), SCALE_LIMITS["exams"]),
+            )
 
-            for course_id, reg_count in list(course_reg_counts.items())[
-                : SCALE_LIMITS["exams"]
-            ]:
-                course = all_course_map[course_id]
-                final_reg_count = reg_count
-                if 0 < reg_count < 30:
-                    needed = 30 - reg_count
-                    registered_students = set(
-                        (
-                            await session.execute(
-                                select(CourseRegistration.student_id).where(
-                                    CourseRegistration.course_id == course.id
-                                )
-                            )
-                        )
-                        .scalars()
-                        .all()
-                    )
-                    eligible_students = [
-                        s.id
-                        for s in students
-                        if student_dept_map.get(s.id) == course.department_id
-                        and s.id not in registered_students
-                    ]
-                    if len(eligible_students) >= needed:
-                        new_regs = [
-                            CourseRegistration(
-                                student_id=sid,
-                                course_id=course.id,
-                                session_id=active_session.id,
-                            )
-                            for sid in random.sample(eligible_students, needed)
-                        ]
-                        session.add_all(new_regs)
-                        registrations.extend(new_regs)
-                        final_reg_count = 30
-
-                if final_reg_count > 0:
+            for course_id in exam_course_ids:
+                course = course_map.get(course_id)
+                reg_count = len(course_enrollment[course_id])
+                if course and reg_count > 0:
                     exams.append(
                         Exam(
                             course_id=course.id,
                             session_id=active_session.id,
                             duration_minutes=course.exam_duration_minutes,
-                            expected_students=final_reg_count,
+                            expected_students=reg_count,
                             status="pending",
                             is_practical=course.is_practical or False,
-                            morning_only=random.choice([True, False]),
-                            requires_projector=random.choice([True, False, False]),
-                            # MODIFIED: Removed obsolete instructor_id assignment
+                            morning_only=course.morning_only,
                         )
                     )
+
             session.add_all(exams)
-            self.seeded_data["course_registrations"] = len(registrations)
             self.seeded_data["exams"] = len(exams)
             logger.info(
                 f"  ✓ Seeded {len(registrations)} registrations and {len(exams)} exams."
             )
 
     async def _seed_exam_relations(self):
-        """Seed exam_departments, allowed_rooms, and prerequisites."""
+        """Seed exam_departments and prerequisites."""
         async with db_manager.get_db_transaction() as session:
             logger.info(
                 "  🔗 Seeding exam relations (departments, rooms, prerequisites)..."
             )
-            exams = (
-                (
-                    await session.execute(
-                        select(Exam).options(
-                            selectinload(Exam.course),
-                            selectinload(
-                                Exam.prerequisites
-                            ),  # Eager load prerequisites
-                        )
-                    )
+            # EAGER LOADING
+            exams_q = await session.execute(
+                select(Exam).options(
+                    selectinload(Exam.course), selectinload(Exam.prerequisites)
                 )
-                .scalars()
-                .all()
             )
-            rooms = (await session.execute(select(Room))).scalars().all()
-            if not exams or not rooms:
+            exams = exams_q.scalars().all()
+            if not exams:
                 return
 
-            exam_depts, allowed_rooms = [], []
-            prereqs_count = 0
-
-            # Group exams by department and level for prerequisite logic
-            dept_level_exams = {}
+            exam_depts, prereqs_count = [], 0
+            dept_level_exams = defaultdict(list)
             for exam in exams:
-                dept_id = exam.course.department_id
-                level = exam.course.course_level
-                if (dept_id, level) not in dept_level_exams:
-                    dept_level_exams[(dept_id, level)] = []
-                dept_level_exams[(dept_id, level)].append(exam)
+                dept_level_exams[
+                    (exam.course.department_id, exam.course.course_level)
+                ].append(exam)
 
             for exam in exams:
-                # Exam Departments
                 exam_depts.append(
                     ExamDepartment(
                         exam_id=exam.id, department_id=exam.course.department_id
                     )
                 )
-
-                # Allowed Rooms
-                num_rooms = random.randint(1, 5)
-                for room in random.sample(rooms, min(num_rooms, len(rooms))):
-                    allowed_rooms.append(
-                        ExamAllowedRoom(exam_id=exam.id, room_id=room.id)
+                if (
+                    prereqs_count < SCALE_LIMITS["exam_prerequisites"]
+                    and exam.course.course_level > 100
+                ):
+                    potential = dept_level_exams.get(
+                        (exam.course.department_id, exam.course.course_level - 100), []
                     )
+                    if potential:
+                        prereq_exam = random.choice(potential)
+                        if prereq_exam.id != exam.id and prereq_exam.id not in {
+                            p.id for p in exam.prerequisites
+                        }:
+                            exam.prerequisites.append(prereq_exam)
+                            prereqs_count += 1
 
-                # Exam Prerequisites - FIXED: Use direct relationship assignment
-                if prereqs_count < SCALE_LIMITS["exam_prerequisites"]:
-                    level = exam.course.course_level
-                    if level > 100:
-                        prereq_level = level - 100
-                        dept_id = exam.course.department_id
-                        potential_prereqs = dept_level_exams.get(
-                            (dept_id, prereq_level), []
-                        )
-                        if potential_prereqs:
-                            prereq_exam = random.choice(potential_prereqs)
-
-                            # FIX: Check if prerequisite already exists to avoid duplicates
-                            existing_prereqs = {p.id for p in exam.prerequisites}
-                            if prereq_exam.id not in existing_prereqs:
-                                exam.prerequisites.append(prereq_exam)
-                                prereqs_count += 1
-
-            session.add_all(exam_depts + allowed_rooms)
-            # No need to manually add prerequisites since they're handled by the relationship
+            session.add_all(exam_depts)
             self.seeded_data["exam_departments"] = len(exam_depts)
-            self.seeded_data["exam_allowed_rooms"] = len(allowed_rooms)
             self.seeded_data["exam_prerequisites_association"] = prereqs_count
             logger.info(
-                f"  ✓ Seeded {len(exam_depts)} exam depts, {len(allowed_rooms)} allowed rooms, {prereqs_count} prerequisites."
+                f"  ✓ Seeded {len(exam_depts)} exam depts and {prereqs_count} prereqs."
             )
 
     async def _seed_timetable_jobs_and_versions(self):
         """Seed timetable jobs and versions."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  ⏳ Seeding timetable jobs and versions...")
-            sessions = (await session.execute(select(AcademicSession))).scalars().all()
+            sessions_list = (
+                (await session.execute(select(AcademicSession))).scalars().all()
+            )
             configs = (
                 (await session.execute(select(SystemConfiguration))).scalars().all()
             )
             users = (await session.execute(select(User))).scalars().all()
-            if not all([sessions, configs, users]):
+            if not all([sessions_list, configs, users]):
                 return
 
             jobs, versions = [], []
             for _ in range(SCALE_LIMITS["timetable_jobs"]):
                 job = TimetableJob(
-                    session_id=random.choice(sessions).id,
+                    session_id=random.choice(sessions_list).id,
                     configuration_id=random.choice(configs).id,
                     initiated_by=random.choice(users).id,
-                    status=random.choice(["completed", "failed"]),
-                    progress_percentage=(
-                        100 if random.choice([True, False]) else random.randint(0, 99)
-                    ),
-                    hard_constraint_violations=random.randint(0, 5),
-                    soft_constraint_score=random.uniform(0.8, 1.0),
-                    room_utilization_percentage=random.uniform(60, 95),
+                    status=random.choice(["completed", "failed", "running"]),
+                    progress_percentage=random.randint(0, 100),
                 )
                 session.add(job)
                 await session.flush()
                 jobs.append(job)
 
-                for i in range(random.randint(1, 3)):  # 1-3 versions per job
-                    v = TimetableVersion(
-                        job_id=job.id,
-                        version_number=i + 1,
-                        version_type="primary",
-                        is_active=(i == 0),  # Only the first version is active
-                        is_published=True,
+                for i in range(random.randint(1, 3)):
+                    versions.append(
+                        TimetableVersion(
+                            job_id=job.id,
+                            version_number=i + 1,
+                            version_type="primary",
+                            is_active=(i == 0),
+                            is_published=random.choice([True, False]),
+                        )
                     )
-                    versions.append(v)
 
             session.add_all(versions)
             self.seeded_data["timetable_jobs"] = len(jobs)
@@ -1148,27 +1436,18 @@ class ComprehensiveFakeSeeder:
         """Seed timetable assignments and exam invigilators."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  ✍️ Seeding timetable assignments and invigilators...")
-
-            # Eagerly load all required relationships to avoid lazy loading issues
-            versions = (
-                (
-                    await session.execute(
-                        select(TimetableVersion).options(
-                            selectinload(TimetableVersion.job).selectinload(
-                                TimetableJob.session
-                            )
-                        )
-                    )
+            # EAGER LOADING
+            versions_q = await session.execute(
+                select(TimetableVersion).options(
+                    selectinload(TimetableVersion.job)
+                    .selectinload(TimetableJob.session)
+                    .selectinload(AcademicSession.timeslot_template)
+                    .selectinload(TimeSlotTemplate.periods)
                 )
-                .scalars()
-                .all()
             )
+            versions = versions_q.scalars().all()
             rooms = (await session.execute(select(Room))).scalars().all()
-            exams = (
-                (await session.execute(select(Exam).options(selectinload(Exam.course))))
-                .scalars()
-                .all()
-            )
+            exams = (await session.execute(select(Exam))).scalars().all()
             staff = (
                 (
                     await session.execute(
@@ -1180,103 +1459,64 @@ class ComprehensiveFakeSeeder:
             )
 
             if not all([versions, rooms, exams, staff]):
-                logger.warning(
-                    "  Skipping timetable assignments: missing required data"
-                )
                 return
 
             assignments, invigilators = [], []
-            time_slots = ["Morning", "Afternoon", "Evening"]
-
             for version in versions:
-                # Access the eagerly loaded session directly
-                session_start_date = version.job.session.start_date
-                exam_day_offset = random.randint(60, 90)
+                if not (
+                    version.job
+                    and version.job.session
+                    and version.job.session.timeslot_template
+                ):
+                    continue
 
-                # Get exams for this version's session
+                start, end = (
+                    version.job.session.start_date,
+                    version.job.session.end_date,
+                )
+                exam_dates = [
+                    start + timedelta(days=i)
+                    for i in range((end - start).days + 1)
+                    if (start + timedelta(days=i)).weekday() < 5
+                ]
                 session_exams = [
                     e for e in exams if e.session_id == version.job.session_id
                 ]
+                periods = version.job.session.timeslot_template.periods
 
-                # Limit the number of assignments per version to avoid excessive data
-                max_assignments_per_version = min(
-                    len(session_exams),
-                    max(
-                        1,
-                        SCALE_LIMITS["timetable_assignments"] // max(1, len(versions)),
-                    ),
-                )
+                for exam in random.sample(
+                    session_exams, min(len(session_exams), SCALE_LIMITS["exams"] // 2)
+                ):
+                    if not exam_dates or not periods:
+                        continue
 
-                for exam in random.sample(session_exams, max_assignments_per_version):
-                    exam_date = session_start_date + timedelta(
-                        days=exam_day_offset + random.randint(0, 14)
+                    assigned_room = random.choice(rooms)
+                    assign = TimetableAssignment(
+                        exam_id=exam.id,
+                        room_id=assigned_room.id,
+                        version_id=version.id,
+                        exam_date=random.choice(exam_dates),
+                        timeslot_template_period_id=random.choice(periods).id,
+                        student_count=exam.expected_students,
+                        allocated_capacity=assigned_room.exam_capacity,
+                        is_primary=True,
+                        is_confirmed=True,
                     )
+                    session.add(assign)
+                    await session.flush()
+                    assignments.append(assign)
 
-                    students_left = exam.expected_students
-                    is_primary = True
-                    rooms_used = 0
-
-                    while students_left > 0 and rooms_used < 5:  # Limit rooms per exam
-                        # Smart room selection based on exam requirements
-                        if exam.is_practical:
-                            room_pool = [r for r in rooms if r.has_computers]
-                        elif exam.requires_projector:
-                            room_pool = [r for r in rooms if r.has_projector]
-                        else:
-                            room_pool = rooms
-
-                        # If no suitable rooms, use any room
-                        if not room_pool:
-                            room_pool = rooms
-
-                        room = random.choice(room_pool)
-                        room_capacity = room.exam_capacity or (room.capacity * 2 // 3)
-                        assigned_count = min(students_left, room_capacity)
-
-                        if assigned_count <= 0:
-                            break  # Skip if room has no capacity
-
-                        assign = TimetableAssignment(
-                            exam_id=exam.id,
-                            room_id=room.id,
-                            version_id=version.id,
-                            exam_date=exam_date,
-                            time_slot_period=random.choice(time_slots),
-                            student_count=assigned_count,
-                            allocated_capacity=assigned_count,
-                            is_primary=is_primary,
-                            is_confirmed=True,
-                        )
-                        session.add(assign)
-                        await session.flush()
-                        assignments.append(assign)
-
-                        is_primary = False
-                        students_left -= assigned_count
-                        rooms_used += 1
-
-                        # Assign invigilators - ensure we don't exceed limits
-                        num_invigilators = max(1, math.ceil(assigned_count / 50))
-                        available_staff = [
-                            s for s in staff if s.max_concurrent_exams > 0
-                        ]
-
-                        if available_staff:
-                            invigilator_count = min(
-                                num_invigilators,
-                                len(available_staff),
-                                room.max_inv_per_room,
+                    num_invigilators = max(1, math.ceil(exam.expected_students / 50))
+                    for i, inv_staff in enumerate(
+                        random.sample(staff, min(num_invigilators, len(staff)))
+                    ):
+                        invigilators.append(
+                            ExamInvigilator(
+                                timetable_assignment_id=assign.id,
+                                staff_id=inv_staff.id,
+                                role="lead-invigilator" if i == 0 else "invigilator",
                             )
-                            for i, inv_staff in enumerate(
-                                random.sample(available_staff, invigilator_count)
-                            ):
-                                invigilators.append(
-                                    ExamInvigilator(
-                                        timetable_assignment_id=assign.id,
-                                        staff_id=inv_staff.id,
-                                        is_chief_invigilator=(i == 0),
-                                    )
-                                )
+                        )
 
             session.add_all(invigilators)
             self.seeded_data["timetable_assignments"] = len(assignments)
@@ -1285,79 +1525,100 @@ class ComprehensiveFakeSeeder:
                 f"  ✓ Seeded {len(assignments)} assignments and {len(invigilators)} invigilators."
             )
 
+    async def _seed_hitl_entities(self):
+        """Seed Human-in-the-Loop entities like scenarios and locks."""
+        async with db_manager.get_db_transaction() as session:
+            logger.info("  🔒 Seeding HITL scenarios and locks...")
+            versions = (await session.execute(select(TimetableVersion))).scalars().all()
+            users = (await session.execute(select(User))).scalars().all()
+            # EAGER LOADING
+            exams_q = await session.execute(
+                select(Exam).options(
+                    selectinload(Exam.session)
+                    .selectinload(AcademicSession.timeslot_template)
+                    .selectinload(TimeSlotTemplate.periods)
+                )
+            )
+            exams = exams_q.scalars().all()
+            if not all([versions, users, exams]):
+                return
+
+            scenarios, locks = [], []
+            for i in range(SCALE_LIMITS["timetable_scenarios"]):
+                scenarios.append(
+                    TimetableScenario(
+                        parent_version_id=random.choice(versions).id,
+                        name=f"What-if Scenario {i+1}",
+                        description=fake.sentence(),
+                        created_by=random.choice(users).id,
+                    )
+                )
+            session.add_all(scenarios)
+            await session.flush()
+
+            for _ in range(SCALE_LIMITS["timetable_locks"]):
+                exam = random.choice(exams)
+                if not (
+                    exam.session
+                    and exam.session.timeslot_template
+                    and exam.session.timeslot_template.periods
+                ):
+                    continue
+
+                duration = (exam.session.end_date - exam.session.start_date).days
+                exam_date = exam.session.start_date + timedelta(
+                    days=random.randint(0, duration)
+                )
+                period = random.choice(exam.session.timeslot_template.periods)
+                locks.append(
+                    TimetableLock(
+                        scenario_id=random.choice(scenarios).id,
+                        exam_id=exam.id,
+                        timeslot_template_period_id=period.id,
+                        exam_date=exam_date,
+                        locked_by=random.choice(users).id,
+                        reason="Administrative lock",
+                        is_active=True,
+                    )
+                )
+            session.add_all(locks)
+
+            self.seeded_data["timetable_scenarios"] = len(scenarios)
+            self.seeded_data["timetable_locks"] = len(locks)
+            logger.info(
+                f"  ✓ Seeded {len(scenarios)} scenarios and {len(locks)} locks."
+            )
+
     async def _seed_timetable_edits(self):
         """Seed timetable edits."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  ✏️ Seeding timetable edits...")
-
-            # Eagerly load assignments with version relationships
             assignments = (
-                (
-                    await session.execute(
-                        select(TimetableAssignment).options(
-                            selectinload(TimetableAssignment.version)
-                        )
-                    )
-                )
-                .scalars()
-                .all()
+                (await session.execute(select(TimetableAssignment))).scalars().all()
             )
             users = (await session.execute(select(User))).scalars().all()
-
             if not assignments or not users:
-                logger.warning(
-                    "  Skipping timetable edits: missing assignments or users"
-                )
                 return
 
             edits = []
-            max_edits = min(len(assignments), SCALE_LIMITS["timetable_edits"])
-
-            for assign in random.sample(assignments, max_edits):
-                exam_date = assign.exam_date
-
-                # Normalize type: ensure it's a Python date
-                if isinstance(exam_date, datetime):
-                    exam_date = exam_date.date()
-                elif not isinstance(exam_date, date):
-                    try:
-                        exam_date = datetime.strptime(str(exam_date), "%Y-%m-%d").date()
-                    except ValueError:
-                        exam_date = date.today()  # Fallback
-
-                edit = TimetableEdit(
-                    version_id=assign.version_id,
-                    exam_id=assign.exam_id,
-                    edited_by=random.choice(users).id,
-                    edit_type=random.choice(
-                        ["reschedule", "room_change", "time_change"]
-                    ),
-                    reason=random.choice(
-                        [
-                            "Administrative adjustment",
-                            "Room maintenance",
-                            "Staff availability",
-                            "Student conflict",
-                        ]
-                    ),
-                    validation_status=random.choice(
-                        ["approved", "pending", "rejected"]
-                    ),
-                    old_values={
-                        "date": str(exam_date),
-                        "time_slot": assign.time_slot_period,
-                        "room_id": str(assign.room_id),
-                    },
-                    new_values={
-                        "date": str(exam_date + timedelta(days=random.randint(1, 3))),
-                        "time_slot": random.choice(["Morning", "Afternoon", "Evening"]),
-                        "room_id": str(
-                            assign.room_id
-                        ),  # Same room or could be different
-                    },
+            for assign in random.sample(
+                assignments, min(len(assignments), SCALE_LIMITS["timetable_edits"])
+            ):
+                edits.append(
+                    TimetableEdit(
+                        version_id=assign.version_id,
+                        exam_id=assign.exam_id,
+                        edited_by=random.choice(users).id,
+                        edit_type=random.choice(["reschedule", "room_change"]),
+                        reason="Administrative adjustment",
+                        validation_status=random.choice(["approved", "pending"]),
+                        old_values={
+                            "date": str(assign.exam_date),
+                            "period_id": str(assign.timeslot_template_period_id),
+                        },
+                        new_values={"date": str(assign.exam_date + timedelta(days=1))},
+                    )
                 )
-                edits.append(edit)
-
             session.add_all(edits)
             self.seeded_data["timetable_edits"] = len(edits)
             logger.info(f"  ✓ Seeded {len(edits)} timetable edits.")
@@ -1368,56 +1629,30 @@ class ComprehensiveFakeSeeder:
             logger.info("  📤 Seeding file uploads...")
             users = (await session.execute(select(User))).scalars().all()
             if not users:
-                logger.warning("  Skipping file uploads: no users available")
                 return
 
             upload_sessions, uploaded_files = [], []
-            upload_types = ["students", "courses", "staff", "exams", "rooms"]
-
-            for _ in range(
-                min(SCALE_LIMITS["file_upload_sessions"], len(upload_types))
-            ):
-                upload_type = random.choice(upload_types)
+            for upload_type in ["students", "courses", "staff", "exams"]:
+                if len(upload_sessions) >= SCALE_LIMITS["file_upload_sessions"]:
+                    break
                 upload_session = FileUploadSession(
                     upload_type=upload_type,
                     uploaded_by=random.choice(users).id,
-                    status=random.choice(["completed", "processing", "failed"]),
-                    total_records=random.randint(50, 500),
-                    processed_records=random.randint(50, 500),
-                    validation_errors=(
-                        []
-                        if random.choice([True, False])
-                        else [
-                            {"row": 1, "error": "Missing required field"},
-                            {"row": 5, "error": "Invalid format"},
-                        ]
-                    ),
+                    status=random.choice(["completed", "failed"]),
+                    total_records=random.randint(50, 200),
                 )
                 session.add(upload_session)
                 await session.flush()
                 upload_sessions.append(upload_session)
-
-                # Create 1-2 files per upload session
-                for file_num in range(random.randint(1, 2)):
-                    uploaded_files.append(
-                        UploadedFile(
-                            upload_session_id=upload_session.id,
-                            file_name=f"{upload_type}_batch_{file_num + 1}.csv",
-                            file_path=f"/uploads/{upload_type}/batch_{file_num + 1}.csv",
-                            file_size=random.randint(1024, 1048576),  # 1KB to 1MB
-                            file_type="csv",
-                            mime_type="text/csv",
-                            row_count=random.randint(50, 500),
-                            validation_status=random.choice(
-                                ["valid", "invalid", "partial"]
-                            ),
-                            validation_errors=(
-                                []
-                                if random.choice([True, False])
-                                else ["Header mismatch", "Duplicate records found"]
-                            ),
-                        )
+                uploaded_files.append(
+                    UploadedFile(
+                        upload_session_id=upload_session.id,
+                        file_name=f"{upload_type}.csv",
+                        file_path=f"/uploads/{upload_type}.csv",
+                        file_size=random.randint(1024, 10240),
+                        file_type="csv",
                     )
+                )
 
             session.add_all(uploaded_files)
             self.seeded_data["file_upload_sessions"] = len(upload_sessions)
@@ -1432,68 +1667,30 @@ class ComprehensiveFakeSeeder:
             logger.info("  🔔 Seeding system events and notifications...")
             users = (await session.execute(select(User))).scalars().all()
             if not users:
-                logger.warning("  Skipping system events: no users available")
                 return
 
             events, notifications = [], []
-            event_types = ["info", "warning", "error", "success"]
-            priorities = ["low", "medium", "high", "critical"]
-            entities = ["exam", "timetable", "room", "staff", "student", "system"]
-
             for _ in range(SCALE_LIMITS["system_events"]):
                 event = SystemEvent(
-                    title=fake.sentence(),
-                    message=fake.paragraph(),
-                    event_type=random.choice(event_types),
-                    priority=random.choice(priorities),
-                    entity_type=random.choice(
-                        entities + [None]
-                    ),  # Some events may not have entity
-                    entity_id=uuid4() if random.choice([True, False]) else None,
-                    event_metadata={
-                        "source": random.choice(
-                            ["scheduler", "upload", "manual", "system"]
-                        ),
-                        "affected_components": random.sample(
-                            entities, random.randint(1, 3)
-                        ),
-                    },
-                    affected_users=(
-                        random.sample([u.id for u in users], min(5, len(users)))
-                        if random.choice([True, False])
-                        else []
-                    ),
-                    is_resolved=random.choice([True, False]),
-                    resolved_by=(
-                        random.choice(users).id
-                        if random.choice([True, False])
-                        else None
-                    ),
-                    resolved_at=(
-                        datetime.now() if random.choice([True, False]) else None
+                    title=fake.sentence(nb_words=4),
+                    message=fake.paragraph(nb_sentences=2),
+                    event_type=random.choice(
+                        ["info", "warning", "error", "job_status"]
                     ),
                 )
                 session.add(event)
                 await session.flush()
                 events.append(event)
 
-                # Create notifications for some events
-                if len(notifications) < SCALE_LIMITS["user_notifications"]:
-                    num_notifications = random.randint(1, min(5, len(users)))
-                    for user in random.sample(users, num_notifications):
-                        if len(notifications) < SCALE_LIMITS["user_notifications"]:
-                            notifications.append(
-                                UserNotification(
-                                    user_id=user.id,
-                                    event_id=event.id,
-                                    is_read=random.choice([True, False]),
-                                    read_at=(
-                                        datetime.now()
-                                        if random.choice([True, False])
-                                        else None
-                                    ),
-                                )
+                for user in random.sample(users, min(5, len(users))):
+                    if len(notifications) < SCALE_LIMITS["user_notifications"]:
+                        notifications.append(
+                            UserNotification(
+                                user_id=user.id,
+                                event_id=event.id,
+                                is_read=random.choice([True, False]),
                             )
+                        )
 
             session.add_all(notifications)
             self.seeded_data["system_events"] = len(events)
@@ -1507,129 +1704,167 @@ class ComprehensiveFakeSeeder:
         async with db_manager.get_db_transaction() as session:
             logger.info("  🛡️ Seeding audit logs...")
             users = (await session.execute(select(User))).scalars().all()
+            scenarios = (
+                (await session.execute(select(TimetableScenario))).scalars().all()
+            )
             if not users:
-                logger.warning("  Skipping audit logs: no users available")
                 return
 
-            logs = []
-            actions = [
-                "login",
-                "logout",
-                "create",
-                "update",
-                "delete",
-                "view",
-                "export",
-            ]
-            entities = [
-                "user",
-                "student",
-                "course",
-                "exam",
-                "timetable",
-                "room",
-                "system",
-            ]
-
-            for _ in range(SCALE_LIMITS["audit_logs"]):
-                user = random.choice(users)
-                action = random.choice(actions)
-                entity_type = random.choice(entities)
-
-                log = AuditLog(
-                    user_id=user.id,
-                    action=action,
-                    entity_type=entity_type,
-                    entity_id=uuid4() if random.choice([True, False]) else None,
-                    old_values=(
-                        {"previous_value": "old_data"}
-                        if random.choice([True, False])
-                        else None
-                    ),
-                    new_values=(
-                        {"new_value": "new_data"}
-                        if random.choice([True, False])
-                        else None
-                    ),
+            logs = [
+                AuditLog(
+                    user_id=random.choice(users).id,
+                    action=random.choice(["login", "create", "update", "delete"]),
+                    entity_type=random.choice(["exam", "student", "timetable"]),
                     ip_address=fake.ipv4(),
-                    user_agent=fake.user_agent(),
-                    session_id=fake.uuid4() if random.choice([True, False]) else None,
-                    notes=fake.sentence() if random.choice([True, False]) else None,
+                    scenario_id=(
+                        random.choice(scenarios).id
+                        if scenarios and random.random() < 0.2
+                        else None
+                    ),
                 )
-                logs.append(log)
-
+                for _ in range(SCALE_LIMITS["audit_logs"])
+            ]
             session.add_all(logs)
             self.seeded_data["audit_logs"] = len(logs)
             logger.info(f"  ✓ Seeded {len(logs)} audit logs.")
 
-    async def print_summary(self, dry_run=False):
-        """Prints a summary of intended or actual data counts and key ratios."""
-        logger.info("\n" + "=" * 60)
-        logger.info("📊 SEEDING SUMMARY")
-        logger.info("=" * 60)
+    async def _seed_feedback_and_reporting_entities(self):
+        """Seed feedback and reporting tables."""
+        async with db_manager.get_db_transaction() as session:
+            logger.info("  📈 Seeding feedback and reporting entities...")
+            staff = (await session.execute(select(Staff))).scalars().all()
+            students = (await session.execute(select(Student))).scalars().all()
+            assignments = (
+                (await session.execute(select(TimetableAssignment))).scalars().all()
+            )
+            exams = (await session.execute(select(Exam))).scalars().all()
+            versions = (await session.execute(select(TimetableVersion))).scalars().all()
 
-        data = SCALE_LIMITS if dry_run else self.seeded_data
+            change_reqs, conflict_reps, timetable_conflicts = [], [], []
 
-        # Display counts
-        for entity in sorted(data.keys()):
-            count = data.get(entity, 0)
-            logger.info(f"{entity.replace('_', ' ').title():<35}: {count:>{10},}")
+            if staff and assignments:
+                for _ in range(SCALE_LIMITS["assignment_change_requests"]):
+                    change_reqs.append(
+                        AssignmentChangeRequest(
+                            staff_id=random.choice(staff).id,
+                            timetable_assignment_id=random.choice(assignments).id,
+                            reason="Personal emergency",
+                            status=random.choice(["pending", "approved", "denied"]),
+                        )
+                    )
 
-        logger.info("-" * 60)
-        logger.info("📊 KEY RATIOS & METRICS")
-        logger.info("-" * 60)
+            if students and exams:
+                for _ in range(SCALE_LIMITS["conflict_reports"]):
+                    conflict_reps.append(
+                        ConflictReport(
+                            student_id=random.choice(students).id,
+                            exam_id=random.choice(exams).id,
+                            description="I have a documented medical appointment.",
+                            status=random.choice(["pending", "resolved"]),
+                        )
+                    )
 
-        # Calculate and display ratios
-        students = data.get("students", 0)
-        exams = data.get("exams", 0)
-        rooms = data.get("rooms", 0)
-        registrations = data.get("course_registrations", 0)
+            if versions and exams and students:
+                for _ in range(SCALE_LIMITS["timetable_conflicts"]):
+                    timetable_conflicts.append(
+                        TimetableConflict(
+                            version_id=random.choice(versions).id,
+                            type=random.choice(["hard", "soft"]),
+                            severity=random.choice(["high", "medium", "low"]),
+                            message="Student exam overlap detected.",
+                            details={
+                                "student_id": str(random.choice(students).id),
+                                "conflicting_exams": [
+                                    str(e.id) for e in random.sample(exams, 2)
+                                ],
+                            },
+                            is_resolved=random.choice([True, False]),
+                        )
+                    )
 
-        total_seats = 0
-        if not dry_run:
-            async with db_manager.get_session() as session:
-                total_seats_result = await session.execute(
-                    select(func.sum(Room.exam_capacity))
+            session.add_all(change_reqs + conflict_reps + timetable_conflicts)
+            self.seeded_data["assignment_change_requests"] = len(change_reqs)
+            self.seeded_data["conflict_reports"] = len(conflict_reps)
+            self.seeded_data["timetable_conflicts"] = len(timetable_conflicts)
+            logger.info(
+                f"  ✓ Seeded {len(change_reqs)} change requests, {len(conflict_reps)} reports, and {len(timetable_conflicts)} conflicts."
+            )
+
+    async def _log_data_complexity_analysis(self):
+        """Fetches final data counts and calculates complexity metrics."""
+        logger.info("\n" + "=" * 60 + "\n🔬 DATA COMPLEXITY ANALYSIS\n" + "=" * 60)
+        async with db_manager.get_session() as session:
+            try:
+                num_students = self.seeded_data.get("students", 0)
+                num_exams = self.seeded_data.get("exams", 0)
+                num_registrations = self.seeded_data.get("course_registrations", 0)
+                total_exam_seats = (
+                    await session.scalar(select(func.sum(Exam.expected_students))) or 0
                 )
-                total_seats = total_seats_result.scalar_one_or_none() or 0
-        else:
-            # Estimate for dry run
-            total_seats = rooms * 60  # Assuming average exam capacity of 60
+                total_room_capacity = (
+                    await session.scalar(select(func.sum(Room.exam_capacity))) or 0
+                )
+                num_invigilators = (
+                    await session.scalar(
+                        select(func.count(Staff.id)).where(Staff.can_invigilate == True)
+                    )
+                    or 0
+                )
 
-        logger.info(f"{'Total Students':<35}: {students:>{10},}")
-        logger.info(f"{'Total Exams':<35}: {exams:>{10},}")
-        logger.info(f"{'Total Rooms':<35}: {rooms:>{10},}")
-        logger.info(f"{'Total Exam Seats Available':<35}: {total_seats:>{10},}")
+                avg_courses_per_student = (
+                    num_registrations / num_students if num_students > 0 else 0
+                )
+                avg_students_per_exam = (
+                    total_exam_seats / num_exams if num_exams > 0 else 0
+                )
+                room_pressure = (
+                    total_exam_seats / total_room_capacity
+                    if total_room_capacity > 0
+                    else float("inf")
+                )
 
-        avg_students_per_exam = registrations / exams if exams > 0 else 0
-        logger.info(f"{'Avg. Students per Exam':<35}: {avg_students_per_exam:>{10}.2f}")
+                logger.info(f"{'Metric':<35}: {'Value':>20}")
+                logger.info("-" * 60)
+                logger.info(
+                    f"{'Average courses per student':<35}: {avg_courses_per_student:20.2f}"
+                )
+                logger.info(
+                    f"{'Average students per exam':<35}: {avg_students_per_exam:20.2f}"
+                )
+                logger.info(
+                    f"{'Total student exam seats':<35}: {int(total_exam_seats):>20,}"
+                )
+                logger.info(
+                    f"{'Total available exam capacity':<35}: {int(total_room_capacity):>20,}"
+                )
+                logger.info(f"{'Room Pressure Ratio':<35}: {room_pressure:20.2f}")
+                logger.info(f"{'Available Invigilators':<35}: {num_invigilators:>20,}")
+                logger.info("-" * 60)
+            except Exception as e:
+                logger.error(f"Could not perform data complexity analysis: {e}")
 
-        # Estimate peak concurrency
-        exam_period_days = 14
-        slots_per_day = 3
-        total_slots = exam_period_days * slots_per_day
-        peak_concurrent_exams = math.ceil(exams / total_slots) if total_slots > 0 else 0
-        logger.info(
-            f"{'Est. Peak Concurrent Exams':<35}: {peak_concurrent_exams:>{10},}"
-        )
-
+    async def print_summary(self, dry_run=False):
+        """Prints a summary of intended or actual data counts."""
+        logger.info("\n" + "=" * 60 + "\n📊 SEEDING SUMMARY\n" + "=" * 60)
+        data = SCALE_LIMITS if dry_run else self.seeded_data
+        for entity in sorted(data.keys()):
+            logger.info(
+                f"{entity.replace('_', ' ').title():<35}: {data.get(entity, 0):>{10},}"
+            )
         logger.info("=" * 60)
 
 
 async def main():
     """Main entry point to run the seeder from the command line."""
     parser = argparse.ArgumentParser(
-        description="Seed the database with comprehensive fake data for the Exam Timetabling System.",
+        description="Seed the database with comprehensive fake data.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "--database-url",
-        help="Database connection URL (overrides DATABASE_URL env var).",
-    )
+    parser.add_argument("--database-url", help="Database connection URL.")
     parser.add_argument(
         "--drop-existing",
         action="store_true",
-        help="Drop all existing data from tables before seeding.",
+        help="Drop all existing data before seeding.",
     )
     parser.add_argument(
         "--dry-run",
@@ -1637,23 +1872,20 @@ async def main():
         help="Show what would be generated without writing to the DB.",
     )
     parser.add_argument(
-        "--seed",
-        type=int,
-        help="A seed for the random number generator for reproducible results.",
+        "--seed", type=int, help="A seed for the random number generator."
     )
     parser.add_argument(
         "--magnitude",
         type=int,
         choices=[1, 2, 3, 4, 5],
         default=3,
-        help="Data size magnitude: 1=Basic, 2=Small, 3=Medium, 4=Large, 5=Enterprise.",
+        help="Data size magnitude.",
     )
     args = parser.parse_args()
 
     seeder = ComprehensiveFakeSeeder(
         database_url=args.database_url, seed=args.seed, magnitude=args.magnitude
     )
-
     if args.dry_run:
         await seeder.run_dry()
     else:
@@ -1665,8 +1897,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Ensure the script can be run directly.
-    # It assumes an asyncio-compatible environment.
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

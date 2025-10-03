@@ -1,6 +1,8 @@
+// frontend/src/components/TimetableGrid.tsx
 import { useMemo } from 'react';
 import { RenderableExam } from '../store/types';
 import { ExamBlock } from './ExamBlock';
+import { TooltipProvider } from './ui/tooltip'; // Import the provider
 import { getTimeSlot, generateDepartmentColors, generateDistinctColors, calculateDuration } from '../utils/timetableUtils';
 
 interface TimetableGridProps {
@@ -10,7 +12,8 @@ interface TimetableGridProps {
   onMoveExam: (examId: string, newDate: string, newStartTime: string) => void;
 }
 
-interface PositionedExam extends Exam {
+// FIX: Renamed this interface to avoid conflict with the global 'Exam' type
+interface PositionedRenderableExam extends RenderableExam {
   startColumn: number;
   spanColumns: number;
   stackLevel: number;
@@ -45,16 +48,16 @@ export function TimetableGrid({ exams, viewMode, departments, onMoveExam }: Time
 
   // Process exams for each date with proper positioning and stacking
   const examsByDate = useMemo(() => {
-    const result: Record<string, PositionedExam[]> = {};
+    const result: Record<string, PositionedRenderableExam[]> = {};
     
     dates.forEach(date => {
       const dateExams = exams.filter(exam => exam.date === date);
-      const positioned: PositionedExam[] = [];
+      const positioned: PositionedRenderableExam[] = [];
       
       dateExams.forEach((exam, examIndex) => {
         const startColumn = getTimeSlot(exam.startTime) + 2; // +2 to account for date column
         const duration = calculateDuration(exam.startTime, exam.endTime);
-        const spanColumns = Math.max(1, Math.round(duration));
+        const spanColumns = Math.max(1, Math.ceil(duration)); // Use ceil to ensure it covers the full hour
         
         // Find stack level by checking for overlaps with already positioned exams
         let stackLevel = 0;
@@ -100,7 +103,7 @@ export function TimetableGrid({ exams, viewMode, departments, onMoveExam }: Time
     return result;
   }, [examsByDate, dates]);
 
-  const getExamColor = (exam: PositionedExam) => {
+  const getExamColor = (exam: PositionedRenderableExam) => {
     if (viewMode === 'general') {
       if (exam.departments.length === 1) {
         return departmentColors[exam.departments[0]] || '#6b7280';
@@ -115,75 +118,77 @@ export function TimetableGrid({ exams, viewMode, departments, onMoveExam }: Time
   };
 
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-max">
-        {/* Header with time slots */}
-        <div className="grid grid-cols-[200px_repeat(9,_1fr)] gap-px bg-border mb-px">
-          <div className="bg-card p-3 border-r">
-            <span className="font-medium">Date</span>
-          </div>
-          {timeSlots.map(time => (
-            <div key={time} className="bg-card p-2 text-center">
-              <span className="text-xs leading-tight">{time}</span>
+    <TooltipProvider>
+      <div className="overflow-x-auto">
+        <div className="min-w-max">
+          {/* Header with time slots */}
+          <div className="grid grid-cols-[200px_repeat(9,_1fr)] gap-px bg-border mb-px">
+            <div className="bg-card p-3 border-r">
+              <span className="font-medium">Date</span>
             </div>
-          ))}
-        </div>
-
-        {/* Date rows */}
-        {dates.map((date, dateIndex) => {
-          const stackLevels = maxStackLevels[date] || 1;
-          const rowHeight = Math.max(140, stackLevels * 100 + (stackLevels - 1) * 8); // 100px per stack + 8px gap
-          
-          return (
-            <div key={date}>
-              <div 
-                className="relative grid grid-cols-[200px_repeat(9,_1fr)] gap-px bg-border mb-px"
-                style={{ minHeight: `${rowHeight}px` }}
-              >
-                {/* Date column */}
-                <div className="bg-card p-3 border-r flex flex-col justify-center">
-                  <div className="font-medium">
-                    {new Date(date + 'T00:00:00').toLocaleDateString('en-US', {
-                      weekday: 'short',
-                      month: 'short',
-                      day: 'numeric'
-                    })}
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    {date}
-                  </div>
-                </div>
-
-                {/* Time slot columns - background cells */}
-                {timeSlots.map((_, slotIndex) => (
-                  <div key={slotIndex} className="bg-card relative min-h-full">
-                  </div>
-                ))}
-
-                {/* Positioned exam blocks */}
-                {examsByDate[date]?.map(exam => (
-                  <ExamBlock
-                    key={exam.id}
-                    exam={exam}
-                    color={getExamColor(exam)}
-                    startColumn={exam.startColumn}
-                    spanColumns={exam.spanColumns}
-                    stackLevel={exam.stackLevel}
-                    rowHeight={rowHeight}
-                  />
-                ))}
+            {timeSlots.map(time => (
+              <div key={time} className="bg-card p-2 text-center">
+                <span className="text-xs leading-tight">{time}</span>
               </div>
-              
-              {/* Day separator - thicker border between days */}
-              {dateIndex < dates.length - 1 && (
-                <div className="h-2 bg-gradient-to-r from-border via-border/50 to-border mb-2">
-                  <div className="h-full bg-muted/20"></div>
+            ))}
+          </div>
+
+          {/* Date rows */}
+          {dates.map((date, dateIndex) => {
+            const stackLevels = maxStackLevels[date] || 1;
+            const rowHeight = Math.max(140, stackLevels * 100 + (stackLevels - 1) * 8); // 100px per stack + 8px gap
+            
+            return (
+              <div key={date}>
+                <div 
+                  className="relative grid grid-cols-[200px_repeat(9,_1fr)] gap-px bg-border mb-px"
+                  style={{ minHeight: `${rowHeight}px` }}
+                >
+                  {/* Date column */}
+                  <div className="bg-card p-3 border-r flex flex-col justify-center">
+                    <div className="font-medium">
+                      {new Date(date + 'T00:00:00').toLocaleDateString('en-US', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric'
+                      })}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {date}
+                    </div>
+                  </div>
+
+                  {/* Time slot columns - background cells */}
+                  {timeSlots.map((_, slotIndex) => (
+                    <div key={slotIndex} className="bg-card relative min-h-full">
+                    </div>
+                  ))}
+
+                  {/* Positioned exam blocks */}
+                  {examsByDate[date]?.map(exam => (
+                    <ExamBlock
+                      key={exam.id}
+                      exam={exam}
+                      color={getExamColor(exam)}
+                      startColumn={exam.startColumn}
+                      spanColumns={exam.spanColumns}
+                      stackLevel={exam.stackLevel}
+                      rowHeight={rowHeight}
+                    />
+                  ))}
                 </div>
-              )}
-            </div>
-          );
-        })}
+                
+                {/* Day separator - thicker border between days */}
+                {dateIndex < dates.length - 1 && (
+                  <div className="h-2 bg-gradient-to-r from-border via-border/50 to-border mb-2">
+                    <div className="h-full bg-muted/20"></div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }

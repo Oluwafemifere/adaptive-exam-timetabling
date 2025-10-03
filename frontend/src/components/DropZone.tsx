@@ -1,5 +1,6 @@
+// frontend/src/components/DropZone.tsx
 import { useDrop } from 'react-dnd';
-import { Exam } from '../data/mockExamData';
+import { RenderableExam } from '../store/types';
 
 interface DropZoneProps {
   date: string;
@@ -11,7 +12,7 @@ interface DropZoneProps {
 
 interface DragItem {
   type: 'exam';
-  exam: Exam;
+  exam: RenderableExam;
 }
 
 export function DropZone({ date, timeSlot, onDrop, children, className = '' }: DropZoneProps) {

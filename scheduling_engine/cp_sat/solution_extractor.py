@@ -21,7 +21,7 @@ from scheduling_engine.core.solution import (
     AssignmentStatus,
     SolutionStatus,
 )
-from datetime import date
+from datetime import date, datetime
 
 if TYPE_CHECKING:
     from scheduling_engine.core.problem_model import ExamSchedulingProblem
@@ -57,47 +57,77 @@ class SolutionExtractor:
         )
 
     def extract(self) -> TimetableSolution:
-        """Extract solution with UUID keys and comprehensive validation"""
-        logger.info("Starting UUID-only solution extraction...")
+        """Extracts the complete timetable solution from the solver."""
         solution = TimetableSolution(self.problem)
+        logger.info("Extracting scheduled exams from solver...")
 
-        try:
-            if not self.has_solution():
-                logger.warning("No solution found to extract")
-                solution.status = SolutionStatus.INVALID
-                return solution
+        for (exam_id, slot_id), x_var in self.shared_vars.x_vars.items():
+            if self.solver.Value(x_var) == 1:
+                start_slot_id = slot_id
+                day = self.problem.get_day_for_timeslot(start_slot_id)
+                if not day:
+                    logger.warning(f"Could not find day for start slot {start_slot_id}")
+                    continue
 
-            # Extract assignments using UUID keys
-            self.extract_assignments_comprehensive(solution)
+                # Extract room and invigilator assignments for this exam start
+                room_ids, invigilator_ids = self._extract_allocations(
+                    exam_id, start_slot_id
+                )
 
-            # Detect conflicts with proper room sharing logic
-            conflicts_found = len(solution.detect_conflicts_fixed())
-            self.extraction_stats["conflicts_detected"] = conflicts_found
+                # --- START OF FIX: Calculate room allocations ---
+                allocations = self.calculate_room_allocations(exam_id, set(room_ids))
+                # --- END OF FIX ---
 
-            # Validate assignments and update statuses
-            self.validate_assignments(solution)
-            solution.update_assignment_statuses()
+                # Use the assign method to correctly populate the solution
+                solution.assign(
+                    exam_id=exam_id,
+                    date=day.date,
+                    slot_id=start_slot_id,
+                    rooms=room_ids,
+                    allocations=allocations,
+                    invigilator_ids=invigilator_ids,
+                )
 
-            # Ensure all exams have at least a placeholder assignment
-            self.ensure_all_exams_assigned(solution)
+        logger.info(f"Extracted {len(solution.assignments)} total assignments.")
+        solution.update_statistics()
+        solution.update_assignment_statuses()
+        return solution
 
-            # MODIFIED: Update all statistics and quality metrics before returning
-            solution.update_statistics()
-            solution.update_soft_constraint_metrics(self.problem)
+    def _extract_allocations(
+        self, exam_id: UUID, start_slot_id: UUID
+    ) -> Tuple[List[UUID], List[UUID]]:
+        """Extracts room and invigilator UUIDs for a specific exam start."""
+        assigned_room_ids = []
+        assigned_invigilator_ids = []
 
-            if solution.is_feasible():
-                solution.status = SolutionStatus.FEASIBLE
-            else:
-                solution.status = SolutionStatus.INFEASIBLE
+        # Find all rooms assigned at the start slot
+        for (y_exam_id, room_id, y_slot_id), y_var in self.shared_vars.y_vars.items():
+            if (
+                y_exam_id == exam_id
+                and y_slot_id == start_slot_id
+                and self.solver.Value(y_var) == 1
+            ):
+                assigned_room_ids.append(room_id)
 
-            self.log_extraction_results(solution, conflicts_found)
-            return solution
+        # Find all invigilators assigned to this exam at the start slot (across all its rooms)
+        invigilator_set = set()
+        for (
+            inv_id,
+            u_exam_id,
+            u_room_id,
+            u_slot_id,
+        ), u_var in self.shared_vars.u_vars.items():
+            if (
+                u_exam_id == exam_id
+                and u_slot_id == start_slot_id
+                and u_room_id in assigned_room_ids
+                and self.solver.Value(u_var) == 1
+            ):
+                invigilator_set.add(inv_id)
 
-        except Exception as e:
-            logger.error(f"UUID-only solution extraction failed: {e}")
-            logger.debug(f"Traceback:\n{traceback.format_exc()}")
-            solution.status = SolutionStatus.INVALID
-            return solution
+        assigned_invigilator_ids = list(invigilator_set)
+
+        return assigned_room_ids, assigned_invigilator_ids
 
     def has_solution(self) -> bool:
         """Enhanced solution availability check with multiple methods"""

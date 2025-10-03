@@ -1,13 +1,9 @@
-# FIXED scheduling_engine/constraints/minimum_invigilators.py - Room-based student allocation version
-
+# scheduling_engine/constraints/hard_constraints/minimum_invigilators.py
 """
-COMPREHENSIVE FIX - Minimum Invigilators Assignment with Room-based Student Allocation
+COMPREHENSIVE FIX - Minimum Invigilators Assignment (PARAMETERIZED)
 
-Key Issues Fixed:
-1. Now calculates invigilator requirements based on room capacity and student distribution
-2. Uses room capacity ratios to estimate student allocation per room
-3. Maintains UUID compatibility and Day data class usage
-4. Enhanced validation for room capacity data
+This constraint ensures a sufficient number of invigilators are assigned to each exam,
+based on the number of students in each specific room.
 """
 
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
@@ -18,135 +14,78 @@ logger = logging.getLogger(__name__)
 
 
 class MinimumInvigilatorsConstraint(CPSATBaseConstraint):
-    """Ensure sufficient invigilators are assigned to each exam with room-based allocation"""
+    """Ensure sufficient invigilators are assigned to each exam with room-based allocation."""
 
-    dependencies = ["MaxExamsPerDayConstraint"]
-    constraint_category = "INVIGILATOR_CONSTRAINTS"
-    is_critical = True
-    min_expected_constraints = 0  # May be 0 if no invigilator data
+    dependencies = []
 
-    def _create_local_variables(self):
-        """No local variables needed"""
+    def initialize_variables(self):
+        """No local variables needed."""
         pass
 
-    def _precompute_feasibility_data(self):
-        """Precompute data for faster feasibility checks"""
-        self._valid_assignments = set()
-        self._exam_room_slots = set()
-
-        # Precompute valid assignments
-        for inv_id, exam_id, room_id, slot_id in self.u:
-            if (
-                exam_id in self.problem.exams
-                and room_id in self.problem.rooms
-                and slot_id in self.problem.timeslots
-            ):
-                self._valid_assignments.add((exam_id, room_id, slot_id))
-
-        # Precompute exam-room-slot combinations
-        for exam_id, room_id, slot_id in self.y:
-            self._exam_room_slots.add((exam_id, room_id, slot_id))
-
-    def _is_assignment_feasible(self, exam_id, room_id, slot_id):
-        """Check if an assignment is feasible before creating constraints"""
-        return (exam_id, room_id, slot_id) in self._valid_assignments
-
-    def _calculate_room_student_allocation(
-        self, exam_id, room_id, total_students, room_capacities, total_capacity
-    ):
-        """Calculate estimated student allocation for a specific room"""
-        if room_id not in room_capacities:
-            return 0
-
-        room_capacity = room_capacities[room_id]
-
-        if total_capacity == 0:
-            return 0
-
-        # Calculate proportional allocation based on room capacity
-        return max(1, math.ceil((room_capacity / total_capacity) * total_students))
-
-    def _add_constraint_implementation(self):
-        """Add minimum invigilator assignment constraints with room-based allocation"""
+    def add_constraints(self):
+        """Add minimum invigilator assignment constraints."""
         constraints_added = 0
 
-        invigilators = getattr(self.problem, "invigilators", {})
-        if not invigilators:
-            logger.info(f"{self.constraint_id}: No invigilator data available")
+        if not self.problem.invigilators:
+            logger.info(
+                f"{self.constraint_id}: No invigilator data available, skipping."
+            )
+            self.constraint_count = 0
             return
 
         if not self.u:
             logger.warning(
-                f"{self.constraint_id}: No u variables available (this is normal with optimization)"
+                f"{self.constraint_id}: No u (invigilator assignment) variables available."
             )
+            self.constraint_count = 0
             return
 
-        # Group u variables by (exam_id, room_id, slot_id)
-        assignment_vars = {}
-        for (inv_id, exam_id, room_id, slot_id), uvar in self.u.items():
-            key = (exam_id, room_id, slot_id)
-            if key not in assignment_vars:
-                assignment_vars[key] = []
-            assignment_vars[key].append(uvar)
-
+        # PARAMETERIZATION: Get students per invigilator from config, with a safe default.
+        students_per_invigilator = self.get_parameter_value(
+            "students_per_invigilator", default=50
+        )
+        if students_per_invigilator <= 0:
+            students_per_invigilator = 50  # Fallback
         logger.info(
-            f"{self.constraint_id}: Processing {len(assignment_vars)} exam-room-slot assignments"
+            f"{self.constraint_id}: Using students_per_invigilator = {students_per_invigilator}"
         )
 
-        # For each exam-room-slot assignment with variables
+        # Group u variables by (exam_id, room_id, slot_id) for efficiency
+        assignment_vars = {}
+        for (inv_id, exam_id, room_id, slot_id), uvar in self.u.items():
+            assignment_vars.setdefault((exam_id, room_id, slot_id), []).append(uvar)
+
         for (exam_id, room_id, slot_id), invigilator_vars in assignment_vars.items():
-            if exam_id not in self.problem.exams:
-                continue
-
-            exam = self.problem.exams[exam_id]
+            exam = self.problem.exams.get(exam_id)
             room = self.problem.rooms.get(room_id)
-
-            if not room:
+            if not exam or not room:
                 continue
 
-            # Calculate required invigilators for this room
-            total_students = getattr(exam, "expected_students", 0)
-            room_capacity = getattr(room, "exam_capacity", getattr(room, "capacity", 0))
+            # Estimate students in this specific room. For simplicity, we assume the exam fills this room up to its capacity.
+            # A more complex model could create variables for student allocation.
+            students_in_room = min(exam.expected_students, room.exam_capacity)
 
-            # Students allocated to this specific room
-            room_students = min(total_students, room_capacity)
-            required_invigilators = max(1, math.ceil(room_students / 30))
+            required_invigilators = math.ceil(
+                students_in_room / students_per_invigilator
+            )
+            # Ensure at least one invigilator if the room is used
+            if students_in_room > 0:
+                required_invigilators = max(1, required_invigilators)
+            else:
+                required_invigilators = 0
 
-            # Get corresponding y variable
-            ykey = (exam_id, room_id, slot_id)
-            if ykey not in self.y:
+            y_var = self.y.get((exam_id, room_id, slot_id))
+            if y_var is None:
                 continue
 
-            yvar = self.y[ykey]
-
-            # Ensure minimum invigilators when room is assigned
-            # sum(u_vars) >= required * y_var
-            min_required = min(required_invigilators, len(invigilator_vars))
-
-            # Create constraint: sum of invigilator assignments >= min_required when room assigned
-            self.model.Add(sum(invigilator_vars) >= min_required * yvar)
+            # Constraint: sum(invigilator_vars) >= required_invigilators * y_var
+            # This means IF y_var is 1 (exam is in this room/slot), THEN the sum of assigned invigilators must be at least the required number.
+            self.model.Add(
+                sum(invigilator_vars) >= required_invigilators
+            ).OnlyEnforceIf(y_var)
             constraints_added += 1
 
         self.constraint_count = constraints_added
         logger.info(
-            f"{self.constraint_id}: Added {constraints_added} minimum invigilator constraints"
+            f"{self.constraint_id}: Added {constraints_added} minimum invigilator constraints."
         )
-
-        # This constraint is allowed to generate 0 constraints
-        if constraints_added == 0:
-            if not invigilators:
-                logger.info(
-                    f"{self.constraint_id}: No constraints needed (no invigilators)"
-                )
-            elif not self.u:
-                logger.warning(
-                    f"{self.constraint_id}: No constraints added (no u variables)"
-                )
-            elif not self._exam_room_slots:
-                logger.warning(
-                    f"{self.constraint_id}: No constraints added (no exam-room-slot combinations)"
-                )
-            else:
-                logger.warning(
-                    f"{self.constraint_id}: No constraints added despite having data"
-                )

@@ -7,6 +7,7 @@ Service for enriching raw timetable solution data with human-readable content.
 import logging
 from typing import Dict, Any, List
 from uuid import UUID
+from datetime import date, datetime, time, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class EnrichmentService:
             timeslots_map = metadata.get("timeslots", {})
             days_map = metadata.get("days", {})
             timeslot_to_day_map = metadata.get("timeslot_to_day_map", {})
+            departments_map = metadata.get("departments", {})
 
             enriched_assignments = []
 
@@ -101,17 +103,58 @@ class EnrichmentService:
                     if day_id_str:
                         day = days_map.get(day_id_str)
 
-                instructor_ids = exam_details.get("instructor_ids", [])
-                assigned_instructors = [
-                    instructors_map.get(str(inst_id))
-                    for inst_id in instructor_ids
-                    if instructors_map.get(str(inst_id))
-                ]
+                # --- START OF FIX: DYNAMIC END TIME CALCULATION ---
+                start_time_obj = None
+                end_time_obj = None
+                start_time_str = None
+                end_time_str = None
+
+                if time_slot and time_slot.get("start_time"):
+                    start_time_str = time_slot["start_time"]
+                    start_time_obj = time.fromisoformat(start_time_str)
+
+                    exam_duration = exam_details.get("duration_minutes", 180)
+
+                    # Combine with a dummy date to perform timedelta arithmetic
+                    dummy_date = date(1, 1, 1)
+                    start_datetime = datetime.combine(dummy_date, start_time_obj)
+                    end_datetime = start_datetime + timedelta(minutes=exam_duration)
+                    end_time_obj = end_datetime.time()
+                    end_time_str = end_time_obj.isoformat()
+
+                time_slot_label = "Unscheduled"
+                if start_time_str and end_time_str:
+                    time_slot_label = f"{start_time_str} - {end_time_str}"
+                # --- END OF FIX ---
+
+                # Enrich instructor names from embedded objects within exam_details
+                assigned_instructors = exam_details.get("instructors", [])
                 instructor_names = (
                     ", ".join(
-                        [inst.get("name", "N/A") for inst in assigned_instructors]
+                        [
+                            f"{inst.get('first_name', '')} {inst.get('last_name', '')}".strip()
+                            for inst in assigned_instructors
+                        ]
                     )
                     or "Not Assigned"
+                )
+
+                # Enrich department names from embedded objects within exam_details
+                assigned_departments = exam_details.get("departments", [])
+                department_names = (
+                    ", ".join(
+                        [dept.get("name", "N/A") for dept in assigned_departments]
+                    )
+                    or "N/A"
+                )
+
+                # Enrich faculty names from embedded objects within exam_details
+                assigned_faculties = exam_details.get("faculties", [])
+                faculty_names = (
+                    ", ".join(
+                        [faculty.get("name", "N/A") for faculty in assigned_faculties]
+                    )
+                    or "N/A"
                 )
 
                 enriched_data = {
@@ -119,11 +162,10 @@ class EnrichmentService:
                     "course_id": str(exam_details.get("course_id")),
                     "course_code": exam_details.get("course_code", "N/A"),
                     "course_title": exam_details.get("course_title", "N/A"),
-                    "department_name": exam_details.get("department_name", "N/A"),
+                    "department_name": department_names,
+                    "faculty_name": faculty_names,
                     "instructor_name": instructor_names,
-                    # --- START OF FIX: Add instructor IDs to enriched data ---
-                    "instructor_ids": instructor_ids,
-                    # --- END OF FIX ---
+                    "instructor_ids": [str(i["id"]) for i in assigned_instructors],
                     "student_count": exam_details.get("expected_students"),
                     "actual_student_count": exam_details.get("actual_student_count", 0),
                     "duration_minutes": exam_details.get("duration_minutes"),
@@ -132,13 +174,9 @@ class EnrichmentService:
                     "date": day["date"] if day else None,
                     "time_slot_id": time_slot_id_str,
                     "time_slot_name": time_slot["name"] if time_slot else "Unscheduled",
-                    "start_time": time_slot["start_time"] if time_slot else None,
-                    "end_time": time_slot["end_time"] if time_slot else None,
-                    "time_slot_label": (
-                        f"{time_slot['start_time']} - {time_slot['end_time']}"
-                        if time_slot
-                        else "Unscheduled"
-                    ),
+                    "start_time": start_time_str,
+                    "end_time": end_time_str,
+                    "time_slot_label": time_slot_label,
                     "room_codes": [r["code"] for r in assigned_rooms],
                     "rooms": [
                         {

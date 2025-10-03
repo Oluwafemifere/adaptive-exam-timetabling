@@ -19,7 +19,10 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
-from app.models.hitl import ConstraintConfiguration, TimetableScenario
+# REMOVED: Unused import
+# from .hitl import ConstraintConfiguration, TimetableScenario
+from .hitl import TimetableScenario
+
 
 from .base import Base, TimestampMixin
 
@@ -60,11 +63,12 @@ class TimetableJob(Base, TimestampMixin):
     scenario_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("timetable_scenarios.id"), nullable=True
     )
-    constraint_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("constraint_configurations.id"),
-        nullable=True,
-    )
+    # REMOVED: constraint_config_id does not exist in the schema
+    # constraint_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    #     PG_UUID(as_uuid=True),
+    #     ForeignKey("constraint_configurations.id"),
+    #     nullable=True,
+    # )
     checkpoint_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     soft_constraints_violations: Mapped[Numeric | None] = mapped_column(
         Numeric, nullable=True
@@ -98,7 +102,4 @@ class TimetableJob(Base, TimestampMixin):
     )
     scenario: Mapped[Optional["TimetableScenario"]] = relationship(
         "TimetableScenario", back_populates="jobs"
-    )
-    constraint_config: Mapped[Optional["ConstraintConfiguration"]] = relationship(
-        "ConstraintConfiguration", back_populates="jobs"
     )

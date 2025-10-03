@@ -40,7 +40,9 @@ async def _async_enrich_timetable_result(job_id: str):
             enrichment_service = EnrichmentService()
 
             # 2. Fetch the raw job results (which include lookup metadata)
-            raw_results = await data_retrieval_service.get_timetable_results(job_uuid)
+            raw_results = await data_retrieval_service.get_timetable_job_results(
+                job_uuid
+            )
             if not raw_results or raw_results.get("is_enriched"):
                 logger.warning(
                     f"Skipping enrichment for job {job_id}: No data or already enriched."
@@ -53,17 +55,19 @@ async def _async_enrich_timetable_result(job_id: str):
             )
 
             # 4. Save the enriched data back to the database
-            await data_retrieval_service.update_job_results(job_uuid, enriched_results)
+            await data_retrieval_service.update_timetable_job_results(
+                job_uuid, enriched_results
+            )
             await session.commit()
 
             # 5. Notify frontend of completion
             await publish_job_update(
                 job_id,
                 {
-                    "status": "completed",  # Keep status as completed
+                    "status": "completed",
                     "phase": "completed",
                     "message": "Timetable generation and enrichment complete.",
-                    "result": enriched_results,  # Send the final enriched result
+                    "result": enriched_results,
                 },
             )
             logger.info(f"Successfully enriched and updated results for job {job_id}")

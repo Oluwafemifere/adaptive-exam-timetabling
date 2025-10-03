@@ -25,7 +25,6 @@ class ExamBase(BaseModel):
     requires_projector: bool = False
     is_common: bool = False
     morning_only: bool = False
-    instructor_id: Optional[UUID] = None
 
 
 class ExamCreate(ExamBase):
@@ -44,7 +43,6 @@ class ExamUpdate(BaseModel):
     requires_projector: Optional[bool] = None
     is_common: Optional[bool] = None
     morning_only: Optional[bool] = None
-    instructor_id: Optional[UUID] = None
 
 
 class TimetableAssignmentRead(BaseModel):
@@ -53,8 +51,7 @@ class TimetableAssignmentRead(BaseModel):
     id: UUID
     exam_id: UUID
     room_id: UUID
-    exam_date: date
-    time_slot_period: str
+    time_slot_id: UUID
     student_count: int
     is_confirmed: bool
     version_id: Optional[UUID] = None
@@ -74,6 +71,7 @@ class ExamRead(ExamBase):
     dependent_exam_ids: List[UUID] = Field(
         alias="dependent_exams", default_factory=list
     )
+    department_ids: List[UUID] = Field(default_factory=list)
 
 
 class StaffRead(BaseModel):
@@ -118,13 +116,27 @@ class SchedulingDataResponse(BaseModel):
     data: Dict[str, Any]
 
 
+class TimeslotTemplate(BaseModel):
+    """Schema for defining a timeslot template."""
+
+    name: str = Field(
+        ..., description="The name of the timeslot (e.g., 'Morning', 'Afternoon')."
+    )
+    start_time: time = Field(..., description="The start time of the timeslot.")
+    end_time: time = Field(..., description="The end time of the timeslot.")
+
+
 class TimetableGenerationRequest(BaseModel):
     model_config = MODEL_CONFIG
 
     session_id: UUID
+    configuration_id: Optional[UUID] = None
     options: Optional[Dict[str, Any]] = None
     start_date: date
     end_date: date
+    timeslot_templates: List[TimeslotTemplate] = Field(
+        ..., description="A list of templates defining the timeslots for each day."
+    )
 
 
 class TimetableGenerationResponse(BaseModel):
@@ -134,7 +146,7 @@ class TimetableGenerationResponse(BaseModel):
     message: str
     job_id: UUID
     status: str
-    estimated_completion_minutes: int
+    estimated_completion_minutes: int = 15
 
 
 class ConflictAnalysisResponse(BaseModel):

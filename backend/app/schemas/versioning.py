@@ -27,6 +27,7 @@ class TimetableVersionRead(BaseModel):
     approved_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    scenario_id: Optional[UUID] = None
     timetable_assignment_ids: List[UUID] = Field(
         alias="timetable_assignments", default_factory=list
     )
@@ -43,3 +44,25 @@ class SessionTemplateRead(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class ScenarioCreate(BaseModel):
+    parent_version_id: UUID
+    name: str = Field(..., min_length=3)
+    description: Optional[str] = None
+
+
+class ScenarioRead(BaseModel):
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    created_by: UUID
+    created_at: datetime
+    parent_version_id: Optional[UUID] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ScenarioComparisonRequest(BaseModel):
+    scenario_ids: List[UUID] = Field(..., min_length=2)

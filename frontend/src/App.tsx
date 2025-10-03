@@ -1,3 +1,4 @@
+// frontend/src/App.tsx
 import React, { useEffect } from "react";
 import { Toaster } from "sonner";
 import { Layout } from "./components/Layout";
@@ -17,20 +18,14 @@ import { StaffPortal } from "./pages/StaffPortal";
 import { useAppStore } from "./store";
 
 function AppContent() {
-  const { currentPage, isAuthenticated, user, settings } =
-    useAppStore();
+  const { currentPage, isAuthenticated, user, initializeApp } = useAppStore();
 
-  // Apply theme to document
   useEffect(() => {
-    const root = document.documentElement;
-    if (settings.theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
+    if (isAuthenticated) {
+      initializeApp();
     }
-  }, [settings.theme]);
+  }, [isAuthenticated, initializeApp]);
 
-  // If not authenticated, show login page
   if (!isAuthenticated) {
     return <Login />;
   }
@@ -43,44 +38,53 @@ function AppContent() {
   if (user?.role === "staff") {
     return <StaffPortal />;
   }
-
-  // Administrator portal (existing functionality)
-  if (user?.role === "administrator") {
+  
+  if (user?.role === "admin" || user?.role === "superuser") {
     const renderPage = () => {
       switch (currentPage) {
-        case "dashboard":
-          return <Dashboard />;
-        case "scheduling":
-          return <Scheduling />;
-        case "timetable":
-          return <Timetable />;
-        case "constraints":
-          return <Constraints />;
-        case "scenarios":
-          return <Scenarios />;
-        case "analytics":
-          return <Analytics />;
-        case "session-setup":
-          return <SessionSetup />;
-        case "user-management":
-          return <UserManagement />;
-        case "notifications":
-          return <Notifications />;
-        case "history":
-          return <History />;
-        default:
-          return <Dashboard />;
+        case "dashboard": return <Dashboard />;
+        case "scheduling": return <Scheduling />;
+        case "timetable": return <Timetable />;
+        case "constraints": return <Constraints />;
+        case "scenarios": return <Scenarios />;
+        case "analytics": return <Analytics />;
+        case "session-setup": return <SessionSetup />;
+        case "user-management": return <UserManagement />;
+        case "notifications": return <Notifications />;
+        case "history": return <History />;
+        default: return <Dashboard />;
       }
     };
-
     return <Layout>{renderPage()}</Layout>;
   }
-
-  // Fallback to login if role is not recognized
+  
+  // Fallback for unrecognized roles
   return <Login />;
 }
 
 export default function App() {
+  const { settings } = useAppStore.getState(); // Directly access state for initial render
+
+  useEffect(() => {
+    const unsubscribe = useAppStore.subscribe((state) => {
+      const theme = state.settings.theme;
+      const root = document.documentElement;
+      if (theme === "dark") {
+        root.classList.add("dark");
+      } else {
+        root.classList.remove("dark");
+      }
+    });
+    // Apply initial theme
+    const root = document.documentElement;
+    if (settings.theme === "dark") {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+    return unsubscribe;
+  }, [settings.theme]);
+
   return (
     <>
       <AppContent />

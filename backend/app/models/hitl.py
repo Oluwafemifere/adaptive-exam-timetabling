@@ -1,4 +1,4 @@
-# app/models/hitl.py
+# C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\models\hitl.py
 
 import uuid
 from datetime import datetime, date
@@ -13,6 +13,8 @@ from sqlalchemy import (
     Integer,
     Date,
     func,
+    UniqueConstraint,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -22,15 +24,15 @@ from .base import Base, TimestampMixin
 if TYPE_CHECKING:
     from .users import User
     from .versioning import TimetableVersion
-    from .scheduling import Exam, TimeSlot
+    from .scheduling import Exam, TimeSlotTemplatePeriod
     from .jobs import TimetableJob
 
 
-class TimetableScenario(Base, TimestampMixin):
+class TimetableScenario(Base):
     __tablename__ = "timetable_scenarios"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     parent_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("timetable_versions.id"), nullable=True
@@ -40,14 +42,19 @@ class TimetableScenario(Base, TimestampMixin):
     created_by: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    archived_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     versions: Mapped[List["TimetableVersion"]] = relationship(
-        "TimetableVersion", back_populates="scenario"
+        "TimetableVersion",
+        foreign_keys="TimetableVersion.scenario_id",
+        back_populates="scenario",
     )
-    constraint_configurations: Mapped[List["ConstraintConfiguration"]] = relationship(
-        "ConstraintConfiguration", back_populates="scenario"
-    )
+    # REMOVED: constraint_configurations relationship as the table doesn't exist.
     locks: Mapped[List["TimetableLock"]] = relationship(
         "TimetableLock", back_populates="scenario"
     )
@@ -56,35 +63,14 @@ class TimetableScenario(Base, TimestampMixin):
     )
 
 
-class ConstraintConfiguration(Base, TimestampMixin):
-    __tablename__ = "constraint_configurations"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    scenario_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("timetable_scenarios.id"), nullable=False
-    )
-    definitions: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    created_by: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
-    )
-    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    scenario: Mapped["TimetableScenario"] = relationship(
-        "TimetableScenario", back_populates="constraint_configurations"
-    )
-    jobs: Mapped[List["TimetableJob"]] = relationship(
-        "TimetableJob", back_populates="constraint_config"
-    )
+# REMOVED: ConstraintConfiguration model is not in the DB schema.
 
 
-class TimetableLock(Base, TimestampMixin):
+class TimetableLock(Base):
     __tablename__ = "timetable_locks"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     scenario_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("timetable_scenarios.id"), nullable=False
@@ -92,8 +78,11 @@ class TimetableLock(Base, TimestampMixin):
     exam_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("exams.id"), nullable=False
     )
-    time_slot_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("time_slots.id"), nullable=True
+    # MODIFIED: time_slot_id changed to timeslot_template_period_id to match schema
+    timeslot_template_period_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("timeslot_template_periods.id"),
+        nullable=True,
     )
     exam_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     room_ids: Mapped[Optional[List[uuid.UUID]]] = mapped_column(
@@ -102,6 +91,9 @@ class TimetableLock(Base, TimestampMixin):
     locked_by: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
+    locked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -109,5 +101,12 @@ class TimetableLock(Base, TimestampMixin):
         "TimetableScenario", back_populates="locks"
     )
     exam: Mapped["Exam"] = relationship("Exam")
-    time_slot: Mapped[Optional["TimeSlot"]] = relationship("TimeSlot")
+    # MODIFIED: Relationship updated to TimeSlotTemplatePeriod
+    timeslot_period: Mapped[Optional["TimeSlotTemplatePeriod"]] = relationship(
+        "TimeSlotTemplatePeriod"
+    )
     locker: Mapped["User"] = relationship("User")
+
+    __table_args__ = (
+        Index("idx_timetable_locks_scenario_active", "scenario_id", "is_active"),
+    )

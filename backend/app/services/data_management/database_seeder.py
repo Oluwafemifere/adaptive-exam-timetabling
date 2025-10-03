@@ -13,6 +13,8 @@ from sqlalchemy import select, text
 
 from ...models import AcademicSession  # Keep model for read/check operations
 from ..uploads.data_upload_service import DataUploadService
+from ..System.system_service import SystemService
+
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,7 @@ class DatabaseSeeder:
         self.session = session
         self.upload_service = DataUploadService(session)
         self.seeded_counts: Dict[str, int] = {}
+        self.system_service = SystemService(session)
 
     async def seed_for_scheduling_engine(
         self, session_id: UUID, validation_mode: bool = True
@@ -39,10 +42,10 @@ class DatabaseSeeder:
                 f"Starting scheduling engine data seeding for session {session_id}"
             )
 
-            # Ensure the academic session exists (read/check is fine, creation should use a function if available)
+            # Ensure the academic session exists
             await self._ensure_academic_session(session_id)
 
-            # Generate data structures
+            # ... (rest of the method remains the same)
             faculties_data = self._generate_faculties()
             departments_data = self._generate_departments(faculties_data)
             programmes_data = self._generate_programmes(departments_data)
@@ -53,7 +56,6 @@ class DatabaseSeeder:
             )
             staff_data = self._generate_staff(departments_data)
 
-            # Seed data using the dedicated DB function via the service layer
             await self.upload_service.seed_entity_data("faculties", faculties_data)
             await self.upload_service.seed_entity_data("departments", departments_data)
             await self.upload_service.seed_entity_data("programmes", programmes_data)
@@ -64,13 +66,10 @@ class DatabaseSeeder:
             )
             await self.upload_service.seed_entity_data("staff", staff_data)
 
-            # The original seeder created exams based on registrations. A similar DB function would be needed.
-            # Assuming an 'create_exams_from_registrations' function could exist, otherwise this is a post-seed step.
             logger.info(
                 "Data seeding complete. Exams should be generated from registrations as a next step."
             )
 
-            # Validation can remain as a direct read-only SQL check
             validation_result = (
                 await self._validate_seeded_data(session_id)
                 if validation_mode
@@ -221,26 +220,33 @@ class DatabaseSeeder:
         ]
 
     async def _ensure_academic_session(self, session_id: UUID) -> None:
-        """Checks if session exists; creates if not."""
+        """Checks if session exists; creates if not using the DB function."""
         stmt = select(AcademicSession).where(AcademicSession.id == session_id)
         result = await self.session.execute(stmt)
         if result.scalar_one_or_none():
             logger.info(f"Using existing academic session: {session_id}")
             return
 
-        # If a 'create_academic_session' function existed, it would be called here.
-        # For now, direct creation is a necessary exception if no such function is provided.
-        session = AcademicSession(
-            id=session_id,
-            name=f"Test Session {datetime.now().strftime('%Y-%m')}",
-            semester_system="semester",
-            start_date=date(2024, 9, 1),
-            end_date=date(2025, 8, 31),
-            is_active=True,
+        # Use the SystemService to call the create_academic_session function
+        session_name = f"Test Session {datetime.now().strftime('%Y-%m')}"
+        start_date = date(2024, 9, 1)
+        end_date = date(2025, 8, 31)
+
+        # Note: timeslot_template_id would be required if not nullable. Assuming it is for seeding.
+        response = await self.system_service.create_academic_session(
+            p_name=session_name,
+            p_start_date=start_date,
+            p_end_date=end_date,
+            p_timeslot_template_id=None,  # Or a valid UUID if available/required
         )
-        self.session.add(session)
-        await self.session.commit()
-        logger.info(f"Created new academic session: {session.name}")
+        if response.get("success"):
+            logger.info(f"Created new academic session: {session_name}")
+        else:
+            error_msg = response.get(
+                "error", "Failed to create academic session via DB function"
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg)
 
     async def _validate_seeded_data(self, session_id: UUID) -> Dict[str, Any]:
         """Validate the seeded data for scheduling engine compatibility (read-only checks)."""

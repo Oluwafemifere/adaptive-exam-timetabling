@@ -1,13 +1,14 @@
 # backend/app/api/v1/routes/timetables.py
 
 from uuid import UUID
-from typing import Union, List, Dict, Any
+from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....api.deps import db_session, current_user
 from ....models.users import User
 from ....services.data_retrieval.data_retrieval_service import DataRetrievalService
+from ....services.scheduling import TimetableManagementService
 from ....schemas.system import GenericResponse
 from ....schemas.scheduling import ManualTimetableEditCreate
 
@@ -50,7 +51,7 @@ async def get_latest_timetable_for_active_session(
         )
 
     # 3. Get the results for that job
-    timetable_data = await service.get_timetable_results(job_id=job_id)
+    timetable_data = await service.get_timetable_job_results(job_id=job_id)
     if not timetable_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -85,7 +86,7 @@ async def get_latest_timetable_version(
             detail="No completed timetable versions found.",
         )
     version_id = metadata["id"]
-    timetable_data = await service.get_timetable_results(job_id=version_id)
+    timetable_data = await service.get_timetable_job_results(job_id=version_id)
     if not timetable_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -97,31 +98,6 @@ async def get_latest_timetable_version(
         "data": timetable_data,
         "version_id": version_id,
         "last_modified": metadata["last_modified"],
-    }
-
-
-@router.get(
-    "/versions/{version_id}",
-    summary="Get a specific timetable version",
-)
-async def get_timetable_version(
-    version_id: UUID,
-    db: AsyncSession = Depends(db_session),
-    user: User = Depends(current_user),
-):
-    """Get a fully structured timetable version by its ID."""
-    service = DataRetrievalService(db)
-    timetable_data = await service.get_timetable_results(job_id=version_id)
-    if not timetable_data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Timetable version with ID '{version_id}' not found.",
-        )
-    return {
-        "success": True,
-        "message": "Timetable data retrieved successfully.",
-        "data": timetable_data,
-        "version_id": version_id,
     }
 
 
@@ -143,7 +119,7 @@ async def get_latest_timetable_for_session(
             detail=f"No completed timetables found for session '{session_id}'.",
         )
     version_id = metadata["id"]
-    timetable_data = await service.get_timetable_results(job_id=version_id)
+    timetable_data = await service.get_timetable_job_results(job_id=version_id)
     return {
         "success": True,
         "message": "Latest session timetable retrieved successfully.",
@@ -151,13 +127,6 @@ async def get_latest_timetable_for_session(
         "version_id": version_id,
         "last_modified": metadata["last_modified"],
     }
-
-
-router.get(
-    "/{job_id}/result",
-    summary="Get timetable result for a job",
-    include_in_schema=False,
-)(get_timetable_version)
 
 
 # --- NEWLY ADDED ROUTES ---
@@ -186,44 +155,53 @@ async def get_published_version(
     return GenericResponse(success=True, data={"version_id": version_id})
 
 
-@router.post(
-    "/versions/{version_id}/publish",
-    response_model=GenericResponse,
-    status_code=status.HTTP_200_OK,
-)
+@router.get("/versions/{version_id}", response_model=GenericResponse)
+async def get_timetable_version(
+    version_id: UUID,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """Get a fully structured timetable version by its job/version ID."""
+    service = DataRetrievalService(db)
+    # Corrected method name
+    timetable_data = await service.get_timetable_job_results(job_id=version_id)
+    if not timetable_data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Timetable version with ID '{version_id}' not found.",
+        )
+    return GenericResponse(success=True, data=timetable_data)
+
+
+@router.post("/versions/{version_id}/publish", response_model=GenericResponse)
 async def publish_version(
     version_id: UUID,
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """
-    Publish a specific timetable version, making it the official schedule.
-    Uses `publish_timetable_version` service method.
-    """
-    service = DataRetrievalService(db)
-    await service.publish_timetable_version(version_id=version_id, user_id=user.id)
-    return GenericResponse(
-        success=True, message="Timetable version published successfully."
-    )
+    """Publish a specific timetable version."""
+    # Corrected: Use TimetableManagementService
+    service = TimetableManagementService(db)
+    try:
+        await service.publish_timetable_version(version_id=version_id, user_id=user.id)
+        return GenericResponse(
+            success=True, message="Timetable version published successfully."
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post(
-    "/versions/{version_id}/edit",
-    response_model=GenericResponse,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/versions/{version_id}/edit", response_model=GenericResponse)
 async def create_manual_edit(
     version_id: UUID,
     edit_in: ManualTimetableEditCreate,
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """
-    Record a manual edit made to a timetable version.
-    Uses the `create_manual_timetable_edit` service method.
-    """
-    service = DataRetrievalService(db)
-    result = await service.create_manual_timetable_edit(
+    """Record a manual edit made to a timetable version."""
+    # Corrected: Use TimetableManagementService
+    service = TimetableManagementService(db)
+    result = await service.create_manual_edit(
         version_id=version_id,
         edited_by=user.id,
         exam_id=edit_in.exam_id,
@@ -251,7 +229,7 @@ async def get_notification_users(
     Uses `get_users_for_notification` service method.
     """
     service = DataRetrievalService(db)
-    users = await service.get_users_for_notification(version_id)
+    users = await service.get_users_for_timetable_notification(version_id)
     if users is None:
         raise HTTPException(
             status_code=404, detail="Could not retrieve users for notification."

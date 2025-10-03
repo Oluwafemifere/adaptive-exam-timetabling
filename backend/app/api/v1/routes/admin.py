@@ -2,7 +2,7 @@
 """API endpoints for administrative tasks (seeding, uploads, email test)."""
 from typing import List, Dict, Any
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...deps import db_session, current_user
@@ -15,10 +15,6 @@ from ....schemas.admin import SeedingRequest, UploadSessionCreate, JsonSeedingRe
 from ....schemas.system import GenericResponse
 
 router = APIRouter()
-
-
-# Ensure all routes here are protected by an admin check in a real app
-# e.g., user: User = Depends(get_current_admin_user)
 
 
 @router.post("/seed/{session_id}", response_model=GenericResponse)
@@ -73,23 +69,19 @@ async def test_email_connection(
     return {"detail": "SMTP connection successful"}
 
 
-# --- NEWLY ADDED ROUTES ---
-
-
 @router.post("/seed/json", response_model=GenericResponse)
 async def seed_from_json(
     seed_request: JsonSeedingRequest,
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """
-    Seed data for a specific entity from a JSON object.
-    Uses the `seed_data_from_jsonb` service method.
-    """
-    service = DataRetrievalService(db)
+    """Seed data for a specific entity from a JSON object."""
+    # Corrected: This function is on DataUploadService
+    service = DataUploadService(db)
     try:
-        result = await service.seed_data_from_jsonb(
-            entity_type=seed_request.entity_type, data=seed_request.data
+        result = await service.seed_entity_data(
+            entity_type=seed_request.entity_type,
+            data=seed_request.data,
         )
         return GenericResponse(
             success=True, message="Data seeding successful.", data=result
@@ -104,12 +96,10 @@ async def get_all_entity_data(
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """
-    Retrieve all records for a given entity type.
-    Uses the `get_all_entities` service method.
-    """
+    """Retrieve all records for a given entity type."""
     service = DataRetrievalService(db)
-    result = await service.get_all_entities(entity_type)
+    # Corrected: The method is named get_all_entities_as_json
+    result = await service.get_all_entities_as_json(entity_type)
     if result is None:
         raise HTTPException(
             status_code=404,

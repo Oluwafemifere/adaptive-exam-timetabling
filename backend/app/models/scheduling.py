@@ -17,6 +17,7 @@ from sqlalchemy import (
     Table,
     Column,
     Time,
+    UniqueConstraint,
 )
 
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -29,7 +30,7 @@ from .base import Base, TimestampMixin
 # Use TYPE_CHECKING to avoid circular imports
 if TYPE_CHECKING:
     from .academic import AcademicSession, Course, Department, CourseInstructor, Student
-    from .infrastructure import Room, ExamAllowedRoom
+    from .infrastructure import Room
     from .versioning import TimetableVersion
     from .users import User
 
@@ -86,7 +87,6 @@ class Exam(Base):
         lazy="selectin",
     )
     departments = association_proxy("exam_departments", "department")
-    allowed_rooms: Mapped[List["ExamAllowedRoom"]] = relationship(back_populates="exam")
     timetable_assignments: Mapped[List["TimetableAssignment"]] = relationship(
         back_populates="exam"
     )
@@ -134,21 +134,55 @@ class ExamDepartment(Base, TimestampMixin):
     )
 
 
-# Re-introduced TimeSlot model to match the database schema
-class TimeSlot(Base, TimestampMixin):
-    __tablename__ = "time_slots"
+# NEW MODEL: Replaces ExamDay and TimeSlot with a template system
+class TimeSlotTemplate(Base, TimestampMixin):
+    __tablename__ = "timeslot_templates"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
-    session_id: Mapped[uuid.UUID] = mapped_column(
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    periods: Mapped[List["TimeSlotTemplatePeriod"]] = relationship(
+        "TimeSlotTemplatePeriod",
+        back_populates="template",
+        cascade="all, delete-orphan",
+    )
+    academic_sessions: Mapped[List["AcademicSession"]] = relationship(
+        "AcademicSession", back_populates="timeslot_template"
+    )
+
+
+# NEW MODEL: Represents a period within a timeslot template
+class TimeSlotTemplatePeriod(Base):
+    __tablename__ = "timeslot_template_periods"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    timeslot_template_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("academic_sessions.id", ondelete="CASCADE"),
+        ForeignKey("timeslot_templates.id", ondelete="CASCADE"),
         nullable=False,
     )
-    period_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    period_name: Mapped[str] = mapped_column(String(100), nullable=False)
     start_time: Mapped[time] = mapped_column(Time, nullable=False)
     end_time: Mapped[time] = mapped_column(Time, nullable=False)
+
+    template: Mapped["TimeSlotTemplate"] = relationship(
+        "TimeSlotTemplate", back_populates="periods"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "timeslot_template_id", "period_name", name="uq_template_period_name"
+        ),
+    )
+
+
+# REMOVED: ExamDay model is obsolete
+# REMOVED: TimeSlot model is obsolete
 
 
 class Staff(Base, TimestampMixin):
@@ -259,10 +293,12 @@ class TimetableAssignment(Base):
     room_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("rooms.id"), nullable=False
     )
-    exam_date: Mapped[Date] = mapped_column(Date, nullable=False)
-    # MODIFIED: Replaced time_slot_period with time_slot_id to match schema
-    time_slot_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("time_slots.id"), nullable=False
+    # MODIFIED: Replaced time_slot_id with fields from the schema
+    exam_date: Mapped[date] = mapped_column(Date, nullable=False)
+    timeslot_template_period_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("timeslot_template_periods.id"),
+        nullable=False,
     )
     student_count: Mapped[int] = mapped_column(Integer, nullable=False)
     is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -275,7 +311,10 @@ class TimetableAssignment(Base):
 
     exam: Mapped["Exam"] = relationship(back_populates="timetable_assignments")
     room: Mapped["Room"] = relationship(back_populates="timetable_assignments")
-    time_slot: Mapped["TimeSlot"] = relationship("TimeSlot")
+    # MODIFIED: Relationship updated to point to TimeSlotTemplatePeriod
+    timeslot_period: Mapped["TimeSlotTemplatePeriod"] = relationship(
+        "TimeSlotTemplatePeriod"
+    )
     version: Mapped["TimetableVersion"] = relationship(
         "TimetableVersion", back_populates="timetable_assignments"
     )
@@ -287,7 +326,6 @@ class TimetableAssignment(Base):
     __table_args__ = (
         Index("idx_timetable_assignments_version_id", "version_id"),
         Index("idx_timetable_assignments_exam_id", "exam_id"),
-        Index("idx_timetable_assignments_day_time_slot", "exam_date", "time_slot_id"),
     )
 
 

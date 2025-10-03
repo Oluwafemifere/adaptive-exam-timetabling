@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class AuditService:
-    """Handles the creation of audit log entries."""
+    """Handles the creation of audit log entries by calling the DB function."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -29,7 +29,9 @@ class AuditService:
         old_values: Optional[Dict[str, Any]] = None,
         new_values: Optional[Dict[str, Any]] = None,
         notes: Optional[str] = None,
-    ) -> bool:
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> None:
         """
         Logs an audit activity by calling the `log_audit_activity` PostgreSQL function.
 
@@ -37,28 +39,19 @@ class AuditService:
             user_id: The ID of the user performing the action.
             action: The action being performed (e.g., 'create', 'update', 'login').
             entity_type: The type of entity being affected (e.g., 'course', 'user').
-            entity_id: The ID of the affected entity, if applicable.
-            old_values: A dictionary of values before the change.
-            new_values: A dictionary of values after the change.
-            notes: Additional descriptive notes about the event.
-
-        Returns:
-            True if the log was created successfully, False otherwise.
+            ... and other audit parameters.
         """
         try:
             logger.debug(
-                f"Logging audit action '{action}' for entity '{entity_type}' by user {user_id}"
+                f"Logging audit: user={user_id}, action='{action}', entity='{entity_type}'"
             )
             query = text(
                 """
                 SELECT exam_system.log_audit_activity(
-                    p_user_id => :user_id,
-                    p_action => :action,
-                    p_entity_type => :entity_type,
-                    p_entity_id => :entity_id,
-                    p_old_values => :old_values,
-                    p_new_values => :new_values,
-                    p_notes => :notes
+                    p_user_id => :user_id, p_action => :action, p_entity_type => :entity_type,
+                    p_entity_id => :entity_id, p_old_values => :old_values,
+                    p_new_values => :new_values, p_notes => :notes,
+                    p_ip_address => :ip_address, p_user_agent => :user_agent
                 )
                 """
             )
@@ -67,14 +60,18 @@ class AuditService:
                 "action": action,
                 "entity_type": entity_type,
                 "entity_id": entity_id,
-                "old_values": json.dumps(old_values) if old_values else None,
-                "new_values": json.dumps(new_values) if new_values else None,
                 "notes": notes,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+                "old_values": (
+                    json.dumps(old_values, default=str) if old_values else None
+                ),
+                "new_values": (
+                    json.dumps(new_values, default=str) if new_values else None
+                ),
             }
             await self.session.execute(query, params)
             await self.session.commit()
-            return True
         except Exception as e:
             await self.session.rollback()
             logger.error(f"Failed to log audit activity: {e}", exc_info=True)
-            return False

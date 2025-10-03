@@ -17,6 +17,11 @@ from .system import router as system_router
 from .admin import router as admin_router
 from .roles import router as roles_router
 from .schedules import router as schedules_router
+from .scenarios import router as scenarios_router
+from .portal import router as portal_router
+from .dashboard import router as dashboard_router
+from .notifications import router as notifications_router
+from .profile import router as profile_router
 
 # Create a main router that includes all sub-routers
 router = APIRouter()
@@ -25,6 +30,7 @@ router = APIRouter()
 router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 router.include_router(users_router, prefix="/users", tags=["User Management"])
 router.include_router(roles_router, prefix="/roles", tags=["Role Management"])
+router.include_router(profile_router, prefix="/profile", tags=["User Profile"])
 
 # Core Data Management
 router.include_router(courses_router, prefix="/courses", tags=["Courses"])
@@ -38,6 +44,7 @@ router.include_router(
 router.include_router(
     timetables_router, prefix="/timetables", tags=["Timetable Management"]
 )
+router.include_router(scenarios_router, prefix="/scenarios", tags=["Scenarios"])
 router.include_router(jobs_router, prefix="/jobs", tags=["Background Jobs"])
 router.include_router(schedules_router, prefix="/schedules", tags=["Schedules"])
 router.include_router(sessions_router, prefix="/sessions", tags=["Academic Sessions"])
@@ -45,6 +52,14 @@ router.include_router(sessions_router, prefix="/sessions", tags=["Academic Sessi
 # System & Administration
 router.include_router(system_router, prefix="/system", tags=["System Configuration"])
 router.include_router(admin_router, prefix="/admin", tags=["Administration"])
+router.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])
+router.include_router(
+    notifications_router, prefix="/notifications", tags=["Notifications"]
+)
+
+
+# User Portals
+router.include_router(portal_router, prefix="/portal", tags=["User Portal"])
 
 # Utilities
 router.include_router(uploads_router, prefix="/uploads", tags=["File Uploads"])

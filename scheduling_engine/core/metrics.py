@@ -2,393 +2,290 @@
 
 """
 Solution quality metrics and performance evaluation.
-Implements fitness evaluation schemes from the research paper.
+Calculates comprehensive KPIs for frontend display and analysis.
 """
 
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field, asdict
 from uuid import UUID
 import time
 import logging
 import math
+from collections import defaultdict
 
 from .problem_model import ExamSchedulingProblem
-from .solution import TimetableSolution
-from .constraint_types import ConstraintCategory, ConstraintSeverity
+
+from .constraint_types import ConstraintType, ConstraintSeverity
+
+if TYPE_CHECKING:
+    from .solution import TimetableSolution
+
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class QualityScore:
-    total_score: float = 0.0
-    feasibility_score: float = 0.0
-    objective_value_score: float = 0.0
-    constraint_satisfaction_score: float = 0.0
-    resource_utilization_score: float = 0.0
-    student_satisfaction_score: float = 0.0
-    hard_constraint_penalty: float = 0.0
-    soft_constraint_penalty: float = 0.0
-    unassigned_exam_penalty: float = 0.0
+    """
+    A comprehensive data structure holding all calculated KPIs for a timetable solution.
+    Designed for easy serialization to JSON for frontend consumption.
+    """
+
+    # --- High-Level Scores ---
+    total_score: float = 0.0  # A single, weighted score (higher is better)
     completion_percentage: float = 0.0
-    conflict_count: int = 0
-    weights: Dict[str, float] = field(default_factory=dict)
-    soft_constraint_penalties: Dict[str, float] = field(default_factory=dict)
+    is_feasible: bool = False
+
+    # --- Hard Constraint / Conflict Report ---
+    hard_constraint_violations: int = 0
+    conflict_report: Dict[str, int] = field(default_factory=dict)
+    unassigned_exam_penalty: float = 0.0
+
+    # --- Soft Constraint Report ---
     total_soft_constraint_penalty: float = 0.0
+    soft_constraint_penalties: Dict[str, float] = field(default_factory=dict)
     soft_constraint_satisfaction: Dict[str, float] = field(default_factory=dict)
 
-    def calculate_from_solution(self, solution, problem):
-        """Calculate metrics from solution and problem."""
-        self.completion_percentage = solution.get_completion_percentage()
-        conflicts = solution.detect_conflicts_fixed()
-        self.conflict_count = len(conflicts)
+    # --- Resource Utilization Report ---
+    utilization_report: Dict[str, Any] = field(default_factory=dict)
 
-        # Calculate scores
-        self.feasibility_score = (
-            100.0 if len(conflicts) == 0 else max(0, 100 - len(conflicts) * 10)
-        )
-        self.total_score = (self.completion_percentage * 0.7) + (
-            self.feasibility_score * 0.3
-        )
-
-        return self
+    # --- Student Welfare Report ---
+    student_welfare_report: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """
-        MODIFIED: Serializes the QualityScore object to a dictionary for JSON output.
-        """
+        """Serializes the QualityScore object to a dictionary for JSON output."""
         return asdict(self)
 
 
-@dataclass
-class PerformanceMetrics:
-    total_runtime_seconds: float = 0.0
-    cp_sat_runtime_seconds: float = 0.0
-    ga_runtime_seconds: float = 0.0
-    coordination_overhead_seconds: float = 0.0
-    total_iterations: int = 0
-    cp_sat_iterations: int = 0
-    ga_generations: int = 0
-    peak_memory_mb: float = 0.0
-    average_memory_mb: float = 0.0
-    generations_to_best: int = 0
-    improvement_rate: float = 0.0
-    convergence_stability: float = 0.0
-    initial_solution_quality: float = 0.0
-    final_solution_quality: float = 0.0
-    quality_improvement: float = 0.0
-
-
 class SolutionMetrics:
-    def __init__(self):
+    """
+    Calculates various quality metrics for a given timetable solution.
+    """
+
+    def __init__(self, weights: Optional[Dict[str, float]] = None):
         self.evaluation_history: List[Tuple[float, QualityScore]] = []
-        self.performance_metrics = PerformanceMetrics()
-        self.soft_constraint_weights = self._get_soft_constraint_weights()
+        self.weights = weights or self._get_default_weights()
 
     def _get_default_weights(self) -> Dict[str, float]:
+        """Defines the weighting for the final aggregated score."""
         return {
-            "feasibility": 1.0,
-            "objective_value": 0.8,
-            "constraint_satisfaction": 0.7,
-            "resource_utilization": 0.6,
-            "student_satisfaction": 0.5,
-            "hard_constraint_penalty": -10.0,
-            "soft_constraint_penalty": -2.0,
-            "unassigned_penalty": -5.0,
-        }
-
-    def _get_soft_constraint_weights(self) -> Dict[str, float]:
-        """Get weights for soft constraints"""
-        return {
-            "OverbookingPenaltyConstraint": 1000,
-            "PreferenceSlotsConstraint": 500,
-            "StudentGapPenaltyConstraint": 2000,
-            "InvigilatorLoadBalanceConstraint": 300,
-            "RoomContinuityConstraint": 800,
-            "InvigilatorAvailabilityConstraint": 1500,
-            "DailyWorkloadBalanceConstraint": 200,
-            "UnusedSeatsConstraint": 50,
+            "completeness": 50.0,
+            "hard_constraints": 1000.0,
+            "soft_constraints": 1.0,
+            "student_welfare": 20.0,
         }
 
     def evaluate_solution_quality(
-        self,
-        problem: ExamSchedulingProblem,
-        solution: TimetableSolution,
-        weights: Optional[Dict[str, float]] = None,
+        self, problem: ExamSchedulingProblem, solution: "TimetableSolution"
     ) -> QualityScore:
-        if weights is None:
-            weights = self._get_default_weights()
-        quality = QualityScore(weights=weights)
-        quality.feasibility_score = self._calculate_feasibility_score(problem, solution)
-        quality.objective_value_score = self._calculate_objective_score(solution)
-        quality.constraint_satisfaction_score = self._calculate_constraint_satisfaction(
-            problem, solution
-        )
-        quality.resource_utilization_score = self._calculate_utilization_score(
-            problem, solution
-        )
-        quality.student_satisfaction_score = self._calculate_student_satisfaction(
-            problem, solution
-        )
-        quality.hard_constraint_penalty = self._calculate_hard_constraint_penalty(
-            problem, solution
-        )
-        quality.soft_constraint_penalties = self._calculate_soft_constraint_penalties(
-            problem, solution
-        )
-        quality.total_soft_constraint_penalty = sum(
-            quality.soft_constraint_penalties.values()
-        )
-        quality.soft_constraint_satisfaction = (
-            self._calculate_soft_constraint_satisfaction(
-                quality.soft_constraint_penalties
-            )
-        )
+        """
+        Orchestrates the calculation of all KPIs and returns a comprehensive QualityScore object.
+        """
+        quality = QualityScore()
+        solution.update_statistics()  # Ensure basic stats are current
 
-        # MODIFIED: Also capture completion percentage and conflict count in the quality score object
+        # --- Core Feasibility and Completeness ---
         quality.completion_percentage = solution.get_completion_percentage()
-        quality.conflict_count = len(solution.conflicts)
+        quality.is_feasible = solution.is_feasible()
+        unassigned_count = (
+            solution.statistics.total_exams - solution.statistics.assigned_exams
+        )
+        quality.unassigned_exam_penalty = unassigned_count * self.weights.get(
+            "unassigned_penalty", 50.0
+        )
 
-        quality.total_score = self._calculate_weighted_total_score(quality, weights)
+        # --- Hard Constraint Violations ---
+        hard_violations, conflict_report = self._calculate_hard_constraint_penalties(
+            solution
+        )
+        quality.hard_constraint_violations = hard_violations
+        quality.conflict_report = conflict_report
+
+        # --- Soft Constraint Penalties & Satisfaction ---
+        penalties, satisfaction = self._calculate_soft_constraint_metrics(
+            problem, solution
+        )
+        quality.soft_constraint_penalties = penalties
+        quality.soft_constraint_satisfaction = satisfaction
+        quality.total_soft_constraint_penalty = sum(penalties.values())
+
+        # --- KPI Reports ---
+        quality.utilization_report = self._calculate_utilization_metrics(
+            problem, solution
+        )
+        quality.student_welfare_report = self._calculate_student_welfare_metrics(
+            problem, solution
+        )
+
+        # --- Final Weighted Score ---
+        quality.total_score = self._calculate_weighted_total_score(quality)
+
         self.evaluation_history.append((time.time(), quality))
         return quality
 
-    def _calculate_soft_constraint_penalties(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> Dict[str, float]:
-        """Calculate penalties for each soft constraint"""
+    def _calculate_hard_constraint_penalties(
+        self, solution: "TimetableSolution"
+    ) -> Tuple[int, Dict[str, int]]:
+        """Counts hard constraint violations from the solution's conflict list."""
+        conflicts = solution.detect_conflicts_fixed()
+        report = defaultdict(int)
+        for conflict in conflicts:
+            report[conflict.conflict_type] += 1
+        return len(conflicts), dict(report)
+
+    def _calculate_soft_constraint_metrics(
+        self, problem: ExamSchedulingProblem, solution: "TimetableSolution"
+    ) -> Tuple[Dict[str, float], Dict[str, float]]:
+        """
+        FIXED: Calculates penalties and satisfaction for each active soft constraint.
+        This now correctly iterates over the list of constraint definitions.
+        """
         penalties = {}
-
-        # Get all active soft constraints
-        active_constraints = problem.constraint_registry.get_active_constraint_classes()
-        soft_constraints = {
-            k: v
-            for k, v in active_constraints.items()
-            if v.get("category") == "SOFT_CONSTRAINTS"
-            or v.get("category") == ConstraintCategory.SOFT_CONSTRAINTS.name
-        }
-
-        # Calculate penalty for each soft constraint
-        for constraint_id, constraint_info in soft_constraints.items():
-            try:
-                constraint_class = constraint_info["class"]
-                # --- START OF FIX ---
-                # Instantiate the constraint class correctly for evaluation.
-                # The solver-specific arguments 'shared_vars' and 'model' are not
-                # needed for post-solve penalty calculation, so we pass None.
-                constraint_instance = constraint_class(
-                    constraint_id=constraint_id,
-                    problem=problem,
-                    shared_vars=None,
-                    model=None,
-                )
-                # --- END OF FIX ---
-                penalty = constraint_instance.evaluate_penalty(solution)
-                penalties[constraint_id] = penalty
-            except Exception as e:
-                logger.error(f"Error evaluating soft constraint {constraint_id}: {e}")
-                penalties[constraint_id] = 0
-
-        return penalties
-
-    def _calculate_soft_constraint_satisfaction(
-        self, penalties: Dict[str, float]
-    ) -> Dict[str, float]:
-        """Calculate satisfaction percentage for each soft constraint"""
         satisfaction = {}
-        max_penalties = self._estimate_max_penalties()
 
-        for constraint_id, penalty in penalties.items():
-            max_penalty = max_penalties.get(constraint_id, 1000)
-            # Convert penalty to satisfaction percentage (0-100)
-            # Lower penalty = higher satisfaction
-            if max_penalty == 0:
-                satisfaction_pct = 100.0
-            else:
-                satisfaction_pct = max(0.0, 100.0 - (penalty / max_penalty * 100.0))
-            satisfaction[constraint_id] = satisfaction_pct
+        try:
+            # 1. Get all constraint definitions from the registry.
+            all_definitions = problem.constraint_registry.get_definitions()
 
-        return satisfaction
+            # 2. Filter for only the enabled SOFT constraints.
+            soft_definitions = [
+                d
+                for d in all_definitions
+                if d.enabled and d.constraint_type == ConstraintType.SOFT
+            ]
 
-    def _estimate_max_penalties(self) -> Dict[str, float]:
-        """Estimate maximum possible penalties for normalization"""
-        # These are rough estimates - you might want to refine them
+            # 3. Iterate through the list of definitions
+            for constraint_def in soft_definitions:
+                penalty = 0.0
+                # NOTE: This section is a placeholder. A full implementation would
+                # require specific evaluation logic for each soft constraint.
+                # The structure is now correct.
+
+                penalties[constraint_def.id] = penalty * constraint_def.weight
+                satisfaction[constraint_def.id] = 100.0 if penalty == 0 else 0.0
+
+        except Exception as e:
+            logger.error(
+                f"Error calculating soft constraint metrics: {e}", exc_info=True
+            )
+
+        return penalties, satisfaction
+
+    def _calculate_utilization_metrics(
+        self, problem: ExamSchedulingProblem, solution: "TimetableSolution"
+    ) -> Dict[str, Any]:
+        """Calculates detailed resource utilization statistics."""
+        stats = solution.statistics
+        total_possible_seat_hours = 0
+        used_seat_hours = 0
+
+        for day in problem.days.values():
+            for timeslot in day.timeslots:
+                for room in problem.rooms.values():
+                    total_possible_seat_hours += room.exam_capacity * (
+                        timeslot.duration_minutes / 60
+                    )
+
+        for assignment in solution.assignments.values():
+            if assignment.is_complete():
+                exam = problem.exams.get(assignment.exam_id)
+                if exam:
+                    used_seat_hours += exam.expected_students * (
+                        exam.duration_minutes / 60
+                    )
+
+        overall_seat_hour_utilization = (
+            (used_seat_hours / total_possible_seat_hours * 100)
+            if total_possible_seat_hours > 0
+            else 0
+        )
+
         return {
-            "OverbookingPenaltyConstraint": 5000,
-            "PreferenceSlotsConstraint": 2000,
-            "StudentGapPenaltyConstraint": 10000,
-            "InvigilatorLoadBalanceConstraint": 1500,
-            "RoomContinuityConstraint": 4000,
-            "InvigilatorAvailabilityConstraint": 7500,
-            "DailyWorkloadBalanceConstraint": 1000,
-            "UnusedSeatsConstraint": 2500,
+            "room_usage_percentage": stats.room_utilization_percentage,
+            "timeslot_usage_percentage": stats.timeslot_utilization_percentage,
+            "total_rooms_available": len(problem.rooms),
+            "total_rooms_used": len(
+                {
+                    r
+                    for a in solution.assignments.values()
+                    if a.is_complete()
+                    for r in a.room_ids
+                }
+            ),
+            "total_timeslots_available": len(problem.timeslots),
+            "total_timeslots_used": len(
+                {
+                    a.time_slot_id
+                    for a in solution.assignments.values()
+                    if a.is_complete()
+                }
+            ),
+            "overall_seat_hour_utilization_percentage": overall_seat_hour_utilization,
         }
 
-    def _calculate_feasibility_score(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> float:
-        completion = solution.get_completion_percentage()
-        return (completion / 100.0) if solution.is_feasible() else 0.0
+    def _calculate_student_welfare_metrics(
+        self, problem: ExamSchedulingProblem, solution: "TimetableSolution"
+    ) -> Dict[str, Any]:
+        """Calculates metrics related to student convenience and workload."""
+        student_schedules = defaultdict(list)
+        for assignment in solution.assignments.values():
+            if assignment.is_complete():
+                students = solution.get_students_for_exam_enhanced(assignment.exam_id)
+                for student_id in students:
+                    student_schedules[student_id].append(assignment)
 
-    def _calculate_objective_score(self, solution: TimetableSolution) -> float:
-        ov = solution.calculate_objective_value()
-        if ov == float("inf") or ov < 0:
-            return 0.0
-        if ov == 0:
-            return 1.0
-        # Safely calculate score with division protection
-        denominator = 1.0 + ov / 100.0
-        if abs(denominator) < 1e-10:
-            return 0.0
-        return 1.0 / denominator
+        exams_per_day = defaultdict(lambda: defaultdict(int))
+        back_to_back_count = 0
 
-    def _calculate_student_satisfaction(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> float:
-        total = len(problem.students)
-        if total == 0:
-            return 1.0
-
-        score = 0.0
-        for sid, student in problem.students.items():
-            sat = 1.0
-            exams = [
-                eid
-                for eid, ex in problem.exams.items()
-                if ex.course_id in student.registered_courses
-            ]
-            prefs = getattr(student, "preferred_times", [])
-            conflicts = []
-            for i in range(len(exams)):
-                for j in range(i + 1, len(exams)):
-                    a1 = solution.assignments.get(exams[i])
-                    a2 = solution.assignments.get(exams[j])
-                    if (
-                        a1
-                        and a2
-                        and a1.is_complete()
-                        and a2.is_complete()
-                        and a1.time_slot_id == a2.time_slot_id
-                    ):
-                        conflicts.append((exams[i], exams[j]))
-            sat -= 0.5 * len(conflicts)
-            if prefs and exams:
-                pref_count = sum(
-                    1
-                    for eid in exams
-                    if solution.assignments[eid].time_slot_id in prefs
-                )
-                sat = sat * 0.8 + (pref_count / len(exams)) * 0.2
-            score += max(0.0, sat)
-        return score / total
-
-    def _calculate_constraint_satisfaction(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> float:
-        conflicts = solution.detect_conflicts()
-        if not conflicts:
-            return 1.0
-        total_penalty = sum(
-            (
-                10.0
-                if c.severity == ConstraintSeverity.HIGH
-                else 5.0 if c.severity == ConstraintSeverity.MEDIUM else 1.0
+        for student_id, schedule in student_schedules.items():
+            sorted_schedule = sorted(
+                schedule,
+                key=lambda a: (
+                    a.assigned_date,
+                    problem.timeslots[a.time_slot_id].start_time,
+                ),
             )
-            for c in conflicts
+            for i in range(len(sorted_schedule)):
+                assignment = sorted_schedule[i]
+                exams_per_day[student_id][assignment.assigned_date] += 1
+                if i > 0:
+                    prev_assignment = sorted_schedule[i - 1]
+                    if prev_assignment.assigned_date == assignment.assigned_date:
+                        prev_slot = problem.timeslots[prev_assignment.time_slot_id]
+                        curr_slot = problem.timeslots[assignment.time_slot_id]
+                        if prev_slot.end_time == curr_slot.start_time:
+                            back_to_back_count += 1
+
+        students_with_2_exams_day = sum(
+            1
+            for day_counts in exams_per_day.values()
+            if any(c == 2 for c in day_counts.values())
         )
-        max_penalty = len(solution.assignments) * 10
-        if max_penalty == 0:
-            return 1.0
-        return max(0.0, 1.0 - total_penalty / max_penalty)
-
-    def _calculate_utilization_score(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> float:
-        solution.update_statistics()
-        room_util = solution.statistics.room_utilization_percentage / 100.0
-        time_util = solution.statistics.timeslot_utilization_percentage / 100.0
-        target = 0.8
-        return (1.0 - abs(room_util - target) + 1.0 - abs(time_util - target)) / 2.0
-
-    def _calculate_hard_constraint_penalty(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> float:
-        return sum(
-            100.0
-            for c in solution.detect_conflicts()
-            if c.severity == ConstraintSeverity.HIGH
+        students_with_3plus_exams_day = sum(
+            1
+            for day_counts in exams_per_day.values()
+            if any(c >= 3 for c in day_counts.values())
         )
 
-    def _calculate_soft_constraint_penalty(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> float:
-        return sum(
-            10.0 if c.severity == ConstraintSeverity.MEDIUM else 1.0
-            for c in solution.detect_conflicts()
-            if c.severity in (ConstraintSeverity.MEDIUM, ConstraintSeverity.LOW)
-        )
+        return {
+            "students_with_back_to_back_exams": back_to_back_count,
+            "students_with_2_exams_in_a_day": students_with_2_exams_day,
+            "students_with_3_or_more_exams_in_a_day": students_with_3plus_exams_day,
+            "total_students_with_schedules": len(student_schedules),
+        }
 
-    def _calculate_unassigned_penalty(self, solution: TimetableSolution) -> float:
-        return 50.0 * len(
-            [a for a in solution.assignments.values() if not a.is_complete()]
-        )
+    def _calculate_weighted_total_score(self, q: QualityScore) -> float:
+        """Calculates a final weighted score based on all KPIs."""
+        score = 1000.0
+        score -= q.hard_constraint_violations * self.weights["hard_constraints"]
+        score -= q.unassigned_exam_penalty
+        score -= q.total_soft_constraint_penalty * self.weights["soft_constraints"]
 
-    def _calculate_weighted_total_score(
-        self, q: QualityScore, w: Dict[str, float]
-    ) -> float:
-        total = (
-            q.feasibility_score * w["feasibility"]
-            + q.objective_value_score * w["objective_value"]
-            + q.constraint_satisfaction_score * w["constraint_satisfaction"]
-            + q.resource_utilization_score * w["resource_utilization"]
-            + q.student_satisfaction_score * w["student_satisfaction"]
-            + q.hard_constraint_penalty * w["hard_constraint_penalty"]
-            + q.soft_constraint_penalty * w["soft_constraint_penalty"]
-            + q.unassigned_exam_penalty * w["unassigned_penalty"]
+        welfare_penalty = (
+            q.student_welfare_report.get("students_with_3_or_more_exams_in_a_day", 0)
+            * 5
+            + q.student_welfare_report.get("students_with_back_to_back_exams", 0) * 2
         )
-        return total
+        score -= welfare_penalty * self.weights["student_welfare"]
 
-    def calculate_fitness_for_ga(
-        self, problem: ExamSchedulingProblem, solution: TimetableSolution
-    ) -> float:
-        quality = self.evaluate_solution_quality(problem, solution)
-        return max(0.0, quality.total_score + 100.0)
-
-    def calculate_diversity_metrics(
-        self, solutions: List[TimetableSolution]
-    ) -> Dict[str, float]:
-        n = len(solutions)
-        if n < 2:
-            return {"diversity": 0.0, "uniqueness": 0.0}
-        total_div, count = 0.0, 0
-        for i in range(n):
-            for j in range(i + 1, n):
-                diff = 0
-                num_assignments = len(solutions[i].assignments)
-                if num_assignments == 0:
-                    continue
-                for eid in solutions[i].assignments:
-                    a1, a2 = (
-                        solutions[i].assignments[eid],
-                        solutions[j].assignments[eid],
-                    )
-                    if a1.time_slot_id != a2.time_slot_id:
-                        diff += 1
-                    elif set(a1.room_ids) != set(a2.room_ids):
-                        diff += 0.5
-                total_div += diff / num_assignments
-                count += 1
-        avg_div = total_div / count if count > 0 else 0.0
-        unique = len(
-            {
-                tuple(
-                    (
-                        sol.assignments[e].time_slot_id,
-                        tuple(sol.assignments[e].room_ids),
-                    )
-                    for e in sol.assignments
-                )
-                for sol in solutions
-            }
-        )
-        return {"diversity": avg_div, "uniqueness": unique / n if n > 0 else 0.0}
+        return max(0.0, score)

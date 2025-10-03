@@ -14,7 +14,6 @@ class UploadSessionCreate(BaseModel):
     file_metadata: Dict[str, Any]
 
 
-# --- NEWLY ADDED SCHEMA ---
 class JsonSeedingRequest(BaseModel):
     entity_type: str
     data: List[Dict[str, Any]]

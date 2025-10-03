@@ -1,3 +1,4 @@
+// frontend/src/pages/Analytics.tsx
 import React, { useState } from 'react';
 import { 
   BarChart3, 

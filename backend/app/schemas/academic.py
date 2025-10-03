@@ -11,7 +11,54 @@ from datetime import date, datetime
 MODEL_CONFIG = ConfigDict(from_attributes=True)
 
 
-# --- Base Schemas ---
+# --- Academic Session ---
+class AcademicSessionBase(BaseModel):
+    name: str
+    start_date: date
+    end_date: date
+    timeslot_template_id: UUID
+
+
+class AcademicSessionCreate(AcademicSessionBase):
+    pass
+
+
+class AcademicSessionUpdate(BaseModel):
+    name: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    timeslot_template_id: Optional[UUID] = None
+    is_active: Optional[bool] = None
+
+
+class AcademicSessionRead(BaseModel):
+    model_config = MODEL_CONFIG
+
+    id: UUID
+    name: str
+    semester_system: Optional[str] = None
+    start_date: date
+    end_date: date
+    is_active: Optional[bool] = None
+    template_id: Optional[UUID] = None
+    archived_at: Optional[datetime] = None
+    session_config: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    timeslot_template_id: Optional[UUID] = None
+
+    # avoid deep circular nesting; expose related ids
+    exam_ids: List[UUID] = Field(default_factory=list)
+    registration_ids: List[UUID] = Field(default_factory=list)
+    timetable_job_ids: List[UUID] = Field(alias="jobs", default_factory=list)
+    staff_unavailability_ids: List[UUID] = Field(default_factory=list)
+    student_enrollment_ids: List[UUID] = Field(
+        alias="student_enrollments", default_factory=list
+    )
+    file_upload_ids: List[UUID] = Field(alias="file_uploads", default_factory=list)
+
+
+# --- Course Schemas ---
 class CourseBase(BaseModel):
     code: str
     title: str
@@ -49,32 +96,7 @@ class CourseRead(CourseBase):
     updated_at: Optional[datetime] = None
     registration_ids: List[UUID] = Field(default_factory=list)
     exam_ids: List[UUID] = Field(default_factory=list)
-
-
-class AcademicSessionRead(BaseModel):
-    model_config = MODEL_CONFIG
-
-    id: Optional[UUID] = None
-    name: str
-    semester_system: str
-    start_date: date
-    end_date: date
-    is_active: bool = False
-    template_id: Optional[UUID] = None
-    archived_at: Optional[datetime] = None
-    session_config: Optional[Dict[str, Any]] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    # avoid deep circular nesting; expose related ids
-    exam_ids: List[UUID] = Field(default_factory=list)
-    registration_ids: List[UUID] = Field(default_factory=list)
-    timetable_job_ids: List[UUID] = Field(alias="jobs", default_factory=list)
-    staff_unavailability_ids: List[UUID] = Field(default_factory=list)
-    student_enrollment_ids: List[UUID] = Field(
-        alias="student_enrollments", default_factory=list
-    )
-    file_upload_ids: List[UUID] = Field(alias="file_uploads", default_factory=list)
+    instructor_ids: List[UUID] = Field(default_factory=list)
 
 
 class FacultyRead(BaseModel):
@@ -131,6 +153,7 @@ class StudentRead(BaseModel):
     special_needs: Optional[List[str]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    user_id: Optional[UUID] = None
     registration_ids: List[UUID] = Field(default_factory=list)
     enrollment_ids: List[UUID] = Field(alias="enrollments", default_factory=list)
 

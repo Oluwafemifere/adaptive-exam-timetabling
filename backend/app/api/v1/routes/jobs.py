@@ -111,7 +111,7 @@ async def get_job_result(
 ):
     """Fetches the result_data of a specific completed timetable job."""
     service = DataRetrievalService(db)
-    result_data = await service.get_timetable_results(job_id=job_id)
+    result_data = await service.get_timetable_job_results(job_id=job_id)
     if not result_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
