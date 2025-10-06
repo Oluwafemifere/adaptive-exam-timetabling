@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
 )
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.pool import NullPool
 
 # --- SCHEDULING ENGINE IMPORTS (CP-SAT ONLY) ---
@@ -128,6 +128,15 @@ async def _async_generate_timetable(
     """Async implementation of timetable generation using CP-SAT solver."""
 
     engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    schema_search_path = "staging, exam_system, public"
+
+    # Ensure every connection from this engine's pool has the correct search path.
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_search_path(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"SET search_path TO {schema_search_path};")
+        cursor.close()
+
     async_session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )

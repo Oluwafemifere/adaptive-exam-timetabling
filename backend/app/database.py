@@ -83,11 +83,15 @@ class DatabaseManager:
                     pool_timeout=pool_timeout,
                     pool_recycle=pool_recycle,
                     pool_pre_ping=True,
-                    connect_args={
-                        "server_settings": {"search_path": f"{schema},public"}
-                    },
                     future=True,
                 )
+
+                # Set search_path after connection
+                @event.listens_for(self.engine.sync_engine, "connect")
+                def set_search_path(dbapi_connection, connection_record):
+                    cursor = dbapi_connection.cursor()
+                    cursor.execute(f"SET search_path TO {schema}, staging, public;")
+                    cursor.close()
 
                 # Async session factory with schema awareness
                 self.AsyncSessionLocal = async_sessionmaker(

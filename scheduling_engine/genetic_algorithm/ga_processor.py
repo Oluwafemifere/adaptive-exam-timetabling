@@ -1,16 +1,14 @@
 # scheduling_engine/genetic_algorithm/ga_processor.py
 """
-Orchestrates the Genetic Algorithm pre-filtering process.
+Orchestrates the Genetic Algorithm pre-filtering process using PyGAD.
 
 This module provides the GAProcessor class, which manages the entire GA
 lifecycle from population initialization to result extraction. It uses the
-DEAP model defined in `ga_model` to run the evolutionary algorithm.
+components defined in `ga_model` to run the evolutionary algorithm with PyGAD.
 
 After the evolution completes, it post-processes the top-performing
-individuals to generate:
-1. `viable_y_vars`: A pruned set of (exam, room, slot) assignments.
-2. `viable_u_vars`: A pruned set of (invigilator, exam, room, slot) assignments.
-3. `search_hints`: High-confidence exam-to-slot assignments for the CP-SAT solver.
+individuals to generate pruned start time variables (X-vars) and search hints
+for the CP-SAT solver.
 """
 
 import time
@@ -19,18 +17,19 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Set, Tuple, Optional
 import logging
-import platform  # MODIFIED: Import platform to check OS
-
-# --- START OF MODIFICATION: ADD MULTIPROCESSING FOR PARALLELIZATION ---
-import multiprocessing
-
-# --- END OF MODIFICATION ---
-
-from deap import algorithms, tools
+import platform
+import math
+import pygad
 import numpy as np
 
-from .ga_model import create_toolbox, individual_to_schedule
+from .ga_model import (
+    calculate_fitness_pygad,
+    mutate_feasible_reassign_pygad,
+    create_feasible_individual_pygad,
+    individual_to_schedule,
+)
 
+# Configure logger
 logger = logging.getLogger(__name__)
 
 
@@ -40,10 +39,10 @@ class GAInput:
 
     exam_ids: List[Any]
     timeslot_ids: List[Any]
-    room_info: Dict[Any, Dict]  # room_id -> {id, capacity, features}
-    exam_info: Dict[Any, Dict]  # exam_id -> {id, size, required_features}
-    invigilator_info: Dict[Any, Dict]  # invigilator_id -> {id, availability_by_slot}
-    student_exam_map: Dict[Any, List[Any]]  # student_id -> [exam_ids]
+    room_info: Dict[Any, Dict]
+    exam_info: Dict[Any, Dict]
+    invigilator_info: Dict[Any, Dict]
+    student_exam_map: Dict[Any, List[Any]]
     ga_params: Dict[str, Any]
 
 
@@ -51,254 +50,299 @@ class GAInput:
 class GAResult:
     """Data contract for outputs from the GAProcessor."""
 
-    viable_y_vars: Set[Tuple] = field(default_factory=set)
-    viable_u_vars: Set[Tuple] = field(default_factory=set)
+    promising_x_vars: Set[Tuple] = field(
+        default_factory=set
+    )  # CHANGED: This is the new output
     search_hints: Dict[Any, Any] = field(default_factory=dict)
     stats: Dict[str, Any] = field(default_factory=dict)
 
 
 class GAProcessor:
-    """Orchestrates the GA run and post-processes results."""
+    """Orchestrates the GA run with PyGAD and post-processes results."""
 
     def __init__(self, ga_input: GAInput):
+        """Initializes the GAProcessor."""
+        logger.info("Initializing GAProcessor with PyGAD backend...")
         self.ga_input = ga_input
         self.ga_params = ga_input.ga_params
-        self.problem_spec = self._build_problem_spec(ga_input)
 
-        # Set seed for reproducibility
         seed = self.ga_params.get("seed")
         if seed is not None:
+            logger.info(f"Setting random seed to: {seed}")
             random.seed(seed)
+            np.random.seed(seed)
+        else:
+            logger.info("No random seed provided.")
+
+        logger.info("Building and validating problem specification...")
+        self.problem_spec = self._build_problem_spec(ga_input)
+        logger.info("Problem specification built successfully.")
 
     def _build_problem_spec(self, ga_input: GAInput) -> Dict[str, Any]:
-        """Consolidates GA input into a single spec dict for the fitness function."""
-        # Pre-calculate total room capacity per timeslot for faster penalty checks
+        """
+        Consolidates GA input and pre-calculates feasible start slots.
+        This function is the first line of defense, ensuring the problem is
+        theoretically solvable by the GA before it even begins.
+        """
+        logger.debug("--- Building Problem Specification ---")
         slot_capacity_map = defaultdict(int)
-        for room in ga_input.room_info.values():
-            # Assuming all rooms are available in all slots for this simplified GA
+        for room_id, room in ga_input.room_info.items():
             for slot_id in ga_input.timeslot_ids:
                 slot_capacity_map[slot_id] += room.get("capacity", 0)
 
+        for eid, einfo in ga_input.exam_info.items():
+            if "duration_minutes" not in einfo:
+                einfo["duration_minutes"] = 180
+
+        slot_duration = self.ga_params.get("slot_duration_minutes", 60)
+        exam_durations_in_slots = {
+            eid: math.ceil(einfo.get("duration_minutes", slot_duration) / slot_duration)
+            for eid, einfo in ga_input.exam_info.items()
+        }
+
+        day_to_slots_map = defaultdict(list)
+        slot_to_day_map = self.ga_params.get("slot_to_day_map", {})
+        timeslot_ids_list = ga_input.timeslot_ids
+        timeslot_id_to_index = {ts_id: i for i, ts_id in enumerate(timeslot_ids_list)}
+        index_to_timeslot_id = {i: ts_id for i, ts_id in enumerate(timeslot_ids_list)}
+
+        for slot_id in timeslot_ids_list:
+            day_id = slot_to_day_map.get(slot_id)
+            if day_id:
+                day_to_slots_map[day_id].append(slot_id)
+
+        for day_id, slots in day_to_slots_map.items():
+            day_to_slots_map[day_id] = sorted(
+                slots, key=lambda s: timeslot_id_to_index.get(s, float("inf"))
+            )
+
+        logger.info(
+            "Calculating all theoretically feasible start slots for each exam..."
+        )
+        feasible_slots_per_exam = defaultdict(list)
+        for exam_id in ga_input.exam_ids:
+            duration = exam_durations_in_slots.get(exam_id, 1)
+            for day_id, day_slots in day_to_slots_map.items():
+                if not day_slots or len(day_slots) < duration:
+                    continue
+                for i in range(len(day_slots) - duration + 1):
+                    start_slot_id = day_slots[i]
+                    start_slot_index = timeslot_id_to_index[start_slot_id]
+                    feasible_slots_per_exam[exam_id].append(start_slot_index)
+
+        logger.info("--- CRITICAL: Performing upfront infeasibility check ---")
+        unplaceable_exams = [
+            eid for eid in ga_input.exam_ids if not feasible_slots_per_exam.get(eid)
+        ]
+        if unplaceable_exams:
+            error_msg = f"CRITICAL GA PRE-CHECK FAILED: {len(unplaceable_exams)} exams have NO feasible start slots."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        else:
+            logger.info("SUCCESS: All exams have at least one feasible start slot.")
+
         return {
             "exam_ids": ga_input.exam_ids,
-            "timeslot_ids": ga_input.timeslot_ids,
+            "timeslot_ids": timeslot_ids_list,
             "exam_info": ga_input.exam_info,
             "room_info": ga_input.room_info,
             "invigilator_info": ga_input.invigilator_info,
             "student_exam_map": ga_input.student_exam_map,
             "slot_capacity_map": slot_capacity_map,
-            "ga_params": self.ga_params,  # Pass GA params through
+            "ga_params": self.ga_params,
+            "exam_durations_in_slots": exam_durations_in_slots,
+            "day_to_slots_map": day_to_slots_map,
+            "feasible_slots_per_exam": feasible_slots_per_exam,
+            "timeslot_id_to_index": timeslot_id_to_index,
+            "index_to_timeslot_id": index_to_timeslot_id,
         }
 
+    def _create_initial_population(self, pop_size: int) -> np.ndarray:
+        """Creates an initial population of feasible individuals."""
+        logger.info(
+            f"Step 2: Initializing population with {pop_size} feasible individuals..."
+        )
+        population = [
+            create_feasible_individual_pygad(self.problem_spec) for _ in range(pop_size)
+        ]
+        return np.array(population)
+
     def run(self) -> GAResult:
-        """
-        Executes the full GA lifecycle and returns the processed results.
-        MODIFIED to conditionally use multiprocessing to avoid spawn errors on Windows.
-        """
+        """Executes the full GA lifecycle using PyGAD and returns the processed results."""
         start_time = time.time()
-        logger.info("Starting GA pre-filtering process...")
+        logger.info("=============================================")
+        logger.info("===  Starting Constraint-Aware GA Process ===")
+        logger.info("===          (Backend: PyGAD)           ===")
+        logger.info("=============================================")
 
-        # 1. Setup DEAP
-        toolbox = create_toolbox(self.problem_spec, self.ga_params)
+        # --- GA Parameters ---
         pop_size = self.ga_params.get("pop_size", 200)
-        population = toolbox.population(n=pop_size)
-        hof = tools.HallOfFame(10)  # Store the top 10 individuals
-
-        stats = tools.Statistics(lambda ind: ind.fitness.values)
-        stats.register("avg", lambda x: np.mean([val[0] for val in x]))
-        stats.register("min", lambda x: np.min([val[0] for val in x]))
-        stats.register("max", lambda x: np.max([val[0] for val in x]))
-
-        # 2. Run Evolutionary Algorithm
         generations = self.ga_params.get("generations", 150)
-        cx_prob = self.ga_params.get("cx_prob", 0.6)
+        cx_prob = self.ga_params.get("cx_prob", 0.7)
         mut_prob = self.ga_params.get("mut_prob", 0.2)
+        num_parents_mating = int(pop_size * 0.25)
 
-        # --- START OF FIX: Conditionally use multiprocessing ---
-        # On Windows, using multiprocessing.Pool inside a Celery worker can
-        # lead to ModuleNotFoundError. We fall back to sequential execution.
-        if platform.system() == "Windows":
-            logger.warning(
-                "Running on Windows: GA evaluation will run sequentially to avoid spawn errors."
+        logger.info(
+            f"GA Parameters: Population Size={pop_size}, Generations={generations}, Crossover P={cx_prob}, Mutation P={mut_prob}"
+        )
+
+        # --- Step 1 & 2: Create initial population and define fitness/mutation functions ---
+        initial_population = self._create_initial_population(pop_size)
+
+        def fitness_func_wrapper(ga_instance, solution, solution_idx):
+            return calculate_fitness_pygad(solution, self.problem_spec)
+
+        def mutation_func_wrapper(offspring, ga_instance):
+            return mutate_feasible_reassign_pygad(
+                offspring, ga_instance, self.problem_spec
             )
-            # Run sequentially (this is DEAP's default if no map is registered)
-            final_pop, logbook = algorithms.eaSimple(
-                population,
-                toolbox,
-                cxpb=cx_prob,
-                mutpb=mut_prob,
-                ngen=generations,
-                stats=stats,
-                halloffame=hof,
-                verbose=False,
-            )
-        else:
-            logger.info("Using multiprocessing for parallel GA evaluation.")
-            # Use a multiprocessing pool for parallel evaluation on other OS
-            with multiprocessing.Pool() as pool:
-                toolbox.register("map", pool.map)
-                # The algorithm MUST be called within the 'with' block
-                final_pop, logbook = algorithms.eaSimple(
-                    population,
-                    toolbox,
-                    cxpb=cx_prob,
-                    mutpb=mut_prob,
-                    ngen=generations,
-                    stats=stats,
-                    halloffame=hof,
-                    verbose=False,
-                )
-        # --- END OF FIX ---
+
+        # --- Step 3: Configure and run the PyGAD instance ---
+        logger.info("Step 3: Configuring PyGAD instance...")
+        ga_instance = pygad.GA(
+            num_generations=generations,
+            num_parents_mating=num_parents_mating,
+            initial_population=initial_population,
+            fitness_func=fitness_func_wrapper,
+            parent_selection_type="sss",
+            crossover_type="two_points",
+            crossover_probability=cx_prob,
+            mutation_type=mutation_func_wrapper,
+            mutation_probability=mut_prob,
+            allow_duplicate_genes=True,
+            stop_criteria=[f"saturate_{int(generations * 0.2)}"],
+        )
+
+        logger.info(
+            f"Step 4: Starting PyGAD evolution for {generations} generations..."
+        )
+        ga_instance.run()
+        logger.info("GA evolution has completed.")
 
         run_duration = time.time() - start_time
-        best_fitness = hof[0].fitness.values[0] if hof else 0.0
+        solution, solution_fitness, solution_idx = ga_instance.best_solution()
+        best_fitness_val = solution_fitness
+
+        # --- GA Run Summary ---
+        logger.info("--- GA Run Summary ---")
+        logger.info(f"Total execution time: {run_duration:.2f} seconds.")
+        logger.info(f"Best Fitness achieved: {best_fitness_val}")
+
+        # --- Post-processing ---
+        logger.info("--- Post-processing Top Individuals ---")
+        top_n_pct = self.ga_params.get("top_n_pct", 0.2)
+        num_to_select = max(1, int(pop_size * top_n_pct))
+
         logger.info(
-            f"GA run finished in {run_duration:.2f}s. Best fitness: {best_fitness:.4f}"
+            f"Step 5: Selecting top {top_n_pct*100}% of final population ({num_to_select} individuals) for analysis."
         )
 
-        # 3. Post-process top individuals
-        top_n_pct = self.ga_params.get("top_n_pct", 0.1)  # Default to top 10%
-        num_to_select = max(1, int(pop_size * top_n_pct))
-        top_individuals = tools.selBest(final_pop, k=num_to_select)
+        final_population = getattr(ga_instance, "population", np.array([]))
+        final_fitness = getattr(ga_instance, "last_generation_fitness", np.array([]))
 
-        viable_y_vars, viable_u_vars = self._build_viable_sets(top_individuals)
+        if final_fitness is None or len(final_fitness) == 0:
+            logger.warning("Final fitness values are empty. Using best solution only.")
+            sorted_indices = [solution_idx]
+        else:
+            sorted_indices = np.argsort(final_fitness)[::-1]
+
+        top_individuals = [
+            final_population[i]
+            for i in sorted_indices[:num_to_select]
+            if i < len(final_population)
+        ]
+
+        logger.info(
+            "Step 6: Building promising start time variables (X-vars) from top individuals..."
+        )
+        promising_x_vars = self._build_promising_start_times(top_individuals)
+
+        logger.info(
+            "Step 7: Generating high-confidence search hints for the CP-SAT solver..."
+        )
         search_hints = self._generate_search_hints(top_individuals)
 
-        # 4. Compile and return results
-        result = GAResult(
-            viable_y_vars=viable_y_vars,
-            viable_u_vars=viable_u_vars,
+        ga_result_stats = {
+            "runtime_seconds": run_duration,
+            "best_fitness": best_fitness_val,
+            "generations_run": ga_instance.generations_completed,
+            "promising_x_vars_count": len(promising_x_vars),
+            "search_hints_count": len(search_hints),
+        }
+
+        logger.info("--- GA Process Finished ---")
+        logger.info(f"Final Stats: {ga_result_stats}")
+
+        return GAResult(
+            promising_x_vars=promising_x_vars,
             search_hints=search_hints,
-            stats={
-                "runtime_seconds": run_duration,
-                "best_fitness": best_fitness,
-                "generations_run": generations,
-                "viable_y_vars_count": len(viable_y_vars),
-                "viable_u_vars_count": len(viable_u_vars),
-                "search_hints_count": len(search_hints),
-            },
-        )
-        return result
-
-    def _build_viable_sets(
-        self, top_individuals: List[Any]
-    ) -> Tuple[Set[Tuple], Set[Tuple]]:
-        """
-        Generates viable Y and U variables from the top individuals.
-        MODIFIED to include a safety net ensuring all exams have at least one assignment.
-        """
-        viable_y = set()
-        viable_u = set()
-
-        # Sort rooms by capacity once to efficiently find suitable rooms
-        sorted_rooms = sorted(
-            self.problem_spec["room_info"].values(),
-            key=lambda r: r["capacity"],
-            reverse=True,
+            stats=ga_result_stats,
         )
 
+    def _build_promising_start_times(self, top_individuals: List[Any]) -> Set[Tuple]:
+        """
+        MODIFIED: Generates a set of promising start time assignments (exam_id, slot_id)
+        by observing the start times assigned in the top-performing individuals.
+        This guides the CP-solver without overly constraining room choices.
+        """
+        promising_x = set()
         for ind in top_individuals:
-            schedule = individual_to_schedule(ind, self.problem_spec)
-            invig_usage = defaultdict(set)
-
+            schedule = individual_to_schedule(list(ind), self.problem_spec)
             for exam_id, slot_id in schedule.items():
-                exam_size = self.problem_spec["exam_info"][exam_id]["size"]
-                # Find the smallest room that fits the exam to improve utilization
-                chosen_room = None
-                for room in reversed(sorted_rooms):  # Iterate from smallest to largest
-                    if room["capacity"] >= exam_size:
-                        chosen_room = room
-                        break
-                # If no room is large enough, pick the largest available one
-                if not chosen_room:
-                    chosen_room = sorted_rooms[0] if sorted_rooms else None
+                promising_x.add((exam_id, slot_id))
 
-                if not chosen_room:
-                    continue
+        logger.info(
+            f"Generated {len(promising_x)} unique promising X_vars (exam, slot)."
+        )
 
-                room_id = chosen_room["id"]
-                viable_y.add((exam_id, room_id, slot_id))
+        self._apply_safety_net(promising_x)
+        return promising_x
 
-                # Simple invigilator assignment heuristic
-                chosen_invig = None
-                available_invigs = list(self.problem_spec["invigilator_info"].keys())
-                random.shuffle(available_invigs)  # Avoid bias
-                for invig_id in available_invigs:
-                    invig = self.problem_spec["invigilator_info"][invig_id]
-                    if (
-                        slot_id in invig["availability_by_slot"]
-                        and slot_id not in invig_usage[invig_id]
-                    ):
-                        chosen_invig = invig
-                        break
-
-                if chosen_invig:
-                    invig_id = chosen_invig["id"]
-                    viable_u.add((invig_id, exam_id, room_id, slot_id))
-                    invig_usage[invig_id].add(slot_id)
-
-        # --- START OF FIX: SAFETY NET ---
-        # 1. Ensure every exam has at least one viable Y-var.
-        assigned_exams = {y[0] for y in viable_y}
+    def _apply_safety_net(self, promising_x: Set[Tuple]):
+        """
+        MODIFIED: This function is now an ALARM. If it triggers, it means the GA
+        failed its primary mission of producing at least one start time for every exam.
+        """
+        assigned_exams = {x[0] for x in promising_x}
         all_exams = set(self.problem_spec["exam_ids"])
         unassigned_exams = all_exams - assigned_exams
 
         if unassigned_exams:
-            logger.warning(
-                f"GA Safety Net: Found {len(unassigned_exams)} exams with no viable assignments. Creating fallbacks."
+            logger.error(
+                f"GA SAFETY NET ALARM: The GA process failed to produce assignments for "
+                f"{len(unassigned_exams)} exams: {unassigned_exams}. The CP-SAT problem may be made infeasible."
             )
-            fallback_slot = self.problem_spec["timeslot_ids"][0]
-            fallback_room = sorted_rooms[0] if sorted_rooms else None
-
-            if fallback_room:
-                for exam_id in unassigned_exams:
-                    viable_y.add((exam_id, fallback_room["id"], fallback_slot))
-
-        # 2. Ensure every viable Y-var has at least one viable U-var.
-        y_without_u = {(y[0], y[1], y[2]) for y in viable_y} - {
-            (u[1], u[2], u[3]) for u in viable_u
-        }
-        if y_without_u:
-            logger.warning(
-                f"GA Safety Net: Found {len(y_without_u)} Y-vars with no invigilator. Creating fallbacks."
+        else:
+            logger.info(
+                "Safety Net: OK. All exams have at least one viable start time from the GA."
             )
-            fallback_invig_id = next(iter(self.problem_spec["invigilator_info"]), None)
-
-            if fallback_invig_id:
-                for exam_id, room_id, slot_id in y_without_u:
-                    viable_u.add((fallback_invig_id, exam_id, room_id, slot_id))
-        # --- END OF FIX ---
-
-        return viable_y, viable_u
 
     def _generate_search_hints(self, top_individuals: List[Any]) -> Dict[Any, Any]:
-        """
-        Generates high-confidence search hints for the CP-SAT solver.
-        """
+        """Generates high-confidence search hints for the CP-SAT solver."""
         hints = {}
         hint_threshold = self.ga_params.get("hint_threshold", 0.9)
         num_individuals = len(top_individuals)
+
         if num_individuals == 0:
+            logger.warning("Cannot generate hints: list of top individuals is empty.")
             return {}
 
         exam_slot_freq = defaultdict(lambda: defaultdict(int))
         for ind in top_individuals:
-            schedule = individual_to_schedule(ind, self.problem_spec)
+            schedule = individual_to_schedule(list(ind), self.problem_spec)
             for exam_id, slot_id in schedule.items():
                 exam_slot_freq[exam_id][slot_id] += 1
 
         for exam_id, slot_counts in exam_slot_freq.items():
-            for slot_id, count in slot_counts.items():
-                confidence = count / num_individuals
-                if confidence >= hint_threshold:
-                    # CP-SAT hints are exam -> slot. If multiple slots are high-confidence,
-                    # we pick the most frequent one.
-                    current_hint_confidence = hints.get(exam_id, {}).get(
-                        "confidence", 0
-                    )
-                    if confidence > current_hint_confidence:
-                        hints[exam_id] = {"slot_id": slot_id, "confidence": confidence}
+            if not slot_counts:
+                continue
+            best_slot, max_count = max(slot_counts.items(), key=lambda item: item[1])
+            confidence = max_count / num_individuals
+            if confidence >= hint_threshold:
+                hints[exam_id] = best_slot
+                logger.info(
+                    f"  -> CREATING HINT for Exam {exam_id} -> Slot {best_slot} (Confidence: {confidence:.2f})"
+                )
 
-        # Flatten hints to the required format: {exam_id: slot_id}
-        flat_hints = {exam_id: data["slot_id"] for exam_id, data in hints.items()}
-        return flat_hints
+        logger.info(f"Generated a total of {len(hints)} search hints.")
+        return hints

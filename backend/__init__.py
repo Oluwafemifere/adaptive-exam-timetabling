@@ -34,7 +34,6 @@ from .app.database import (
 from .app.config import (
     Settings,
     get_settings,
-    get_settings_for_environment,
     validate_settings,
     setup_logging,
     DevelopmentSettings,
@@ -72,7 +71,6 @@ __all__ = [
     # Configuration
     "Settings",
     "get_settings",
-    "get_settings_for_environment",
     "validate_settings",
     "setup_logging",
     "DevelopmentSettings",

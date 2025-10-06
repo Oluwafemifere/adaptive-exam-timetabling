@@ -11,6 +11,10 @@ from .exams import router as exams_router
 from .timetables import router as timetables_router
 from .users import router as users_router
 from .academic_sessions import router as sessions_router
+from .session_setup import router as session_setup_router
+
+# FIX: Correctly import the 'router' object from the 'versions' module
+from .versions import router as versions_router
 
 # Import the new routers
 from .system import router as system_router
@@ -50,6 +54,8 @@ router.include_router(schedules_router, prefix="/schedules", tags=["Schedules"])
 router.include_router(sessions_router, prefix="/sessions", tags=["Academic Sessions"])
 
 # System & Administration
+# FIX: Correctly include the router object
+router.include_router(versions_router, prefix="/versions", tags=["Versions"])
 router.include_router(system_router, prefix="/system", tags=["System Configuration"])
 router.include_router(admin_router, prefix="/admin", tags=["Administration"])
 router.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])
@@ -64,6 +70,9 @@ router.include_router(portal_router, prefix="/portal", tags=["User Portal"])
 # Utilities
 router.include_router(uploads_router, prefix="/uploads", tags=["File Uploads"])
 router.include_router(websockets_router, prefix="/ws", tags=["WebSockets"])
+router.include_router(
+    session_setup_router, prefix="/setup", tags=["Session Setup Wizard"]
+)
 
 
 # Export the main router for use in the main API

@@ -1,6 +1,7 @@
 # C:\Users\fresh\OneDrive\Dokumen\thesis\proj\CODE\adaptive-exam-timetabling\backend\app\models\academic.py
 
 import uuid
+import enum
 
 from typing import List, Optional, TYPE_CHECKING
 
@@ -14,6 +15,7 @@ from sqlalchemy import (
     Index,
     func,
     UniqueConstraint,
+    Enum as SAEnum,
 )
 
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
@@ -46,8 +48,15 @@ if TYPE_CHECKING:
     from .users import User
 
 
+# NEW ENUM to match the database schema
+class SlotGenerationModeEnum(str, enum.Enum):
+    fixed = "fixed"
+    flexible = "flexible"
+
+
 class AcademicSession(Base, TimestampMixin):
     __tablename__ = "academic_sessions"
+    __table_args__ = {"schema": "exam_system"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -61,16 +70,37 @@ class AcademicSession(Base, TimestampMixin):
         Boolean, default=False, nullable=True
     )
 
-    # NEW FIELDS for template support and multi-semester functionality
+    # --- FIX for Circular Dependency ---
+    # Add a name and use_alter=True to break the dependency cycle with session_templates.
     template_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("session_templates.id"), nullable=True
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "exam_system.session_templates.id",
+            name="fk_academic_sessions_template_id",
+            use_alter=True,
+        ),
+        nullable=True,
     )
     archived_at: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
     session_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
-    # NEW timeslot template field to match schema
     timeslot_template_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("timeslot_templates.id"), nullable=True
+        PG_UUID(as_uuid=True),
+        ForeignKey("exam_system.timeslot_templates.id"),
+        nullable=True,
+    )
+
+    # --- FIX for DatatypeMismatchError ---
+    # Make the SAEnum schema-aware by adding schema='exam_system'
+    slot_generation_mode: Mapped[SlotGenerationModeEnum] = mapped_column(
+        SAEnum(
+            SlotGenerationModeEnum,
+            name="slot_generation_mode_enum",
+            create_type=False,
+            schema="exam_system",
+        ),
+        nullable=False,
+        default=SlotGenerationModeEnum.fixed,
     )
 
     # Use string references to avoid circular imports
@@ -91,16 +121,18 @@ class AcademicSession(Base, TimestampMixin):
         "StudentEnrollment", back_populates="session"
     )
 
-    # NEW RELATIONSHIPS for template functionality
+    # RELATIONSHIPS
     template: Mapped["SessionTemplate"] = relationship(
-        "SessionTemplate", foreign_keys=[template_id], back_populates="sessions"
+        "SessionTemplate",
+        foreign_keys=[template_id],
+        back_populates="sessions",
+        post_update=True,  # Helps resolve cycle during object flushing
     )
     session_templates: Mapped[List["SessionTemplate"]] = relationship(
         "SessionTemplate",
         foreign_keys="SessionTemplate.source_session_id",
         back_populates="source_session",
     )
-    # NEW relationship for timeslot template
     timeslot_template: Mapped[Optional["TimeSlotTemplate"]] = relationship(
         "TimeSlotTemplate", back_populates="academic_sessions"
     )
@@ -110,6 +142,7 @@ class AcademicSession(Base, TimestampMixin):
         Index("idx_academic_sessions_template_id", "template_id"),
         Index("idx_academic_sessions_active", "is_active"),
         Index("idx_academic_sessions_archived_at", "archived_at"),
+        {"schema": "exam_system"},  # Ensure table is created in the correct schema
     )
 
 

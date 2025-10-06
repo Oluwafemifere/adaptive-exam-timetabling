@@ -72,11 +72,12 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: List[str] = Field(
         default=[
-            "http://localhost:3000",
-            "http://localhost:8000",
-            "http://localhost:5173",
+            "http://localhost:5173",  # Vite frontend
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",  # Common React dev server
+            "http://localhost:8000",  # The backend itself
         ],
-        validation_alias="CORS_ORIGINS",
+        alias="CORS_ORIGINS",
     )
 
     # File uploads

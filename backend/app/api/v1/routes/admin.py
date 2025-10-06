@@ -13,6 +13,7 @@ from ....services.notification.email_service import EmailService
 from ....services.data_retrieval import DataRetrievalService
 from ....schemas.admin import SeedingRequest, UploadSessionCreate, JsonSeedingRequest
 from ....schemas.system import GenericResponse
+from ....services.session_setup_service import SessionSetupService
 
 router = APIRouter()
 
@@ -69,27 +70,6 @@ async def test_email_connection(
     return {"detail": "SMTP connection successful"}
 
 
-@router.post("/seed/json", response_model=GenericResponse)
-async def seed_from_json(
-    seed_request: JsonSeedingRequest,
-    db: AsyncSession = Depends(db_session),
-    user: User = Depends(current_user),
-):
-    """Seed data for a specific entity from a JSON object."""
-    # Corrected: This function is on DataUploadService
-    service = DataUploadService(db)
-    try:
-        result = await service.seed_entity_data(
-            entity_type=seed_request.entity_type,
-            data=seed_request.data,
-        )
-        return GenericResponse(
-            success=True, message="Data seeding successful.", data=result
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to seed data: {e}")
-
-
 @router.get("/data/{entity_type}", response_model=List[Dict[str, Any]])
 async def get_all_entity_data(
     entity_type: str,
@@ -106,3 +86,23 @@ async def get_all_entity_data(
             detail=f"Entity type '{entity_type}' not found or no data available.",
         )
     return result
+
+
+@router.post("/process-staged-data/{session_id}", response_model=GenericResponse)
+async def process_all_staged_data(
+    session_id: UUID,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Triggers the processing of all data in the staging tables for a given session.
+    """
+    # This service is a good place for this kind of orchestration logic
+    service = SessionSetupService(db)
+    result = await service.process_all_staged_data(session_id)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("message", "Failed to process staged data."),
+        )
+    return GenericResponse(success=True, message=result.get("message"))

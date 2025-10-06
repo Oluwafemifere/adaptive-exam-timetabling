@@ -135,7 +135,7 @@ class ExamDepartment(Base, TimestampMixin):
 
 
 # NEW MODEL: Replaces ExamDay and TimeSlot with a template system
-class TimeSlotTemplate(Base, TimestampMixin):
+class TimeSlotTemplate(Base):
     __tablename__ = "timeslot_templates"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -143,6 +143,17 @@ class TimeSlotTemplate(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # MODIFIED: Override TimestampMixin to match DB schema (timezone aware)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     periods: Mapped[List["TimeSlotTemplatePeriod"]] = relationship(
         "TimeSlotTemplatePeriod",

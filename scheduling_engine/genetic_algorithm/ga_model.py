@@ -1,202 +1,209 @@
 # scheduling_engine/genetic_algorithm/ga_model.py
 """
-Defines the core DEAP model for the genetic algorithm pre-filter.
+Defines the core components for the PyGAD-based genetic algorithm pre-filter.
 
-This module is responsible for setting up the genetic algorithm's fundamental
-components using the DEAP library. It defines the structure of individuals
-(chromosomes), the fitness evaluation function based on constraint penalties,
-and the genetic operators (selection, crossover, mutation).
+This module is responsible for the fitness evaluation function, a constraint-aware
+mutation operator, and a feasible individual initializer, all designed to work
+with the PyGAD library.
 
-The design prioritizes speed and simplicity, focusing only on hard constraint
-violations to quickly guide the search toward feasible regions of the solution space.
+This version is TRULY CONSTRAINT-AWARE, using a fitness function that heavily
+penalizes hard constraints and operators that cannot create infeasible individuals
+regarding exam durations.
 """
 
+import math
 import random
 from typing import List, Dict, Any, Tuple
-
-from deap import base, creator, tools
 import logging
 from collections import defaultdict
+import numpy as np
 
+# Configure logger for detailed output
 logger = logging.getLogger(__name__)
 
-# 1. Setup Fitness and Individual Structures at the module level.
-#    Fitness aims to be maximized (target is 1.0).
-creator.create("FitnessMax", base.Fitness, weights=(1.0,))
-creator.create("Individual", list, fitness=creator.FitnessMax)
 
+def calculate_fitness_pygad(
+    solution: np.ndarray, problem_spec: Dict[str, Any]
+) -> float:
+    """
+    MODIFIED for PyGAD: Calculates a single fitness value.
+    This version includes a DURATION-AWARE and BIN-PACKING-HEURISTIC capacity check.
+    Fitness is calculated as: - ( (hard_violations * 1000) + soft_penalty )
+    The goal is to maximize this value (i.e., bring it closer to 0).
+    """
+    individual = list(map(int, solution))
+    individual_id = id(individual)
+    logger.debug(f"FEVAL id={id(individual)} first5genes={individual[:5]}")
 
-def penalty_fitness(
-    individual: List[int], problem_spec: Dict[str, Any]
-) -> Tuple[float,]:
-    """
-    Calculates the fitness of an individual based on a penalty system.
-    MODIFIED to include more constraint-aware penalties and optimized loops.
-    """
     schedule = individual_to_schedule(individual, problem_spec)
-    total_penalty = 0.0
-    weights = problem_spec.get("penalty_weights", {})
+    hard_violations = 0.0
+    soft_penalty = 0.0
 
-    # Penalty weights with defaults
-    student_conflict_weight = weights.get("student_conflict", 1000.0)
-    room_capacity_weight = weights.get("room_over_capacity", 100.0)
-    invigilator_shortage_weight = weights.get("invigilator_shortage", 500.0)
-    max_exams_per_day_weight = weights.get("max_exams_per_day", 750.0)
+    # Hard Constraint 0: Completeness
+    scheduled_exam_count = len(schedule)
+    total_exam_count = len(problem_spec["exam_ids"])
+    if scheduled_exam_count < total_exam_count:
+        violation_count = total_exam_count - scheduled_exam_count
+        hard_violations += violation_count * 1000
 
-    # --- START OF OPTIMIZATION: MERGED STUDENT-RELATED PENALTIES ---
-    student_conflict_penalty = 0
-    max_exams_per_day_penalty = 0
-    ga_params = problem_spec.get("ga_params", {})
-    slot_to_day_map = ga_params.get("slot_to_day_map", {})
-    max_exams_per_day = ga_params.get("max_exams_per_day", 2)
+    # Combined Student Conflict, Capacity, and Duration check
+    student_occupied_slots = defaultdict(list)
+    slot_demand = defaultdict(int)
+    exams_in_slot = defaultdict(list)
+    exam_durations = problem_spec["exam_durations_in_slots"]
+    day_to_slots_map = problem_spec["day_to_slots_map"]
+    slot_to_day_map = problem_spec["ga_params"].get("slot_to_day_map", {})
+    day_slot_indices = {
+        day_id: {slot: i for i, slot in enumerate(slots)}
+        for day_id, slots in day_to_slots_map.items()
+    }
+    duration_violation_count = 0
+    for exam_id, start_slot_id in schedule.items():
+        exam_info = problem_spec["exam_info"][exam_id]
+        exam_size = exam_info["size"]
+        students = problem_spec["student_exam_map"].get(exam_id, [])
+        duration = exam_durations.get(exam_id, 1)
+        day_id = slot_to_day_map.get(start_slot_id)
 
-    for student_id, exam_ids in problem_spec.get("student_exam_map", {}).items():
-        # Get the scheduled slots for this student's exams
-        slots_for_student = [schedule.get(eid) for eid in exam_ids if eid in schedule]
-        if not slots_for_student:
+        if not day_id:
+            hard_violations += 100
             continue
 
-        # 1. Student Conflict Penalty calculation
-        slot_counts = defaultdict(int)
-        for slot in slots_for_student:
-            if slot is not None:
-                slot_counts[slot] += 1
-        for count in slot_counts.values():
-            if count > 1:
-                student_conflict_penalty += count - 1
+        day_slots = day_to_slots_map.get(day_id, [])
+        start_index = day_slot_indices.get(day_id, {}).get(start_slot_id)
 
-        # 2. Max Exams Per Student Per Day Penalty calculation
-        if slot_to_day_map:
-            student_day_counts = defaultdict(int)
-            for slot_id in slots_for_student:
-                if slot_id and slot_id in slot_to_day_map:
-                    day_id = slot_to_day_map[slot_id]
-                    student_day_counts[day_id] += 1
-            for day_count in student_day_counts.values():
-                if day_count > max_exams_per_day:
-                    max_exams_per_day_penalty += day_count - max_exams_per_day
+        if start_index is None or start_index + duration > len(day_slots):
+            hard_violations += 100
+            duration_violation_count += 1
+            continue
 
-    total_penalty += student_conflict_weight * student_conflict_penalty
-    total_penalty += max_exams_per_day_weight * max_exams_per_day_penalty
-    # --- END OF OPTIMIZATION ---
+        occupied_slots_for_exam = []
+        for i in range(duration):
+            occupied_slot_id = day_slots[start_index + i]
+            occupied_slots_for_exam.append(occupied_slot_id)
+            slot_demand[occupied_slot_id] += exam_size
+            exams_in_slot[occupied_slot_id].append(exam_size)
 
-    # 3. Room Capacity Penalty (existing)
-    slot_demand = defaultdict(int)
-    for exam_id, slot_id in schedule.items():
-        exam_size = problem_spec["exam_info"][exam_id]["size"]
-        slot_demand[slot_id] += exam_size
+        for student_id in students:
+            student_occupied_slots[student_id].extend(occupied_slots_for_exam)
 
+    # 1. Student Conflicts (Duration-Aware)
+    student_conflict_violations = 0
+    for student_id, slots in student_occupied_slots.items():
+        if len(set(slots)) < len(slots):
+            conflict_count = len(slots) - len(set(slots))
+            student_conflict_violations += conflict_count
+    hard_violations += student_conflict_violations
+
+    # 2. Capacity Heuristics
     for slot_id, demand in slot_demand.items():
-        total_capacity_in_slot = problem_spec["slot_capacity_map"].get(slot_id, 0)
-        if demand > total_capacity_in_slot:
-            total_penalty += room_capacity_weight * (demand - total_capacity_in_slot)
+        total_capacity = problem_spec["slot_capacity_map"].get(slot_id, 0)
+        if demand > total_capacity:
+            hard_violations += math.ceil((demand - total_capacity) / 100)
 
-    # 4. Invigilator Shortage Heuristic Penalty (existing)
-    invigilator_shortage_penalty = 0
-    num_invigilators = len(problem_spec.get("invigilator_info", {}))
-    if num_invigilators > 0:
-        exams_per_slot = defaultdict(int)
-        for slot_id in schedule.values():
-            exams_per_slot[slot_id] += 1
-
-        for num_exams in exams_per_slot.values():
-            if num_exams > num_invigilators:  # Simple heuristic
-                invigilator_shortage_penalty += num_exams - num_invigilators
-        total_penalty += invigilator_shortage_weight * invigilator_shortage_penalty
-
-    return (1.0 / (1.0 + total_penalty),)
-
-
-def mut_random_reassign(
-    individual: List[int], indpb: float, timeslot_indices: List[int]
-) -> Tuple[List[int],]:
-    """
-    Custom mutation operator that reassigns a gene to a new random timeslot.
-
-    Args:
-        individual: The individual to be mutated.
-        indpb: The independent probability for each attribute to be mutated.
-        timeslot_indices: A list of valid timeslot indices to choose from.
-
-    Returns:
-        A tuple containing the mutated individual.
-    """
-    for i in range(len(individual)):
-        if random.random() < indpb:
-            individual[i] = random.choice(timeslot_indices)
-    return (individual,)
-
-
-def create_toolbox(
-    problem_spec: Dict[str, Any], ga_params: Dict[str, Any]
-) -> base.Toolbox:
-    """
-    Creates and configures a DEAP toolbox for the GA pre-filter.
-
-    Args:
-        problem_spec: Dictionary with problem data (exam_ids, timeslot_ids, etc.).
-        ga_params: Dictionary with GA hyperparameters (cx_prob, mut_prob, etc.).
-
-    Returns:
-        A fully configured DEAP toolbox instance.
-    """
-    # Initialize Toolbox
-    toolbox = base.Toolbox()
-    num_exams = len(problem_spec["exam_ids"])
-    timeslot_indices = list(range(len(problem_spec["timeslot_ids"])))
-
-    # Register Genetic Operators and Population Initializers
-    # Attribute generator: a random timeslot index for each gene (exam).
-    toolbox.register("attr_timeslot", random.choice, timeslot_indices)
-
-    # Individual and population initializers.
-    toolbox.register(
-        "individual",
-        tools.initRepeat,
-        creator.Individual,
-        toolbox.attr_timeslot,
-        n=num_exams,
+    all_room_capacities = sorted(
+        [r["capacity"] for r in problem_spec["room_info"].values()], reverse=True
     )
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+    num_rooms = len(all_room_capacities)
+    for slot_id, exam_sizes in exams_in_slot.items():
+        if not exam_sizes or num_rooms == 0:
+            continue
+        sorted_exams = sorted(exam_sizes, reverse=True)
+        if len(sorted_exams) > num_rooms:
+            hard_violations += (len(sorted_exams) - num_rooms) * 10
+            continue
+        if sorted_exams[0] > all_room_capacities[0]:
+            hard_violations += 10
+        for k in range(1, min(len(sorted_exams), num_rooms) + 1):
+            if sum(sorted_exams[:k]) > sum(all_room_capacities[:k]):
+                hard_violations += 5
+                break
 
-    # Evaluation (fitness) function.
-    toolbox.register("evaluate", penalty_fitness, problem_spec=problem_spec)
+    # Soft Penalty Checks
+    student_exam_start_slots = defaultdict(list)
+    for exam_id, start_slot_id in schedule.items():
+        students = problem_spec["student_exam_map"].get(exam_id, [])
+        for student_id in students:
+            student_exam_start_slots[student_id].append(start_slot_id)
 
-    # Core genetic operators.
-    # Rationale for choices:
-    # - cxTwoPoint: Simple, effective crossover for position-based encodings.
-    # - selTournament: Reduces premature convergence compared to simpler methods.
-    toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register(
-        "mutate",
-        mut_random_reassign,
-        indpb=ga_params.get("mut_indpb", 0.02),
-        timeslot_indices=timeslot_indices,
+    student_day_counts = defaultdict(lambda: defaultdict(int))
+    for student_id, slots in student_exam_start_slots.items():
+        for slot_id in slots:
+            day_id = slot_to_day_map.get(slot_id)
+            if day_id:
+                student_day_counts[student_id][day_id] += 1
+
+    total_soft_penalty = 0
+    for student_id, day_counts in student_day_counts.items():
+        for day, count in day_counts.items():
+            if count > 2:
+                total_soft_penalty += (count - 2) * 50
+    soft_penalty = total_soft_penalty
+
+    # Final fitness value (higher is better)
+    final_fitness = -((hard_violations * 1000) + soft_penalty)
+    logger.debug(
+        f"[Fitness Eval ID: {individual_id}] Complete. H-Violations: {hard_violations}, S-Penalty: {soft_penalty}, Final Fitness: {final_fitness}"
     )
-    toolbox.register(
-        "select", tools.selTournament, tournsize=ga_params.get("tournsize", 3)
-    )
+    return final_fitness
 
-    return toolbox
+
+def mutate_feasible_reassign_pygad(
+    offspring: np.ndarray, ga_instance, problem_spec: Dict[str, Any]
+) -> np.ndarray:
+    """
+    NEW for PyGAD: Constraint-aware mutation.
+    An exam (gene) is only ever mutated to another FEASIBLE start slot.
+    """
+    exam_ids = problem_spec["exam_ids"]
+    feasible_slots_per_exam = problem_spec["feasible_slots_per_exam"]
+    mutation_prob = ga_instance.mutation_probability
+
+    for chromosome_idx in range(offspring.shape[0]):
+        for gene_idx in range(offspring.shape[1]):
+            if random.random() < mutation_prob:
+                exam_id = exam_ids[gene_idx]
+                if feasible_slots_per_exam.get(exam_id):
+                    new_slot_index = random.choice(feasible_slots_per_exam[exam_id])
+                    offspring[chromosome_idx, gene_idx] = new_slot_index
+    return offspring
+
+
+def create_feasible_individual_pygad(problem_spec: Dict[str, Any]) -> List[int]:
+    """
+    NEW for PyGAD: Constraint-aware individual initializer.
+    Creates a single individual where each exam is assigned a random feasible start slot.
+    """
+    exam_ids = problem_spec["exam_ids"]
+    feasible_slots = problem_spec["feasible_slots_per_exam"]
+    genes = []
+    for exam_id in exam_ids:
+        if feasible_slots.get(exam_id):
+            chosen_slot = random.choice(feasible_slots[exam_id])
+            genes.append(chosen_slot)
+        else:
+            logger.error(
+                f"FATAL: In create_feasible_individual, Exam {exam_id} has NO feasible start slots."
+            )
+            genes.append(-1)  # Placeholder that will be heavily penalized
+    return genes
 
 
 def individual_to_schedule(
     individual: List[int], problem_spec: Dict[str, Any]
 ) -> Dict[Any, Any]:
     """
-    Converts a GA individual (list of timeslot indices) to a more readable
-    schedule dictionary mapping exam_id to timeslot_id.
-
-    Args:
-        individual: The GA individual (chromosome).
-        problem_spec: Dictionary containing mappings from indices to IDs.
-
-    Returns:
-        A dictionary representing the exam schedule.
+    Converts a GA individual (list of timeslot indices) to a schedule dictionary.
+    This helper function is compatible with both deap and PyGAD.
     """
+    logger.debug(f"Converting individual {id(individual)} to schedule format...")
     exam_ids = problem_spec["exam_ids"]
-    timeslot_ids = problem_spec["timeslot_ids"]
+    index_to_timeslot_id = problem_spec["index_to_timeslot_id"]
+
     schedule = {
-        exam_ids[i]: timeslot_ids[individual[i]] for i in range(len(individual))
+        exam_ids[i]: index_to_timeslot_id[individual[i]]
+        for i in range(len(individual))
+        if individual[i] in index_to_timeslot_id
     }
+    logger.debug(f"Conversion complete. Schedule contains {len(schedule)} assignments.")
     return schedule

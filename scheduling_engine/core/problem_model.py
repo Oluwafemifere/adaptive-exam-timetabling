@@ -113,7 +113,9 @@ class Room:
                 )
             adjacent_pairs_value = []
 
-        return cls(
+        # --- START OF FIX ---
+        # 1. Create the instance without the overbookable property first.
+        room_instance = cls(
             id=uuid_obj,
             code=data.get("code", ""),
             capacity=int(data.get("capacity", 0)),
@@ -122,6 +124,12 @@ class Room:
             adjacent_seat_pairs=adjacent_pairs_value,
             building_name=data.get("building_name"),
         )
+
+        # 2. Explicitly set the internal '_overbookable' attribute that the property relies on.
+        setattr(room_instance, "_overbookable", bool(data.get("overbookable", False)))
+
+        return room_instance
+        # --- END OF FIX ---
 
 
 @dataclass

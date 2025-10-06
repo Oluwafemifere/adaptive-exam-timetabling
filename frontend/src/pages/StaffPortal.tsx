@@ -1,6 +1,6 @@
 // frontend/src/pages/StaffPortal.tsx
 import React, { useState, useMemo, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -15,10 +15,11 @@ import { useStaffPortalData } from '../hooks/useApi';
 import { toast } from 'sonner';
 import { TimetableGrid } from '../components/TimetableGrid';
 import { FilterControls } from '../components/FilterControls';
-import { RenderableExam, StaffAssignment } from '../store/types';
+import { RenderableExam, StaffAssignment, ChangeRequest } from '../store/types';
+import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert';
 
 export function StaffPortal() {
-  const { user, instructorSchedule, invigilatorSchedule, addChangeRequest, settings, updateSettings } = useAppStore();
+  const { user, instructorSchedule, invigilatorSchedule, changeRequests, addChangeRequest, settings, updateSettings } = useAppStore();
   const { logout } = useAuth();
   const { isLoading, error, refetch } = useStaffPortalData();
 
@@ -190,38 +191,79 @@ export function StaffPortal() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="bg-card border-b border-border">
-        <div className="max-w-6xl mx-auto px-4 py-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold">My Assignments</h1>
-              <p className="text-muted-foreground">Teaching & Invigilation Duties - Fall 2025</p>
-              <p className="text-sm text-muted-foreground">Welcome, {user?.name}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" onClick={toggleTheme}>
-                {settings.theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={logout}><LogOut className="h-4 w-4 mr-2" />Logout</Button>
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <div className="bg-card border-b border-border">
+          <div className="max-w-6xl mx-auto px-4 py-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h1 className="text-2xl font-bold">My Assignments</h1>
+                <p className="text-muted-foreground">Teaching & Invigilation Duties - Fall 2025</p>
+                <p className="text-sm text-muted-foreground">Welcome, {user?.name}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon" onClick={toggleTheme}>
+                  {settings.theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={logout}><LogOut className="h-4 w-4 mr-2" />Logout</Button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
         <div className="max-w-6xl mx-auto px-4 py-6">
           <Tabs value={portalView} onValueChange={(value) => setPortalView(value as 'list' | 'grid')} className="w-full">
             <TabsList className="grid w-full grid-cols-2 mb-4">
-              <TabsTrigger value="list"><List className="h-4 w-4 mr-2" />List View</TabsTrigger>
-              <TabsTrigger value="grid"><Grid3X3 className="h-4 w-4 mr-2" />Grid View</TabsTrigger>
+              <TabsTrigger value="list"><List className="h-4 w-4 mr-2" />Assignments</TabsTrigger>
+              <TabsTrigger value="grid"><Grid3X3 className="h-4 w-4 mr-2" />Timetable View</TabsTrigger>
             </TabsList>
             <TabsContent value="list">
               <Tabs defaultValue="teaching" className="w-full">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="teaching"><GraduationCap className="h-4 w-4 mr-2" />Teaching Assignments ({instructorSchedule.length})</TabsTrigger>
-                  <TabsTrigger value="invigilation"><Shield className="h-4 w-4 mr-2" />Invigilation Duties ({invigilatorSchedule.length})</TabsTrigger>
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="teaching"><GraduationCap className="h-4 w-4 mr-2" />Teaching ({instructorSchedule.length})</TabsTrigger>
+                  <TabsTrigger value="invigilation"><Shield className="h-4 w-4 mr-2" />Invigilation ({invigilatorSchedule.length})</TabsTrigger>
+                  <TabsTrigger value="requests"><FileEdit className="h-4 w-4 mr-2" />My Requests ({changeRequests.length})</TabsTrigger>
                 </TabsList>
                 <TabsContent value="teaching" className="mt-4"><div className="space-y-4">{sortedInstructorSchedule.length === 0 ? <Card><CardContent className="py-8 text-center"><h3 className="font-semibold">No Teaching Assignments</h3><p className="text-sm text-muted-foreground">You have no teaching duties assigned.</p></CardContent></Card> : sortedInstructorSchedule.map((assignment) => <AssignmentCard key={assignment.id} assignment={assignment} />)}</div></TabsContent>
                 <TabsContent value="invigilation" className="mt-4"><div className="space-y-4">{sortedInvigilatorSchedule.length === 0 ? <Card><CardContent className="py-8 text-center"><h3 className="font-semibold">No Invigilation Duties</h3><p className="text-sm text-muted-foreground">You have no invigilation duties assigned.</p></CardContent></Card> : sortedInvigilatorSchedule.map((assignment) => <AssignmentCard key={assignment.id} assignment={assignment} />)}</div></TabsContent>
+                <TabsContent value="requests" className="mt-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>My Change Requests</CardTitle>
+                      <CardDescription>A history of all assignment change requests you have submitted.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {changeRequests.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <p>You have not submitted any change requests.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          {changeRequests.map((request: ChangeRequest) => (
+                            <Alert key={request.id}>
+                              <FileEdit className="h-4 w-4" />
+                              <AlertTitle className="flex justify-between items-center">
+                                <span>Request for Assignment: {request.assignmentId.substring(0,8)}...</span>
+                                <Badge variant={
+                                  request.status === 'approved' ? 'default' :
+                                  request.status === 'denied' ? 'destructive' :
+                                  'secondary'
+                                }>
+                                  {request.status}
+                                </Badge>
+                              </AlertTitle>
+                              <AlertDescription>
+                                <p className="font-medium mt-2">Reason: {request.reason}</p>
+                                {request.description && <p className="mt-1">{request.description}</p>}
+                                <p className="text-xs text-muted-foreground mt-2">
+                                  Submitted: {new Date(request.submittedAt).toLocaleString()}
+                                </p>
+                              </AlertDescription>
+                            </Alert>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </TabsContent>
               </Tabs>
             </TabsContent>
             <TabsContent value="grid">

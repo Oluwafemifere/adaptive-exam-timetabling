@@ -1,6 +1,8 @@
 # backend/app/models/users.py
+
 import uuid
 from typing import TYPE_CHECKING, List, Optional
+from datetime import datetime
 from sqlalchemy import (
     String,
     Boolean,
@@ -10,7 +12,7 @@ from sqlalchemy import (
     ARRAY,
     func,
     Index,
-    Enum,
+    # REMOVED: Unused Enum import
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import JSONB
@@ -22,15 +24,15 @@ from .base import Base, TimestampMixin
 if TYPE_CHECKING:
     from .jobs import TimetableJob
     from .constraints import ConfigurationConstraint
-    from .academic import Faculty, Department, Student  # Added Student
+    from .academic import Faculty, Department, Student
     from .scheduling import Staff
 
 
-# Define the UserRoleEnum to match the one in PostgreSQL
+# This enum can still be used for application logic but is not directly tied to the DB type
 import enum
 
 
-class UserRoleEnum(enum.Enum):
+class UserRoleEnum(str, enum.Enum):
     admin = "admin"
     staff = "staff"
     student = "student"
@@ -40,24 +42,29 @@ class User(Base, TimestampMixin):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     first_name: Mapped[str] = mapped_column(String, nullable=False)
     last_name: Mapped[str] = mapped_column(String, nullable=False)
-    # MODIFIED: Changed 'phone' to 'phone_number' to match schema
-    phone_number: Mapped[str | None] = mapped_column(String, nullable=True)
+    # ADDED: phone column to match schema
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_login: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
-    # NEW: Added role column to directly store the user's primary role.
-    role: Mapped[UserRoleEnum] = mapped_column(
-        Enum(UserRoleEnum, name="user_role_enum", create_type=False), nullable=False
+
+    # --- FIX: Changed Enum to String to match the database schema ---
+    # The 'role' column in the database is a varchar, not a custom enum type.
+    # This change correctly maps the model attribute to the database column type.
+    role: Mapped[str] = mapped_column(
+        String(255), nullable=False, default=UserRoleEnum.student.value
     )
 
+    # REMOVED: The 'roles' relationship to the old assignment table.
+
     # Use string references to avoid circular imports
-    roles: Mapped[List["UserRoleAssignment"]] = relationship(back_populates="user")
     notifications: Mapped[List["UserNotification"]] = relationship(
         back_populates="user"
     )
@@ -72,47 +79,10 @@ class User(Base, TimestampMixin):
     student: Mapped[Optional["Student"]] = relationship(
         "Student", back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
-
-
-class UserRole(Base, TimestampMixin):
-    __tablename__ = "user_roles"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    # NEW: Relationship to user filter presets
+    filter_presets: Mapped[List["UserFilterPreset"]] = relationship(
+        "UserFilterPreset", back_populates="user", cascade="all, delete-orphan"
     )
-    name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    permissions: Mapped[dict] = mapped_column(JSONB, default={}, nullable=False)
-
-    assignments: Mapped[List["UserRoleAssignment"]] = relationship(
-        back_populates="role"
-    )
-
-
-class UserRoleAssignment(Base):
-    __tablename__ = "user_role_assignments"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
-    )
-    role_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("user_roles.id"), nullable=False
-    )
-    faculty_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("faculties.id"), nullable=True
-    )
-    department_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True
-    )
-    assigned_at: Mapped[DateTime] = mapped_column(
-        DateTime, server_default=func.now(), nullable=False
-    )
-
-    user: Mapped["User"] = relationship(back_populates="roles")
-    role: Mapped["UserRole"] = relationship(back_populates="assignments")
 
 
 class UserNotification(Base, TimestampMixin):
@@ -182,3 +152,31 @@ class SystemEvent(Base, TimestampMixin):
         back_populates="event"
     )
     resolver: Mapped["User"] = relationship(foreign_keys=[resolved_by])
+
+
+# NEW MODEL for user_filter_presets table
+class UserFilterPreset(Base):
+    __tablename__ = "user_filter_presets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    preset_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    preset_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    filters: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="filter_presets")

@@ -5,10 +5,12 @@ from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime
 
+# Define ConfigDict once to be reused
 MODEL_CONFIG = ConfigDict(from_attributes=True)
 
 
 class UploadedFileBase(BaseModel):
+    # Use the new model_config attribute
     model_config = MODEL_CONFIG
 
     file_name: str
@@ -24,20 +26,17 @@ class UploadedFileBase(BaseModel):
 
 class UploadedFileCreate(UploadedFileBase):
     model_config = MODEL_CONFIG
-
     upload_session_id: UUID
 
 
 class UploadedFileRead(UploadedFileBase):
     model_config = MODEL_CONFIG
-
     id: UUID
     uploaded_at: datetime
 
 
 class FileUploadSessionBase(BaseModel):
     model_config = MODEL_CONFIG
-
     upload_type: str
     session_id: Optional[UUID] = None
     status: str = Field(default="processing")
@@ -49,13 +48,11 @@ class FileUploadSessionBase(BaseModel):
 
 class FileUploadSessionCreate(FileUploadSessionBase):
     model_config = MODEL_CONFIG
-
     uploaded_by: UUID
 
 
 class FileUploadSessionRead(FileUploadSessionBase):
     model_config = MODEL_CONFIG
-
     id: UUID
     created_at: datetime
     uploaded_files: List[UploadedFileRead] = Field(default_factory=list)

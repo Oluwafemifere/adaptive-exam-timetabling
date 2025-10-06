@@ -11,7 +11,8 @@ import {
   Users,
   Clock,
   Eye,
-  Download
+  Download,
+  PlayCircle
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -52,7 +53,7 @@ interface BottleneckItem {
 }
 
 export function Analytics() {
-  const { setCurrentPage } = useAppStore();
+  const { setCurrentPage, exams } = useAppStore(); // MODIFICATION: Get exams from store
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'course' | 'room' | 'student'>('all');
   const [selectedCell, setSelectedCell] = useState<ConflictData | null>(null);
@@ -187,6 +188,36 @@ export function Analytics() {
   const peakConflictTime = heatmapData.reduce((max, item) => 
     item.conflicts > max.conflicts ? item : max
   );
+  
+  // --- MODIFICATION START: Add empty state for the whole page ---
+  if (heatmapData.length === 0 && bottleneckData.length === 0) {
+    return (
+       <div className="flex items-center justify-center h-[calc(100vh-200px)]">
+        <Card className="w-full max-w-lg text-center p-8">
+          <CardHeader>
+            <div className="mx-auto bg-primary/10 rounded-full p-4 w-fit">
+              <BarChart3 className="h-12 w-12 text-primary" />
+            </div>
+            <CardTitle className="mt-4">No Data to Analyze</CardTitle>
+            <CardDescription>
+              Conflict analysis and bottleneck reports will appear here once a timetable has been generated.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-6 text-muted-foreground">
+              Generate a schedule to populate this dashboard with analytical data.
+            </p>
+            <Button onClick={() => setCurrentPage('scheduling')}>
+              <PlayCircle className="h-4 w-4 mr-2" />
+              Go to Scheduling Page
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+  // --- MODIFICATION END ---
+
 
   return (
     <div className="space-y-6">

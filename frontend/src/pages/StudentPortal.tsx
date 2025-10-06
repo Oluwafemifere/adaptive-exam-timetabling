@@ -1,6 +1,6 @@
 // frontend/src/pages/StudentPortal.tsx
 import React, { useState, useMemo, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -15,10 +15,11 @@ import { useStudentPortalData } from '../hooks/useApi';
 import { toast } from 'sonner';
 import { TimetableGrid } from '../components/TimetableGrid';
 import { FilterControls } from '../components/FilterControls';
-import { RenderableExam, StudentExam } from '../store/types';
+import { RenderableExam, StudentExam, ConflictReport } from '../store/types';
+import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert';
 
 export function StudentPortal() {
-  const { user, studentExams, addConflictReport, settings, updateSettings } = useAppStore();
+  const { user, studentExams, conflictReports, addConflictReport, settings, updateSettings } = useAppStore();
   const { logout } = useAuth();
   const { isLoading, error, refetch } = useStudentPortalData();
 
@@ -252,9 +253,12 @@ export function StudentPortal() {
       <div className="max-w-6xl mx-auto px-4 py-6">
         <Tabs defaultValue="list" className="w-full">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-            <TabsList className="grid w-full sm:w-fit grid-cols-2">
+            <TabsList className="grid w-full sm:w-fit grid-cols-3">
               <TabsTrigger value="list" className="flex items-center gap-2"><List className="h-4 w-4" />List View</TabsTrigger>
               <TabsTrigger value="grid" className="flex items-center gap-2"><Grid3X3 className="h-4 w-4" />Grid View</TabsTrigger>
+              <TabsTrigger value="conflicts" className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />Reports ({conflictReports.length})
+              </TabsTrigger>
             </TabsList>
           </div>
 
@@ -329,6 +333,45 @@ export function StudentPortal() {
                 />
               )}
             </div>
+          </TabsContent>
+          <TabsContent value="conflicts" className="mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>My Conflict Reports</CardTitle>
+                <CardDescription>A history of all conflict reports you have submitted.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {conflictReports.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>You have not submitted any conflict reports.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {conflictReports.map((report: ConflictReport) => (
+                      <Alert key={report.id}>
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle className="flex justify-between items-center">
+                          <span>Conflict for Exam ID: {report.examId.substring(0, 8)}...</span>
+                          <Badge variant={
+                            report.status === 'resolved' ? 'default' :
+                            report.status === 'reviewed' ? 'secondary' :
+                            'destructive'
+                          }>
+                            {report.status}
+                          </Badge>
+                        </AlertTitle>
+                        <AlertDescription>
+                          <p className="mt-2">{report.description}</p>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            Submitted: {new Date(report.submittedAt).toLocaleString()}
+                          </p>
+                        </AlertDescription>
+                      </Alert>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>

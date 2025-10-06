@@ -1,4 +1,4 @@
-# backend\app\config.py
+# backend/app/config.py
 """
 Configuration management for the Adaptive Exam Timetabling System.
 Uses Pydantic for settings validation and environment variable management.
@@ -18,9 +18,11 @@ class Settings(BaseSettings):
     """Application settings with environment variable support."""
 
     model_config = SettingsConfigDict(
+        # Correctly points to the .env file in the project root
         env_file=str(Path(__file__).resolve().parent.parent / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",  # Ignores extra fields from the environment
     )
 
     # Application settings
@@ -40,6 +42,7 @@ class Settings(BaseSettings):
     DATABASE_POOL_RECYCLE: int = Field(default=3600, alias="DB_POOL_RECYCLE")
     DATABASE_SCHEMA: str = Field(default="exam_system", alias="DATABASE_SCHEMA")
     DATABASE_ECHO: bool = Field(default=False, alias="DATABASE_ECHO")
+
     # Redis settings (for Celery and caching)
     REDIS_URL: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
     REDIS_CELERY_DB: int = Field(default=1, alias="REDIS_CELERY_DB")
@@ -55,13 +58,20 @@ class Settings(BaseSettings):
         alias="JWT_SECRET_KEY",
     )
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60  # Increased for better DX
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # CORS settings
     ALLOWED_HOSTS: List[str] = Field(default=["*"], alias="ALLOWED_HOSTS")
+
+    # --- FIX: Added the frontend development server origin to the default list ---
     CORS_ORIGINS: List[str] = Field(
-        default=["http://localhost:3000", "http://localhost:8000"],
+        default=[
+            "http://localhost:5173",  # Vite frontend
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",  # Common React dev server
+            "http://localhost:8000",  # The backend itself
+        ],
         alias="CORS_ORIGINS",
     )
 
@@ -121,45 +131,29 @@ class Settings(BaseSettings):
     LOG_FILE: Optional[str] = Field(default=None, alias="LOG_FILE")
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-    # WebSocket settings
-    WEBSOCKET_MAX_CONNECTIONS: int = Field(default=100, alias="WS_MAX_CONNECTIONS")
-    WEBSOCKET_HEARTBEAT_INTERVAL: int = Field(default=30, alias="WS_HEARTBEAT_INTERVAL")
-
-    # Monitoring settings
-    METRICS_ENABLED: bool = Field(default=True, alias="METRICS_ENABLED")
-    HEALTH_CHECK_INTERVAL: int = Field(default=60, alias="HEALTH_CHECK_INTERVAL")
-
     # University-specific settings
     UNIVERSITY_NAME: str = Field(default="Baze University", alias="UNIVERSITY_NAME")
-    UNIVERSITY_CODE: str = Field(default="BU", alias="UNIVERSITY_CODE")
-    ACADEMIC_YEAR_START_MONTH: int = Field(
-        default=9, alias="ACADEMIC_YEAR_START_MONTH"
-    )  # September
-    DEFAULT_EXAM_DURATION: int = Field(
-        default=180, alias="DEFAULT_EXAM_DURATION"
-    )  # 3 hours
 
     # Validators
-    @field_validator("CELERY_BROKER_URL")
+    @field_validator("CELERY_BROKER_URL", mode="before")
     def set_celery_broker_url(
         cls, v: Optional[str], info: ValidationInfo
     ) -> Optional[str]:
         """Build a Redis-based broker URL if not provided."""
         if v is None:
-            redis_url = info.data.get("REDIS_URL") or "redis://localhost:6379/0"
-            # ensure base redis url without trailing db
+            redis_url = info.data.get("REDIS_URL", "redis://localhost:6379/0")
             base = redis_url.rsplit("/", 1)[0]
             redis_db = info.data.get("REDIS_CELERY_DB", 1)
             return f"{base}/{redis_db}"
         return v
 
-    @field_validator("CELERY_RESULT_BACKEND")
+    @field_validator("CELERY_RESULT_BACKEND", mode="before")
     def set_celery_result_backend(
         cls, v: Optional[str], info: ValidationInfo
     ) -> Optional[str]:
         """Build a Redis-based result backend if not provided."""
         if v is None:
-            redis_url = info.data.get("REDIS_URL") or "redis://localhost:6379/0"
+            redis_url = info.data.get("REDIS_URL", "redis://localhost:6379/0")
             base = redis_url.rsplit("/", 1)[0]
             redis_db = info.data.get("REDIS_CELERY_DB", 1)
             return f"{base}/{redis_db}"
@@ -175,8 +169,8 @@ class Settings(BaseSettings):
     @field_validator(
         "CORS_ORIGINS", "ALLOWED_HOSTS", "ALLOWED_EXTENSIONS", mode="before"
     )
-    def parse_comma_separated(cls, v):
-        """Parse comma-separated strings into lists when values come from environment."""
+    def parse_comma_separated(cls, v: Any) -> Any:
+        """Parse comma-separated strings from env vars into lists."""
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
@@ -198,43 +192,45 @@ class Settings(BaseSettings):
         return (self.ENVIRONMENT or "").lower() == "production"
 
 
+# Environment-specific settings can inherit from the base Settings class
 class DevelopmentSettings(Settings):
-    """Development environment settings."""
+    """Development environment specific settings."""
 
     DEBUG: bool = True
     LOG_LEVEL: str = "DEBUG"
+    DATABASE_ECHO: bool = True
 
 
 class ProductionSettings(Settings):
-    """Production environment settings."""
+    """Production environment specific settings."""
 
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
 
 
 class TestingSettings(Settings):
-    """Testing environment settings."""
+    """Testing environment specific settings."""
 
     DEBUG: bool = True
     LOG_LEVEL: str = "DEBUG"
-    DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/exam_system_test"
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://postgres:password@localhost:5432/exam_system_test"
+    )
 
 
-def get_settings_for_environment(environment: str) -> Settings:
-    """Get settings for specific environment."""
-    env_lower = (environment or "").lower()
+@lru_cache()  # --- IMPROVEMENT: Cache the settings object ---
+def get_settings() -> Settings:
+    """
+    Load and return the appropriate settings based on the ENVIRONMENT variable.
+    Caches the result to prevent reading the .env file on every call.
+    """
+    environment = os.getenv("ENVIRONMENT", "development").lower()
 
-    if env_lower == "production":
+    if environment == "production":
         return ProductionSettings()
-    if env_lower in ("test", "testing"):
+    if environment in ("test", "testing"):
         return TestingSettings()
     return DevelopmentSettings()
-
-
-def get_settings() -> Settings:
-    """Convenience loader. Reads ENV or ENVIRONMENT from environment variables."""
-    env = os.getenv("ENV") or os.getenv("ENVIRONMENT") or "development"
-    return get_settings_for_environment(env)
 
 
 # Configuration validation
@@ -321,7 +317,6 @@ def setup_logging(settings: Settings):
 __all__ = [
     "Settings",
     "get_settings",
-    "get_settings_for_environment",
     "validate_settings",
     "setup_logging",
     "DevelopmentSettings",

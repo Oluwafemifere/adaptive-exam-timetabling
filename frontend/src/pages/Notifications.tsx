@@ -1,182 +1,124 @@
 // frontend/src/pages/Notifications.tsx
 import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { 
   Bell, 
-  BellOff, 
   AlertTriangle, 
-  CheckCircle, 
-  XCircle, 
   FileEdit, 
-  Settings, 
   Eye,
-  Trash2,
-  Check
+  Loader2,
+  Filter,
+  RefreshCw
 } from 'lucide-react';
 import { useAppStore } from '../store';
 import { toast } from 'sonner';
+import { useAllReportsData } from '../hooks/useApi';
+import { AdminConflictReport, AdminChangeRequest } from '../store/types';
+import { Alert, AlertDescription } from '../components/ui/alert';
+
+const formatTimeAgo = (dateString: string) => {
+  if (!dateString) return 'N/A';
+  const now = new Date();
+  const date = new Date(dateString);
+  const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+  
+  if (diffInMinutes < 1) return 'Just now';
+  if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+  if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
+  return `${Math.floor(diffInMinutes / 1440)}d ago`;
+};
+
+const ConflictReportDetails = ({ report }: { report: AdminConflictReport }) => (
+  <div className="space-y-4 text-sm">
+    <div><Label>Student</Label><p>{report.student.first_name} {report.student.last_name} ({report.student.matric_number})</p></div>
+    <div><Label>Course</Label><p>{report.exam_details.course_code} - {report.exam_details.course_title}</p></div>
+    <div><Label>Description</Label><p className="p-2 bg-muted rounded-md">{report.description || 'No description provided.'}</p></div>
+    <div><Label>Submitted</Label><p>{new Date(report.submitted_at).toLocaleString()}</p></div>
+    <div className="flex justify-end gap-2 pt-4">
+      <Button variant="outline">Mark as Reviewed</Button>
+      <Button>Resolve Issue</Button>
+    </div>
+  </div>
+);
+
+const ChangeRequestDetails = ({ request }: { request: AdminChangeRequest }) => (
+  <div className="space-y-4 text-sm">
+    <div><Label>Staff</Label><p>{request.staff.first_name} {request.staff.last_name} ({request.staff.staff_number})</p></div>
+    <div><Label>Assignment</Label><p>{request.assignment_details.course_code} on {request.assignment_details.exam_date} in {request.assignment_details.room_code}</p></div>
+    <div><Label>Reason</Label><p>{request.reason}</p></div>
+    {request.description && <div><Label>Description</Label><p className="p-2 bg-muted rounded-md">{request.description}</p></div>}
+    <div><Label>Submitted</Label><p>{new Date(request.submitted_at).toLocaleString()}</p></div>
+    <div className="flex justify-end gap-2 pt-4">
+      <Button variant="destructive">Deny Request</Button>
+      <Button className="bg-green-600 hover:bg-green-700">Approve Request</Button>
+    </div>
+  </div>
+);
 
 export function Notifications() {
-  const { 
-    notifications, 
-    conflictReports, 
-    changeRequests,
-    markNotificationAsRead,
-    clearNotifications,
-    updateConflictReportStatus,
-    updateChangeRequestStatus,
-    addHistoryEntry,
-    user
-  } = useAppStore();
+  const { reportSummaryCounts, allConflictReports, allChangeRequests } = useAppStore();
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const { isLoading, error, refetch } = useAllReportsData();
 
-  const [selectedConflictReport, setSelectedConflictReport] = useState<string | null>(null);
-  const [selectedChangeRequest, setSelectedChangeRequest] = useState<string | null>(null);
-  const [reviewNotes, setReviewNotes] = useState('');
-
-  const unreadCount = notifications.filter(n => !n.isRead).length;
-  const actionRequiredCount = notifications.filter(n => n.actionRequired && !n.isRead).length;
-
-  const handleMarkAsRead = (id: string) => {
-    markNotificationAsRead(id);
-    toast.success('Notification marked as read');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<AdminConflictReport | AdminChangeRequest | null>(null);
+  
+  const handleApplyFilters = () => {
+    refetch({ statuses: statuses.length > 0 ? statuses : undefined });
+    toast.info('Filters applied');
   };
 
-  const handleMarkAllAsRead = () => {
-    notifications.forEach(n => {
-      if (!n.isRead) {
-        markNotificationAsRead(n.id);
-      }
-    });
-    toast.success('All notifications marked as read');
+  const handleClearFilters = () => {
+    setStatuses([]);
+    refetch();
+    toast.info('Filters cleared');
   };
 
-  const handleClearAll = () => {
-    clearNotifications();
-    toast.success('All notifications cleared');
+  const openModal = (item: AdminConflictReport | AdminChangeRequest) => {
+    setSelectedItem(item);
+    setIsModalOpen(true);
   };
-
-  const handleResolveConflictReport = (reportId: string, status: 'reviewed' | 'resolved', notes?: string) => {
-    updateConflictReportStatus(reportId, status);
-    
-    addHistoryEntry({
-      action: `${status === 'reviewed' ? 'Reviewed' : 'Resolved'} conflict report`,
-      entityType: 'exam',
-      entityId: reportId,
-      userId: user?.id || '',
-      userName: user?.name || '',
-      details: {
-        status,
-        notes,
-        reportId
-      }
-    });
-
-    toast.success(`Conflict report ${status}`);
-    setSelectedConflictReport(null);
-    setReviewNotes('');
-  };
-
-  const handleResolveChangeRequest = (requestId: string, status: 'approved' | 'denied', notes?: string) => {
-    updateChangeRequestStatus(requestId, status);
-    
-    addHistoryEntry({
-      action: `${status === 'approved' ? 'Approved' : 'Denied'} change request`,
-      entityType: 'exam',
-      entityId: requestId,
-      userId: user?.id || '',
-      userName: user?.name || '',
-      details: {
-        status,
-        notes,
-        requestId
-      }
-    });
-
-    toast.success(`Change request ${status}`);
-    setSelectedChangeRequest(null);
-    setReviewNotes('');
-  };
-
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case 'conflict_report':
-        return <AlertTriangle className="h-4 w-4 text-red-500" />;
-      case 'change_request':
-        return <FileEdit className="h-4 w-4 text-blue-500" />;
-      case 'job_completed':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'job_failed':
-        return <XCircle className="h-4 w-4 text-red-500" />;
-      case 'system_alert':
-        return <Settings className="h-4 w-4 text-orange-500" />;
-      default:
-        return <Bell className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'urgent': return 'bg-red-100 text-red-800 border-red-200';
-      case 'high': return 'bg-orange-100 text-orange-800 border-orange-200';
-      case 'medium': return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'low': return 'bg-gray-100 text-gray-800 border-gray-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const formatTimeAgo = (dateString: string) => {
-    const now = new Date();
-    const date = new Date(dateString);
-    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
-    
-    if (diffInMinutes < 1) return 'Just now';
-    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
-    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
-    return `${Math.floor(diffInMinutes / 1440)}d ago`;
-  };
-
-  const sortedNotifications = [...notifications].sort((a, b) => {
-    // Unread first, then by priority, then by date
-    if (a.isRead !== b.isRead) return a.isRead ? 1 : -1;
-    
-    const priorityOrder = { urgent: 4, high: 3, medium: 2, low: 1 };
-    const aPriority = priorityOrder[a.priority as keyof typeof priorityOrder] || 0;
-    const bPriority = priorityOrder[b.priority as keyof typeof priorityOrder] || 0;
-    
-    if (aPriority !== bPriority) return bPriority - aPriority;
-    
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  });
 
   return (
+    // --- FIX: The main layout div is now the top-level element ---
     <div className="space-y-6">
+      {/* The Dialog component is now separate from the layout flow */}
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedItem && 'student' in selectedItem ? 'Conflict Report Details' : 'Change Request Details'}
+            </DialogTitle>
+            <DialogDescription>
+              Review the item details below and take the appropriate action.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedItem && (
+            'student' in selectedItem
+              ? <ConflictReportDetails report={selectedItem as AdminConflictReport} />
+              : <ChangeRequestDetails request={selectedItem as AdminChangeRequest} />
+          )}
+        </DialogContent>
+      </Dialog>
+      
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold">Notifications</h2>
+          <h2 className="text-xl font-semibold">Reports & Requests</h2>
           <p className="text-muted-foreground">
-            Manage notifications and action items
+            Manage student conflict reports and staff change requests.
           </p>
         </div>
-        
-        <div className="flex items-center gap-2">
-          {unreadCount > 0 && (
-            <Button onClick={handleMarkAllAsRead} variant="outline" size="sm">
-              <Check className="h-4 w-4 mr-2" />
-              Mark All Read
-            </Button>
-          )}
-          <Button onClick={handleClearAll} variant="outline" size="sm">
-            <Trash2 className="h-4 w-4 mr-2" />
-            Clear All
-          </Button>
-        </div>
+        <Button onClick={() => refetch()} variant="outline" size="sm" disabled={isLoading}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+          Refresh
+        </Button>
       </div>
 
       {/* Summary Cards */}
@@ -186,358 +128,120 @@ export function Notifications() {
             <div className="flex items-center gap-3">
               <Bell className="h-8 w-8 text-blue-600" />
               <div>
-                <p className="text-sm text-muted-foreground">Total Notifications</p>
-                <p className="text-2xl font-semibold">{notifications.length}</p>
+                <p className="text-sm text-muted-foreground">Total Items</p>
+                <p className="text-2xl font-semibold">{reportSummaryCounts?.total ?? '...'}</p>
               </div>
             </div>
           </CardContent>
         </Card>
-
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              <BellOff className="h-8 w-8 text-orange-600" />
+              <AlertTriangle className="h-8 w-8 text-orange-600" />
               <div>
-                <p className="text-sm text-muted-foreground">Unread</p>
-                <p className="text-2xl font-semibold">{unreadCount}</p>
+                <p className="text-sm text-muted-foreground">Pending / Unread</p>
+                <p className="text-2xl font-semibold">{reportSummaryCounts?.unread ?? '...'}</p>
               </div>
             </div>
           </CardContent>
         </Card>
-
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              <AlertTriangle className="h-8 w-8 text-red-600" />
+              <FileEdit className="h-8 w-8 text-purple-600" />
               <div>
-                <p className="text-sm text-muted-foreground">Action Required</p>
-                <p className="text-2xl font-semibold">{actionRequiredCount}</p>
+                <p className="text-sm text-muted-foreground">Urgent Action</p>
+                <p className="text-2xl font-semibold">{reportSummaryCounts?.urgent_action_required ?? '...'}</p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      <Tabs defaultValue="all" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="all">All ({notifications.length})</TabsTrigger>
-          <TabsTrigger value="unread">Unread ({unreadCount})</TabsTrigger>
-          <TabsTrigger value="action">Action Required ({actionRequiredCount})</TabsTrigger>
-        </TabsList>
+      {/* Filter Controls */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2"><Filter className="h-5 w-5" />Filter Reports</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col md:flex-row gap-4 items-center">
+          <div className="w-full md:w-64">
+            <Label>Status</Label>
+            <Select value={statuses.join(',')} onValueChange={(value) => setStatuses(value ? value.split(',') : [])}>
+              <SelectTrigger><SelectValue placeholder="Filter by status..." /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="denied">Denied</SelectItem>
+                <SelectItem value="resolved">Resolved</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex gap-2 self-end">
+            <Button onClick={handleApplyFilters} disabled={isLoading}>Apply Filters</Button>
+            <Button onClick={handleClearFilters} variant="outline" disabled={isLoading}>Clear</Button>
+          </div>
+        </CardContent>
+      </Card>
 
-        <TabsContent value="all" className="space-y-4">
-          {sortedNotifications.length === 0 ? (
+      {isLoading ? (
+        <div className="flex justify-center items-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+      ) : error ? (
+        <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{error.message}</AlertDescription></Alert>
+      ) : (
+        <Tabs defaultValue="conflicts" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="conflicts">Conflict Reports ({allConflictReports.length})</TabsTrigger>
+            <TabsTrigger value="requests">Change Requests ({allChangeRequests.length})</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="conflicts">
             <Card>
-              <CardContent className="py-8 text-center">
-                <Bell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3>No Notifications</h3>
-                <p className="text-muted-foreground">
-                  You're all caught up! New notifications will appear here.
-                </p>
-              </CardContent>
+              <Table>
+                <TableHeader><TableRow><TableHead>Student</TableHead><TableHead>Course</TableHead><TableHead>Status</TableHead><TableHead>Submitted</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {allConflictReports.map((report: AdminConflictReport) => (
+                    <TableRow key={report.id}>
+                      <TableCell>
+                        <div className="font-medium">{report.student.first_name} {report.student.last_name}</div>
+                        <div className="text-sm text-muted-foreground">{report.student.matric_number}</div>
+                      </TableCell>
+                      <TableCell>{report.exam_details.course_code}</TableCell>
+                      <TableCell><Badge variant={report.status === 'pending' ? 'destructive' : 'secondary'}>{report.status}</Badge></TableCell>
+                      <TableCell>{formatTimeAgo(report.submitted_at)}</TableCell>
+                      {/* --- FIX: Button now just calls openModal --- */}
+                      <TableCell><Button variant="outline" size="sm" onClick={() => openModal(report)}><Eye className="h-4 w-4 mr-2" />View</Button></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </Card>
-          ) : (
-            <div className="space-y-3">
-              {sortedNotifications.map((notification) => (
-                <Card 
-                  key={notification.id} 
-                  className={`transition-all hover:shadow-md ${
-                    !notification.isRead ? 'border-l-4 border-l-blue-500 bg-blue-50/30' : ''
-                  }`}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5">
-                        {getNotificationIcon(notification.type)}
-                      </div>
-                      
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <h4 className={`font-medium ${!notification.isRead ? 'text-blue-900' : ''}`}>
-                              {notification.title}
-                            </h4>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              {notification.message}
-                            </p>
-                          </div>
-                          
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <Badge 
-                              variant="outline" 
-                              className={`text-xs ${getPriorityColor(notification.priority)}`}
-                            >
-                              {notification.priority}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">
-                              {formatTimeAgo(notification.createdAt)}
-                            </span>
-                          </div>
-                        </div>
-                        
-                        <div className="flex items-center gap-2 mt-3">
-                          {!notification.isRead && (
-                            <Button 
-                              onClick={() => handleMarkAsRead(notification.id)}
-                              variant="outline" 
-                              size="sm"
-                            >
-                              <Eye className="h-3 w-3 mr-1" />
-                              Mark Read
-                            </Button>
-                          )}
-                          
-                          {notification.actionRequired && notification.relatedId && (
-                            <>
-                              {notification.type === 'conflict_report' && (
-                                <Dialog>
-                                  <DialogTrigger asChild>
-                                    <Button 
-                                      onClick={() => setSelectedConflictReport(notification.relatedId!)}
-                                      size="sm"
-                                    >
-                                      Review Conflict
-                                    </Button>
-                                  </DialogTrigger>
-                                  <DialogContent className="max-w-md">
-                                    <DialogHeader>
-                                      <DialogTitle>Review Conflict Report</DialogTitle>
-                                      <DialogDescription>
-                                        Review the conflict report details and take appropriate action.
-                                      </DialogDescription>
-                                    </DialogHeader>
-                                    <div className="space-y-4">
-                                      {selectedConflictReport && (
-                                        <>
-                                          {(() => {
-                                            const report = conflictReports.find(r => r.id === selectedConflictReport);
-                                            return report ? (
-                                              <div className="space-y-3">
-                                                <div className="p-3 bg-muted rounded-md">
-                                                  <p className="text-sm"><strong>Course:</strong> {report.courseCode}</p>
-                                                  <p className="text-sm"><strong>Student ID:</strong> {report.studentId}</p>
-                                                  <p className="text-sm"><strong>Description:</strong></p>
-                                                  <p className="text-sm text-muted-foreground">{report.description}</p>
-                                                </div>
-                                                
-                                                <div>
-                                                  <Label>Review Notes (Optional)</Label>
-                                                  <Textarea
-                                                    value={reviewNotes}
-                                                    onChange={(e) => setReviewNotes(e.target.value)}
-                                                    placeholder="Add notes about your review..."
-                                                    rows={3}
-                                                  />
-                                                </div>
-                                                
-                                                <div className="flex gap-2">
-                                                  <Button 
-                                                    onClick={() => handleResolveConflictReport(report.id, 'reviewed', reviewNotes)}
-                                                    className="flex-1"
-                                                  >
-                                                    Mark Reviewed
-                                                  </Button>
-                                                  <Button 
-                                                    onClick={() => handleResolveConflictReport(report.id, 'resolved', reviewNotes)}
-                                                    variant="outline"
-                                                    className="flex-1"
-                                                  >
-                                                    Resolve
-                                                  </Button>
-                                                </div>
-                                              </div>
-                                            ) : null;
-                                          })()}
-                                        </>
-                                      )}
-                                    </div>
-                                  </DialogContent>
-                                </Dialog>
-                              )}
-                              
-                              {notification.type === 'change_request' && (
-                                <Dialog>
-                                  <DialogTrigger asChild>
-                                    <Button 
-                                      onClick={() => setSelectedChangeRequest(notification.relatedId!)}
-                                      size="sm"
-                                    >
-                                      Review Request
-                                    </Button>
-                                  </DialogTrigger>
-                                  <DialogContent className="max-w-md">
-                                    <DialogHeader>
-                                      <DialogTitle>Review Change Request</DialogTitle>
-                                      <DialogDescription>
-                                        Review the staff change request and decide whether to approve or deny it.
-                                      </DialogDescription>
-                                    </DialogHeader>
-                                    <div className="space-y-4">
-                                      {selectedChangeRequest && (
-                                        <>
-                                          {(() => {
-                                            const request = changeRequests.find(r => r.id === selectedChangeRequest);
-                                            return request ? (
-                                              <div className="space-y-3">
-                                                <div className="p-3 bg-muted rounded-md">
-                                                  <p className="text-sm"><strong>Course:</strong> {request.courseCode}</p>
-                                                  <p className="text-sm"><strong>Staff ID:</strong> {request.staffId}</p>
-                                                  <p className="text-sm"><strong>Reason:</strong> {request.reason}</p>
-                                                  {request.description && (
-                                                    <>
-                                                      <p className="text-sm"><strong>Description:</strong></p>
-                                                      <p className="text-sm text-muted-foreground">{request.description}</p>
-                                                    </>
-                                                  )}
-                                                </div>
-                                                
-                                                <div>
-                                                  <Label>Review Notes (Optional)</Label>
-                                                  <Textarea
-                                                    value={reviewNotes}
-                                                    onChange={(e) => setReviewNotes(e.target.value)}
-                                                    placeholder="Add notes about your decision..."
-                                                    rows={3}
-                                                  />
-                                                </div>
-                                                
-                                                <div className="flex gap-2">
-                                                  <Button 
-                                                    onClick={() => handleResolveChangeRequest(request.id, 'approved', reviewNotes)}
-                                                    className="flex-1 bg-green-600 hover:bg-green-700"
-                                                  >
-                                                    Approve
-                                                  </Button>
-                                                  <Button 
-                                                    onClick={() => handleResolveChangeRequest(request.id, 'denied', reviewNotes)}
-                                                    variant="destructive"
-                                                    className="flex-1"
-                                                  >
-                                                    Deny
-                                                  </Button>
-                                                </div>
-                                              </div>
-                                            ) : null;
-                                          })()}
-                                        </>
-                                      )}
-                                    </div>
-                                  </DialogContent>
-                                </Dialog>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="unread" className="space-y-4">
-          <div className="space-y-3">
-            {sortedNotifications.filter(n => !n.isRead).map((notification) => (
-              <Card 
-                key={notification.id} 
-                className="transition-all hover:shadow-md border-l-4 border-l-blue-500 bg-blue-50/30"
-              >
-                {/* Same notification card content as above */}
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5">
-                      {getNotificationIcon(notification.type)}
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1">
-                          <h4 className="font-medium text-blue-900">
-                            {notification.title}
-                          </h4>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {notification.message}
-                          </p>
-                        </div>
-                        
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <Badge 
-                            variant="outline" 
-                            className={`text-xs ${getPriorityColor(notification.priority)}`}
-                          >
-                            {notification.priority}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {formatTimeAgo(notification.createdAt)}
-                          </span>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-2 mt-3">
-                        <Button 
-                          onClick={() => handleMarkAsRead(notification.id)}
-                          variant="outline" 
-                          size="sm"
-                        >
-                          <Eye className="h-3 w-3 mr-1" />
-                          Mark Read
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="action" className="space-y-4">
-          <div className="space-y-3">
-            {sortedNotifications.filter(n => n.actionRequired && !n.isRead).map((notification) => (
-              <Card 
-                key={notification.id} 
-                className="transition-all hover:shadow-md border-l-4 border-l-red-500 bg-red-50/30"
-              >
-                {/* Same notification card content as above */}
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5">
-                      {getNotificationIcon(notification.type)}
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1">
-                          <h4 className="font-medium text-red-900">
-                            {notification.title}
-                          </h4>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {notification.message}
-                          </p>
-                        </div>
-                        
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <Badge 
-                            variant="outline" 
-                            className={`text-xs ${getPriorityColor(notification.priority)}`}
-                          >
-                            {notification.priority}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {formatTimeAgo(notification.createdAt)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="requests">
+             <Card>
+              <Table>
+                <TableHeader><TableRow><TableHead>Staff</TableHead><TableHead>Course</TableHead><TableHead>Reason</TableHead><TableHead>Status</TableHead><TableHead>Submitted</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {allChangeRequests.map((request: AdminChangeRequest) => (
+                    <TableRow key={request.id}>
+                      <TableCell>
+                        <div className="font-medium">{request.staff.first_name} {request.staff.last_name}</div>
+                        <div className="text-sm text-muted-foreground">{request.staff.staff_number}</div>
+                      </TableCell>
+                      <TableCell>{request.assignment_details.course_code}</TableCell>
+                      <TableCell>{request.reason}</TableCell>
+                      <TableCell><Badge variant={request.status === 'pending' ? 'destructive' : request.status === 'approved' ? 'default' : 'secondary'}>{request.status}</Badge></TableCell>
+                      <TableCell>{formatTimeAgo(request.submitted_at)}</TableCell>
+                      {/* --- FIX: Button now just calls openModal --- */}
+                      <TableCell><Button variant="outline" size="sm" onClick={() => openModal(request)}><Eye className="h-4 w-4 mr-2" />View</Button></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      )}
     </div>
   );
 }

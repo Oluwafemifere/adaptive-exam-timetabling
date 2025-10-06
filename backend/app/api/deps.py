@@ -63,6 +63,25 @@ async def current_user(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+# FIX: Add the missing get_current_active_superuser dependency
+async def get_current_active_superuser(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """
+    Dependency to get the current active superuser.
+    Raises an exception if the user is not a superuser.
+    """
+    if not current_user.is_superuser:
+        logger.warning(
+            f"Permission denied: User '{current_user.email}' is not a superuser."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The user does not have enough privileges",
+        )
+    return current_user
+
+
 async def get_current_user_for_websocket(
     websocket: WebSocket,
     db: AsyncSession = Depends(db_session),

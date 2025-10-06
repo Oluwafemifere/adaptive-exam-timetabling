@@ -44,8 +44,9 @@ class UserRead(UserBase):
 
 
 class UserManagementRecord(UserRead):
-    # This keeps the detailed roles from the association table
-    assigned_roles: List[str] = Field(default_factory=list, alias="roles")
+    # This model now correctly inherits the 'role' field from UserRead.
+    # The 'assigned_roles' field has been removed as it is no longer needed.
+    pass
 
 
 class PaginatedUserResponse(BaseModel):

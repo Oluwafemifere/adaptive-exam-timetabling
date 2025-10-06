@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
 )
-from sqlalchemy import select, delete, text
+from sqlalchemy import event, select, delete, text
 from ..core.config import settings
 from sqlalchemy.pool import NullPool
 from celery import Task
@@ -142,6 +142,14 @@ async def _async_send_bulk_notifications(
 ) -> Dict[str, Any]:
     """Async implementation of bulk notifications"""
     engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    schema_search_path = "staging, exam_system, public"
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_search_path(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"SET search_path TO {schema_search_path};")
+        cursor.close()
+
     async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with async_session_factory() as db:
@@ -240,6 +248,14 @@ async def _async_notify_job_status_change(
 ) -> Dict[str, Any]:
     """Async implementation of job status change notification"""
     engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    schema_search_path = "staging, exam_system, public"
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_search_path(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"SET search_path TO {schema_search_path};")
+        cursor.close()
+
     async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with async_session_factory() as db:
@@ -311,6 +327,14 @@ async def _async_send_maintenance_notification(
 ) -> Dict[str, Any]:
     """Async implementation of system maintenance notification"""
     engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    schema_search_path = "staging, exam_system, public"
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_search_path(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"SET search_path TO {schema_search_path};")
+        cursor.close()
+
     async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with async_session_factory() as db:
@@ -382,6 +406,14 @@ def cleanup_old_notifications_task(days_old: int = 30) -> Dict[str, Any]:
 async def _async_cleanup_old_notifications(days_old: int) -> Dict[str, Any]:
     """Async implementation of notification cleanup"""
     engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    schema_search_path = "staging, exam_system, public"
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_search_path(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"SET search_path TO {schema_search_path};")
+        cursor.close()
+
     async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with async_session_factory() as db:

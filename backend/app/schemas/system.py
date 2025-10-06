@@ -43,7 +43,6 @@ class ReportGenerateRequest(BaseModel):
 
 class AuditLogRead(BaseModel):
     id: UUID
-    user_id: Optional[UUID] = None
     action: str
     entity_type: str
     entity_id: Optional[UUID] = None
@@ -51,18 +50,17 @@ class AuditLogRead(BaseModel):
     new_values: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
     created_at: datetime
-    user_email: Optional[str] = None  # Enriched by DB function
+    user: Optional[str] = None  # Renamed from user_email to match SQL function
 
     class Config:
         from_attributes = True
 
 
 class PaginatedAuditLogResponse(BaseModel):
-    total_items: int
-    total_pages: int
+    total_count: int  # Renamed from total_items to match SQL function
     page: int
     page_size: int
-    items: List[AuditLogRead]
+    logs: List[AuditLogRead]  # Renamed from items to match SQL function
 
 
 class GenericResponse(BaseModel):

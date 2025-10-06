@@ -1,5 +1,7 @@
-# app/core/__init__.py
-from .config import Settings, settings
+# NEW version in backend/app/core/__init__.py
+
+# Explicitly point to the correct, top-level config
+from ..config import get_settings
 from .security import (
     hash_password,
     verify_password,
@@ -17,8 +19,7 @@ from .exceptions import (
 
 
 __all__ = [
-    "Settings",
-    "settings",
+    "get_settings",  # Export the function, not a settings instance
     "hash_password",
     "verify_password",
     "create_access_token",

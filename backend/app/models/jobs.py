@@ -1,6 +1,7 @@
 # backend\app\models\jobs.py
 
 import uuid
+from datetime import date
 
 from typing import TYPE_CHECKING, Optional, List
 
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Text,
     Boolean,
     Index,
+    Date,
 )
 
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -63,12 +65,11 @@ class TimetableJob(Base, TimestampMixin):
     scenario_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("timetable_scenarios.id"), nullable=True
     )
-    # REMOVED: constraint_config_id does not exist in the schema
-    # constraint_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-    #     PG_UUID(as_uuid=True),
-    #     ForeignKey("constraint_configurations.id"),
-    #     nullable=True,
-    # )
+    # ADDED: constraint_config_id exists in the schema
+    constraint_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=True,
+    )
     checkpoint_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     soft_constraints_violations: Mapped[Numeric | None] = mapped_column(
         Numeric, nullable=True
@@ -103,3 +104,15 @@ class TimetableJob(Base, TimestampMixin):
     scenario: Mapped[Optional["TimetableScenario"]] = relationship(
         "TimetableScenario", back_populates="jobs"
     )
+
+
+# NEW MODEL for timetable_job_exam_days table
+class TimetableJobExamDay(Base):
+    __tablename__ = "timetable_job_exam_days"
+
+    timetable_job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("timetable_jobs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    exam_date: Mapped[date] = mapped_column(Date, primary_key=True)

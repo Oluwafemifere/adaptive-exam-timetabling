@@ -3,13 +3,15 @@ import { TimetableGrid } from '../components/TimetableGrid';
 import { FilterControls } from '../components/FilterControls';
 import { ConflictPanel } from '../components/ConflictPanel';
 import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { AlertTriangle, Grid, Loader2, Calendar, User, MapPin } from 'lucide-react';
+// --- MODIFICATION: Added PlayCircle for the call-to-action button ---
+import { AlertTriangle, Grid, Loader2, Calendar, User, MapPin, Building, Book, PlayCircle } from 'lucide-react';
 import { useAppStore } from '../store';
 import { toast } from 'sonner';
 import { useLatestTimetable } from '../hooks/useApi';
 import { RenderableExam } from '../store/types';
+import { Separator } from '../components/ui/separator';
 
 // A simple card to display exam details in list views
 const ExamDetailsCard = ({ exam }: { exam: RenderableExam }) => (
@@ -26,7 +28,8 @@ const ExamDetailsCard = ({ exam }: { exam: RenderableExam }) => (
 );
 
 export function Timetable() {
-  const { exams, conflicts, user, addHistoryEntry, activeSessionId } = useAppStore();
+  // --- MODIFICATION: Added setCurrentPage for navigation ---
+  const { exams, conflicts, user, addHistoryEntry, activeSessionId, setCurrentPage } = useAppStore();
   const { isLoading, error, fetchTimetable } = useLatestTimetable();
 
   // Component state for filters and view mode
@@ -36,6 +39,7 @@ export function Timetable() {
   const [selectedFaculties, setSelectedFaculties] = useState<string[]>([]);
   const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
   const [selectedStaff, setSelectedStaff] = useState<string[]>([]);
+  const [selectedBuildings, setSelectedBuildings] = useState<string[]>([]);
 
   useEffect(() => {
     if (activeSessionId) {
@@ -44,17 +48,21 @@ export function Timetable() {
   }, [activeSessionId, fetchTimetable]);
 
   // Memoized selectors to get unique values for filters from the exam data
-  const { departments, faculties, rooms, staff } = useMemo(() => {
+  const { departments, faculties, rooms, staff, buildings } = useMemo(() => {
     const deptSet = new Set<string>();
     const facultySet = new Set<string>();
     const roomSet = new Set<string>();
     const staffSet = new Set<string>();
+    const buildingSet = new Set<string>();
 
     exams.forEach(exam => {
       exam.departments.forEach(dept => deptSet.add(dept));
       if (exam.facultyName) facultySet.add(exam.facultyName);
       if (exam.room) roomSet.add(exam.room);
-      exam.invigilator.split(', ').forEach(inv => staffSet.add(inv));
+      if (exam.building) buildingSet.add(exam.building);
+      exam.invigilator.split(', ').forEach(inv => {
+        if (inv && inv !== 'N/A') staffSet.add(inv);
+      });
     });
 
     return {
@@ -62,6 +70,7 @@ export function Timetable() {
       faculties: Array.from(facultySet).sort(),
       rooms: Array.from(roomSet).sort(),
       staff: Array.from(staffSet).sort(),
+      buildings: Array.from(buildingSet).sort(),
     };
   }, [exams]);
 
@@ -71,6 +80,7 @@ export function Timetable() {
       if (selectedDepartments.length > 0 && !exam.departments.some(dept => selectedDepartments.includes(dept))) return false;
       if (selectedFaculties.length > 0 && (!exam.facultyName || !selectedFaculties.includes(exam.facultyName))) return false;
       if (selectedRooms.length > 0 && !selectedRooms.includes(exam.room)) return false;
+      if (selectedBuildings.length > 0 && !selectedBuildings.includes(exam.building)) return false;
       if (selectedStaff.length > 0 && !exam.invigilator.split(', ').some(inv => selectedStaff.includes(inv))) return false;
       
       if (searchTerm.trim()) {
@@ -84,28 +94,41 @@ export function Timetable() {
       }
       return true;
     });
-  }, [exams, searchTerm, selectedDepartments, selectedFaculties, selectedRooms, selectedStaff]);
+  }, [exams, searchTerm, selectedDepartments, selectedFaculties, selectedRooms, selectedStaff, selectedBuildings]);
   
-  // Group exams by room for the "Room View"
-  const examsByRoom = useMemo(() => {
+  // Group exams by building, then by room for the "Room View"
+  const examsByBuildingAndRoom = useMemo(() => {
     return filteredExams.reduce((acc, exam) => {
-      const key = exam.room || 'Unassigned';
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(exam);
+      const building = exam.building || 'Unassigned Building';
+      const room = exam.room || 'Unassigned Room';
+      
+      if (!acc[building]) acc[building] = {};
+      if (!acc[building][room]) acc[building][room] = [];
+      
+      acc[building][room].push(exam);
       return acc;
-    }, {} as Record<string, RenderableExam[]>);
+    }, {} as Record<string, Record<string, RenderableExam[]>>);
   }, [filteredExams]);
   
-  // Group exams by invigilator for the "Invigilator View"
-  const examsByInvigilator = useMemo(() => {
+  // Group exams by faculty, then department, then invigilator for the "Invigilator View"
+  const examsByFacultyDeptAndInvigilator = useMemo(() => {
     return filteredExams.reduce((acc, exam) => {
-      const invigilators = exam.invigilator ? exam.invigilator.split(', ') : ['Unassigned'];
-      invigilators.forEach(inv => {
-        if (!acc[inv]) acc[inv] = [];
-        acc[inv].push(exam);
+      const faculty = exam.facultyName || 'Unknown Faculty';
+      const invigilators = exam.invigilator ? exam.invigilator.split(', ').filter(i => i) : ['Unassigned'];
+
+      exam.departments.forEach(department => {
+        if (!acc[faculty]) acc[faculty] = {};
+        if (!acc[faculty][department]) acc[faculty][department] = {};
+
+        invigilators.forEach(inv => {
+          if (inv === 'N/A' || inv === 'Unassigned') return;
+          if (!acc[faculty][department][inv]) acc[faculty][department][inv] = [];
+          acc[faculty][department][inv].push(exam);
+        });
       });
+      
       return acc;
-    }, {} as Record<string, RenderableExam[]>);
+    }, {} as Record<string, Record<string, Record<string, RenderableExam[]>>>);
   }, [filteredExams]);
 
   const handleMoveExam = (examId: string, newDate: string, newStartTime: string) => {
@@ -149,6 +172,35 @@ export function Timetable() {
     )
   }
 
+  // --- MODIFICATION START: Added a comprehensive empty state for the entire page ---
+  if (exams.length === 0 && !isLoading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-200px)]">
+        <Card className="w-full max-w-lg text-center p-8">
+          <CardHeader>
+            <div className="mx-auto bg-primary/10 rounded-full p-4 w-fit">
+              <Calendar className="h-12 w-12 text-primary" />
+            </div>
+            <CardTitle className="mt-4">No Timetable Generated</CardTitle>
+            <CardDescription>
+              There is no exam schedule to display for the current academic session.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-6 text-muted-foreground">
+              To view the timetable, you first need to generate a schedule using the automated solver.
+            </p>
+            <Button onClick={() => setCurrentPage('scheduling')}>
+              <PlayCircle className="h-4 w-4 mr-2" />
+              Go to Scheduling Page
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+  // --- MODIFICATION END ---
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -174,6 +226,9 @@ export function Timetable() {
         faculties={faculties}
         selectedFaculties={selectedFaculties}
         onFacultiesChange={setSelectedFaculties}
+        buildings={buildings}
+        selectedBuildings={selectedBuildings}
+        onBuildingsChange={setSelectedBuildings}
         rooms={rooms}
         selectedRooms={selectedRooms}
         onRoomsChange={setSelectedRooms}
@@ -206,14 +261,21 @@ export function Timetable() {
           )}
           {viewMode === 'room' && (
              <div className="space-y-4">
-              {Object.entries(examsByRoom).sort(([roomA], [roomB]) => roomA.localeCompare(roomB)).map(([room, examsInRoom]) => (
-                <Card key={room}>
+              {Object.entries(examsByBuildingAndRoom).sort(([buildingA], [buildingB]) => buildingA.localeCompare(buildingB)).map(([building, roomsInBuilding]) => (
+                <Card key={building}>
                   <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><MapPin className="w-5 h-5" /> {room}</CardTitle>
+                    <CardTitle className="flex items-center gap-2"><Building className="w-5 h-5" /> {building}</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-2">
-                    {examsInRoom.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(exam => (
-                       <ExamDetailsCard key={exam.id} exam={exam} />
+                  <CardContent className="space-y-3">
+                    {Object.entries(roomsInBuilding).sort(([roomA], [roomB]) => roomA.localeCompare(roomB)).map(([room, examsInRoom]) => (
+                      <div key={room} className="p-3 border rounded-md">
+                         <h4 className="font-semibold flex items-center gap-2 mb-2"><MapPin className="w-4 h-4 text-muted-foreground"/>{room}</h4>
+                         <div className='space-y-2'>
+                          {examsInRoom.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(exam => (
+                            <ExamDetailsCard key={exam.id} exam={exam} />
+                          ))}
+                         </div>
+                      </div>
                     ))}
                   </CardContent>
                 </Card>
@@ -222,14 +284,30 @@ export function Timetable() {
           )}
           {viewMode === 'invigilator' && (
              <div className="space-y-4">
-              {Object.entries(examsByInvigilator).sort(([invA], [invB]) => invA.localeCompare(invB)).map(([invigilator, examsForInvigilator]) => (
-                <Card key={invigilator}>
+              {Object.entries(examsByFacultyDeptAndInvigilator).sort(([facultyA], [facultyB]) => facultyA.localeCompare(facultyB)).map(([faculty, departments]) => (
+                <Card key={faculty}>
                   <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><User className="w-5 h-5" /> {invigilator}</CardTitle>
+                    <CardTitle className="flex items-center gap-2"><Book className="w-5 h-5" /> {faculty}</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-2">
-                    {examsForInvigilator.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(exam => (
-                      <ExamDetailsCard key={exam.id} exam={exam} />
+                  <CardContent className="space-y-4">
+                    {Object.entries(departments).sort(([deptA], [deptB]) => deptA.localeCompare(deptB)).map(([department, invigilators]) => (
+                       <Card key={department} className="bg-muted/50">
+                        <CardHeader className='py-3'>
+                          <CardTitle className="text-base">{department}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                          {Object.entries(invigilators).sort(([invA], [invB]) => invA.localeCompare(invB)).map(([invigilator, exams]) => (
+                             <div key={invigilator}>
+                               <h4 className="font-semibold flex items-center gap-2 mb-2 text-sm"><User className="w-4 h-4 text-muted-foreground"/>{invigilator}</h4>
+                               <div className="space-y-2 pl-6 border-l ml-2">
+                                {exams.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map(exam => (
+                                    <ExamDetailsCard key={exam.id} exam={exam} />
+                                ))}
+                               </div>
+                            </div>
+                          ))}
+                        </CardContent>
+                       </Card>
                     ))}
                   </CardContent>
                 </Card>

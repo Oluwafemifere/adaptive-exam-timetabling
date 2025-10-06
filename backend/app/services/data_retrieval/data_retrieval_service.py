@@ -11,6 +11,8 @@ from uuid import UUID
 import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from datetime import datetime
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,10 @@ class DataRetrievalService:
         params = params or {}
         logger.info(f"Executing PG function '{function_name}' with params: {params}")
         try:
-            param_keys = ", ".join(":" + k for k in params.keys())
+            # --- FIX: Use PostgreSQL's named argument syntax (arg => :value) ---
+            # This ensures parameters are passed by name, not position.
+            param_keys = ", ".join(f"{k} => :{k}" for k in params.keys())
+
             query_str = (
                 f"SELECT exam_system.{function_name}({param_keys})"
                 if params
@@ -42,6 +47,15 @@ class DataRetrievalService:
                 f"Failed to execute PG function '{function_name}': {e}", exc_info=True
             )
             raise
+
+    # --- Timetable Publishing ---
+    async def publish_timetable_version(
+        self, job_id: UUID, user_id: UUID
+    ) -> Optional[Dict[str, Any]]:
+        """Calls `publish_timetable_version` to set a job's version as published."""
+        return await self._execute_pg_function(
+            "publish_timetable_version", {"p_job_id": job_id, "p_user_id": user_id}
+        )
 
     # --- Core Entity & List Retrieval ---
     async def get_entity_by_id(
@@ -259,9 +273,25 @@ class DataRetrievalService:
 
     # --- Dashboard, Analytics & KPI Data ---
     async def get_dashboard_kpis(self, session_id: UUID) -> Optional[Dict[str, Any]]:
-        """Calls `get_dashboard_kpis`."""
+        """Calls `get_dashboard_kpis` to retrieve high-level dashboard metrics."""
         return await self._execute_pg_function(
             "get_dashboard_kpis", {"p_session_id": session_id}
+        )
+
+    async def get_conflict_hotspots(
+        self, session_id: UUID
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Calls `get_conflict_hotspots` to find the most conflicted timeslots."""
+        return await self._execute_pg_function(
+            "get_conflict_hotspots", {"p_session_id": session_id}
+        )
+
+    async def get_top_bottlenecks(
+        self, session_id: UUID
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Calls `get_top_bottlenecks` to identify key scheduling issues."""
+        return await self._execute_pg_function(
+            "get_top_bottlenecks", {"p_session_id": session_id}
         )
 
     async def get_dashboard_analytics(self, session_id: UUID) -> Dict[str, Any]:
@@ -390,3 +420,23 @@ class DataRetrievalService:
         return await self._execute_pg_function(
             "get_admin_notifications", {"p_status": status}
         )
+
+    async def get_all_reports_and_requests(
+        self,
+        limit: Optional[int] = None,
+        statuses: Optional[List[str]] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Calls the `get_all_reports_and_requests` PG function with optional filters.
+        """
+        params = {
+            "p_limit": limit,
+            "p_statuses": statuses,
+            "p_start_date": start_date,
+            "p_end_date": end_date,
+        }
+        # Filter out None values so the PG function can use its default arguments
+        params = {k: v for k, v in params.items() if v is not None}
+        return await self._execute_pg_function("get_all_reports_and_requests", params)

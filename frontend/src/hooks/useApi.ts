@@ -3,38 +3,60 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../services/api';
 import { useAppStore } from '../store';
 import { toast } from 'sonner';
-import { JobStatus, DashboardKPIs, Conflict, StudentExam, StaffAssignment } from '../store/types';
+import { JobStatus, Conflict, StudentExam, StaffAssignment } from '../store/types';
+import { SessionSetupCreate, SessionSetupSummary } from '../pages/SessionSetup';
 
-export function useKPIData() {
-  const { activeSessionId } = useAppStore();
-  const [data, setData] = useState<DashboardKPIs | null>(null);
+export function useDashboardData() {
+  const { 
+    activeSessionId, 
+    setDashboardKpis, 
+    setConflictHotspots, 
+    setTopBottlenecks,
+    setRecentActivity
+  } = useAppStore();
+  
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     if (!activeSessionId) {
       setIsLoading(false);
       return;
-    };
+    }
 
-    const fetchData = async () => {
-      try {
-        const response = await api.getDashboardKpis(activeSessionId);
-        setData(response.data);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err : new Error('Failed to fetch KPI data'));
-      } finally {
-        setIsLoading(false);
-      }
-    };
+    setIsLoading(true);
+    try {
+      // Fetch all dashboard data concurrently
+      const [kpisRes, hotspotsRes, bottlenecksRes, activityRes] = await Promise.all([
+        api.getDashboardKpis(activeSessionId),
+        api.getConflictHotspots(activeSessionId),
+        api.getTopBottlenecks(activeSessionId),
+        api.getAuditHistory() 
+      ]);
 
+      if (kpisRes.data) setDashboardKpis(kpisRes.data);
+      if (hotspotsRes.data) setConflictHotspots(hotspotsRes.data);
+      if (bottlenecksRes.data) setTopBottlenecks(bottlenecksRes.data);
+      if (activityRes.data?.items) setRecentActivity(activityRes.data.items);
+      
+      setError(null);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error('Failed to fetch dashboard data');
+      setError(error);
+      toast.error(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeSessionId, setDashboardKpis, setConflictHotspots, setTopBottlenecks, setRecentActivity]);
+
+  useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
+    // Optional: set an interval to refresh dashboard data periodically
+    const interval = setInterval(fetchData, 60000); // every 60 seconds
     return () => clearInterval(interval);
-  }, [activeSessionId]);
+  }, [fetchData]);
 
-  return { data, isLoading, error };
+  return { isLoading, error, refetch: fetchData };
 }
 
 export function useJobStatusPoller(jobId: string | null) {
@@ -79,16 +101,16 @@ export function useJobStatusPoller(jobId: string | null) {
 export function useFileUpload() {
   const [isPending, setIsPending] = useState(false);
 
-  const mutateAsync = async ({ formData, entityType }: { formData: FormData; entityType: string }) => {
+  const mutateAsync = async ({ formData, entityType, academicSessionId }: { formData: FormData; entityType: string; academicSessionId: string }) => {
     try {
       setIsPending(true);
-      const response = await api.uploadFile(formData, entityType);
-      toast.success('File uploaded successfully');
+      const response = await api.uploadFile(formData, entityType, academicSessionId);
+      toast.success(`'${entityType}' file upload accepted for background processing.`);
       return response.data;
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error('Upload failed');
-      toast.error(`Upload failed: ${err.message}`);
-      throw err;
+    } catch (error: any) {
+      const detail = error.response?.data?.detail || 'Upload failed.';
+      toast.error(`Upload failed: ${detail}`);
+      throw new Error(detail);
     } finally {
       setIsPending(false);
     }
@@ -96,6 +118,7 @@ export function useFileUpload() {
 
   return { mutateAsync, isPending };
 }
+
 
 export function useLatestTimetable() {
   const { setTimetable, setConflicts } = useAppStore();
@@ -110,15 +133,12 @@ export function useLatestTimetable() {
       const apiPayload = response.data;
       
       if (apiPayload.success && apiPayload.data) {
-        // Pass the entire data object which contains the nested 'timetable' property
         setTimetable(apiPayload.data);
-        
-        // Correctly path to conflicts array inside the nested timetable object
         const conflicts = apiPayload.data.timetable?.solution?.conflicts || [];
         setConflicts(conflicts as Conflict[]);
       } else {
         const errorMessage = apiPayload.message || 'No successful timetable found.';
-        setTimetable({} as any); // Clear timetable on failure
+        setTimetable({} as any);
         setConflicts([]);
         throw new Error(errorMessage);
       }
@@ -148,23 +168,37 @@ export function useStudentPortalData() {
         try {
             const response = await api.getPortalData(user.id);
             if (response.data.success) {
-                const portalData = response.data.data;
-                // Map API response to the StudentExam type expected by the store
-                const schedule = (portalData.schedule?.schedule || []).map((exam: any, index: number) => ({
-                    id: `${exam.course_code}-${exam.exam_date}-${index}`, // Create a stable ID
+                const portalData = response.data.data.data;
+
+                const schedule = (portalData.schedule || []).map((exam: any): StudentExam => ({
+                    id: exam.exam_id,
                     courseCode: exam.course_code,
                     courseName: exam.course_title,
-                    date: exam.exam_date,
+                    date: exam.date,
                     startTime: exam.start_time,
                     endTime: exam.end_time,
-                    room: exam.room_codes?.[0] || 'N/A',
-                    building: exam.building_name || 'N/A',
+                    room: exam.rooms?.[0]?.code || 'N/A',
+                    building: exam.rooms?.[0]?.building_name || 'N/A',
                     duration: exam.duration_minutes,
                 }));
+                
+                const conflictReports = (portalData.conflict_reports || []).map((report: any) => {
+                    const relatedExam = schedule.find(e => e.id === report.exam_id);
+                    return {
+                        id: report.id,
+                        studentId: report.student_id,
+                        examId: report.exam_id,
+                        courseCode: relatedExam?.courseCode || 'Unknown',
+                        description: report.description,
+                        status: report.status,
+                        submittedAt: report.submitted_at,
+                    };
+                });
+                
                 setStudentExams(schedule);
-                setConflictReports(portalData.conflictReports || []);
+                setConflictReports(conflictReports);
             } else {
-                throw new Error(response.data.message || 'Failed to fetch portal data');
+                throw new Error(response.data.data?.error || 'Failed to fetch portal data');
             }
         } catch (err) {
             setError(err instanceof Error ? err : new Error('An unknown error occurred'));
@@ -195,31 +229,47 @@ export function useStaffPortalData() {
         try {
             const response = await api.getPortalData(user.id);
             if (response.data.success) {
-                const portalData = response.data.data;
+                const portalData = response.data.data.data; 
+                
                 const mapToAssignment = (exam: any, role: StaffAssignment['role']): StaffAssignment => ({
-                    id: `${exam.course_code}-${exam.exam_date}-${role}`, // Create a stable ID
-                    examId: `${exam.course_code}-${exam.exam_date}`,
+                    id: `${exam.exam_id}-${role}`,
+                    examId: exam.exam_id,
                     courseCode: exam.course_code,
                     courseName: exam.course_title,
-                    date: exam.exam_date,
+                    date: exam.date,
                     startTime: exam.start_time,
                     endTime: exam.end_time,
-                    room: exam.room_codes?.[0] || 'N/A',
-                    building: exam.building_name,
+                    room: exam.rooms?.[0]?.code || 'N/A',
+                    building: exam.rooms?.[0]?.building_name || 'N/A',
                     role,
-                    status: 'assigned', // Default status
+                    status: 'assigned',
                 });
 
-                const instructorSchedule = (portalData.schedule?.instructor?.schedule || []).map((exam: any) => mapToAssignment(exam, 'instructor'));
-                const invigilatorSchedule = (portalData.schedule?.invigilation?.schedule || []).map((exam: any) => mapToAssignment(exam, 'invigilator'));
+                const instructorSchedule = (portalData.instructor_schedule || []).map((exam: any) => mapToAssignment(exam, 'instructor'));
+                const invigilatorSchedule = (portalData.invigilator_schedule || []).map((exam: any) => mapToAssignment(exam, 'invigilator'));
+                const allAssignments = [...instructorSchedule, ...invigilatorSchedule];
+
+                const changeRequests = (portalData.change_requests || []).map((req: any) => {
+                    const relatedAssignment = allAssignments.find(a => a.examId === req.timetable_assignment_id);
+                    return {
+                        id: req.id,
+                        staffId: req.staff_id,
+                        assignmentId: req.timetable_assignment_id,
+                        courseCode: relatedAssignment?.courseCode || 'Unknown Course',
+                        reason: req.reason,
+                        description: req.description,
+                        status: req.status,
+                        submittedAt: req.submitted_at,
+                    };
+                });
 
                 setStaffSchedules({
                     instructorSchedule,
                     invigilatorSchedule,
-                    changeRequests: portalData.changeRequests || [],
+                    changeRequests,
                 });
             } else {
-                throw new Error(response.data.message || 'Failed to fetch portal data');
+                throw new Error(response.data.data?.error || 'Failed to fetch portal data');
             }
         } catch (err) {
             setError(err instanceof Error ? err : new Error('An unknown error occurred'));
@@ -233,4 +283,88 @@ export function useStaffPortalData() {
     }, [fetchData]);
 
     return { isLoading, error, refetch: fetchData };
+}
+
+export function useAllReportsData(initialFilters: { limit?: number; statuses?: string[] } = {}) {
+  const { setAllReports } = useAppStore();
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  const fetchData = useCallback(async (filters: { limit?: number; statuses?: string[], start_date?: string, end_date?: string } = {}) => {
+    setIsLoading(true);
+    try {
+      const response = await api.getAllReportsAndRequests(filters);
+      setAllReports(response.data);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error('Failed to fetch reports');
+      setError(error);
+      toast.error(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [setAllReports]);
+
+  useEffect(() => {
+    fetchData(initialFilters);
+  }, [fetchData, initialFilters]);
+
+  return { isLoading, error, refetch: fetchData };
+}
+
+// --- NEW SESSION SETUP HOOKS ---
+
+// Hook for session creation
+export function useCreateSession() {
+  const [isPending, setIsPending] = useState(false);
+
+  const mutateAsync = async (data: SessionSetupCreate) => {
+    try {
+      setIsPending(true);
+      const response = await api.createExamSessionSetup(data);
+      toast.success(response.data.message);
+      return response.data;
+    } catch (error: any) {
+      const detail = error.response?.data?.detail || 'Failed to create session.';
+      toast.error(detail);
+      throw new Error(detail);
+    } finally {
+      setIsPending(false);
+    }
+  };
+
+  return { mutateAsync, isPending };
+}
+
+// Hook for fetching session summary
+export function useSessionSummary(sessionId: string | null) {
+  const [data, setData] = useState<SessionSetupSummary | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const fetchSummary = useCallback(async () => {
+    if (!sessionId) return;
+
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await api.getSessionSummary(sessionId);
+      setData(response.data);
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || 'Failed to fetch session summary.';
+      const error = new Error(detail);
+      setError(error);
+      toast.error(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (sessionId) {
+        // Automatically fetch when sessionId becomes available, 
+        // but refetch allows manual trigger.
+    }
+  }, [sessionId]);
+
+  return { data, isLoading, error, refetch: fetchSummary };
 }

@@ -9,12 +9,13 @@ import logging
 # Import your components
 from .api.v1.api import api_router
 from .database import init_db
-from .config import get_settings
+from .config import get_settings  # Correctly aliased as settings below
 from .logging_config import LOGGING_CONFIG
 
 # Get a logger for this specific module
 logger = logging.getLogger(__name__)
 
+# Load application settings from the configuration file/environment
 settings = get_settings()
 
 
@@ -61,28 +62,26 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# CORS middleware
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://frontend:80",
-]
+# --- FIX: Use the CORS_ORIGINS from the settings file ---
+# This makes the configuration dynamic and manageable through your .env file,
+# which is the correct way to handle environment-specific settings.
+
+
+# Include API routes from the v1 api module
+app.include_router(api_router, prefix="/api/v1")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include API routes
-app.include_router(api_router)
-
 
 @app.get("/")
 async def root():
+    """Root endpoint providing basic API information."""
     return {
         "message": "Welcome to Baze University Exam Scheduler API",
         "version": "1.0.0",
@@ -92,6 +91,7 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+    """Health check endpoint to verify service and database connectivity."""
     from .database import check_db_health
 
     db_health = await check_db_health()
@@ -102,16 +102,17 @@ async def health_check():
     }
 
 
-@app.get("/api/v1/test")
-async def test_endpoint():
-    # Example of an endpoint that will raise an error
-    # x = 1 / 0
-    return {"message": "Backend is running successfully!", "test": "passed"}
+# This test endpoint is now part of the main API router,
+# you can remove it from here if it's defined in api_router to avoid duplication.
+# If not, it can remain here.
+# @app.get("/api/v1/test")
+# async def test_endpoint():
+#     return {"message": "Backend is running successfully!", "test": "passed"}
 
 
 if __name__ == "__main__":
     uvicorn.run(
-        "backend.app.main:app",
+        app,
         host="0.0.0.0",
         port=8000,
         reload=True,

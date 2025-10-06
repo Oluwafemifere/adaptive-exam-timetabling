@@ -1,13 +1,4 @@
-# COMPREHENSIVE FIX - Solution Extractor Enhancement
-# MODIFIED for UUID-only usage AND proper room sharing validation
-# Key Issues Fixed:
-# 1. Removed string conversion functions
-# 2. Updated variable lookups to use UUID keys directly
-# 3. Removed normalize_id usage
-# 4. Updated all internal processing to work with UUIDs
-# 5. Fixed variable key consistency
-# 6. FIXED room conflict detection to allow valid room sharing
-# 7. REMOVED all conflict resolution functionality - only detection now
+# scheduling_engine/cp_sat/solution_extractor.py
 
 from collections import defaultdict
 import logging
@@ -41,7 +32,6 @@ class SolutionExtractor:
         self.z_vars = shared_vars.z_vars
         self.u_vars = shared_vars.u_vars
 
-        # Statistics tracking
         self.extraction_stats = {
             "assignments_from_x": 0,
             "assignments_from_z": 0,
@@ -61,24 +51,23 @@ class SolutionExtractor:
         solution = TimetableSolution(self.problem)
         logger.info("Extracting scheduled exams from solver...")
 
+        assignments_found = 0  # <-- ADD a counter
+
         for (exam_id, slot_id), x_var in self.shared_vars.x_vars.items():
             if self.solver.Value(x_var) == 1:
+                assignments_found += 1  # <-- Increment counter
                 start_slot_id = slot_id
                 day = self.problem.get_day_for_timeslot(start_slot_id)
                 if not day:
                     logger.warning(f"Could not find day for start slot {start_slot_id}")
                     continue
 
-                # Extract room and invigilator assignments for this exam start
                 room_ids, invigilator_ids = self._extract_allocations(
                     exam_id, start_slot_id
                 )
 
-                # --- START OF FIX: Calculate room allocations ---
                 allocations = self.calculate_room_allocations(exam_id, set(room_ids))
-                # --- END OF FIX ---
 
-                # Use the assign method to correctly populate the solution
                 solution.assign(
                     exam_id=exam_id,
                     date=day.date,
@@ -88,7 +77,12 @@ class SolutionExtractor:
                     invigilator_ids=invigilator_ids,
                 )
 
-        logger.info(f"Extracted {len(solution.assignments)} total assignments.")
+        # --- START OF MODIFICATION ---
+        logger.info(
+            f"Extracted {assignments_found} completed assignments from the solver."
+        )
+        # --- END OF MODIFICATION ---
+
         solution.update_statistics()
         solution.update_assignment_statuses()
         return solution
@@ -100,7 +94,6 @@ class SolutionExtractor:
         assigned_room_ids = []
         assigned_invigilator_ids = []
 
-        # Find all rooms assigned at the start slot
         for (y_exam_id, room_id, y_slot_id), y_var in self.shared_vars.y_vars.items():
             if (
                 y_exam_id == exam_id
@@ -109,7 +102,6 @@ class SolutionExtractor:
             ):
                 assigned_room_ids.append(room_id)
 
-        # Find all invigilators assigned to this exam at the start slot (across all its rooms)
         invigilator_set = set()
         for (
             inv_id,
@@ -191,7 +183,6 @@ class SolutionExtractor:
 
     def extract_from_occupancy_variables(self, solution: TimetableSolution) -> int:
         """FIXED - Extract assignments from occupancy variables with UUID keys"""
-        # This can be a fallback if X variables yield no results
         assignments_found = 0
         exam_timeslots = defaultdict(list)
         for (exam_id, slot_id), var in self.z_vars.items():
@@ -203,7 +194,6 @@ class SolutionExtractor:
 
         for exam_id, timeslots in exam_timeslots.items():
             if timeslots and not solution.assignments[exam_id].is_complete():
-                # A simple heuristic: choose the earliest timeslot as the start time
                 start_slot_id = min(
                     timeslots, key=lambda s_id: self.problem.timeslots[s_id].start_time
                 )
@@ -283,7 +273,7 @@ class SolutionExtractor:
 
         for i, room_id in enumerate(room_list):
             room = self.problem.rooms[room_id]
-            if i == len(room_list) - 1:  # Last room gets the rest
+            if i == len(room_list) - 1:
                 allocations[room_id] = students_to_allocate
             else:
                 assigned = min(students_to_allocate, room.exam_capacity)
@@ -322,5 +312,4 @@ class SolutionExtractor:
 
     def get_completion_percentage(self) -> float:
         """Calculate completion percentage"""
-        # Implement completion percentage calculation
-        return 0.0  # Placeholder
+        return 0.0

@@ -20,6 +20,8 @@ from .base import Base, TimestampMixin
 # Use TYPE_CHECKING to avoid circular imports
 if TYPE_CHECKING:
     from .users import User
+
+    # Correctly import the new model for type checking
     from .academic import AcademicSession
 
 
@@ -44,6 +46,7 @@ class FileUploadSession(Base, TimestampMixin):
 
     # Use string references to avoid circular imports
     uploader: Mapped["User"] = relationship("User")
+    # This relationship is now correctly back-populated by the new AcademicSession model
     session: Mapped["AcademicSession"] = relationship(
         "AcademicSession", back_populates="file_uploads"
     )

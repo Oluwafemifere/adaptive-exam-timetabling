@@ -11,6 +11,7 @@ from typing import Any, Optional, Dict
 from ..database import db_manager, DatabaseManager
 import re
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy import event
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,15 @@ def make_celery() -> Celery:
 # single canonical instance
 celery_app = make_celery()
 
+
+def set_engine_search_path(engine, path="exam_system, staging, public"):
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_search_path(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"SET search_path TO {path};")
+        cursor.close()
+
+
 # autodiscover tasks under package namespace
 # this will import modules matching backend.app.tasks.* to register tasks
 celery_app.autodiscover_tasks(["backend.app.tasks"])
@@ -133,9 +143,24 @@ def health_check():
     async def _check():
         engine = None
         try:
+            # --- ADDED: force schema search path ---
+            schema_search_path = "exam_system, staging, public"
+
             engine = create_async_engine(
-                settings.DATABASE_URL, poolclass=NullPool, echo=False
+                settings.DATABASE_URL,
+                poolclass=NullPool,
+                echo=False,
             )
+
+            # --- ADDED: ensure every connection in this engine uses correct schema ---
+            @event.listens_for(engine.sync_engine, "connect")
+            def set_search_path(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute(f"SET search_path TO {schema_search_path};")
+                cursor.close()
+
+            # --- END ADD ---
+
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
                 return {
@@ -167,6 +192,7 @@ def health_check():
 def task_with_db_session(func):
     """Decorator to provide an async DB session to a coroutine task function."""
     from functools import wraps
+    from sqlalchemy import event
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool
 
@@ -175,6 +201,14 @@ def task_with_db_session(func):
         engine = create_async_engine(
             settings.DATABASE_URL, poolclass=NullPool, echo=False
         )
+        schema_search_path = "staging, exam_system, public"
+
+        @event.listens_for(engine.sync_engine, "connect")
+        def set_search_path(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute(f"SET search_path TO {schema_search_path};")
+            cursor.close()
+
         async_session = async_sessionmaker(engine, expire_on_commit=False)
 
         async with async_session() as session:

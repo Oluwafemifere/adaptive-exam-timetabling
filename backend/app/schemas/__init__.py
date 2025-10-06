@@ -15,7 +15,10 @@ from . import (
     role,
     notifications,
     portal,
+    reports,
+    dashboard,  # Import the new dashboard schema module
 )
+from .session_setup import SessionSetupCreate, SessionSetupSummary, TimeSlot
 
 # Re-export commonly used classes for direct import
 from .auth import TokenData, Token
@@ -35,6 +38,13 @@ from .admin import (
     JsonSeedingRequest,
     SeedingRequest,
     UploadSessionCreate,
+)
+
+# Import new dashboard schemas
+from .dashboard import (
+    DashboardKpis,
+    ConflictHotspot,
+    TopBottleneck,
 )
 
 from .jobs import TimetableJobBase, TimetableJobCreate, TimetableJobRead
@@ -118,6 +128,13 @@ from .portal import (
     StaffAvailabilityUpdate,
 )
 
+from .reports import (
+    AllReportsResponse,
+    ReportSummaryCounts,
+    ConflictReportItem,
+    ChangeRequestItem,
+)
+
 
 __all__ = [
     # modules
@@ -134,6 +151,8 @@ __all__ = [
     "role",
     "notifications",
     "portal",
+    "reports",
+    "dashboard",
     # auth
     "TokenData",
     "Token",
@@ -150,6 +169,10 @@ __all__ = [
     "JsonSeedingRequest",
     "SeedingRequest",
     "UploadSessionCreate",
+    # dashboard
+    "DashboardKpis",
+    "ConflictHotspot",
+    "TopBottleneck",
     # jobs
     "TimetableJobBase",
     "TimetableJobCreate",
@@ -214,4 +237,13 @@ __all__ = [
     "RequestManage",
     "ChangeRequestCreate",
     "StaffAvailabilityUpdate",
+    # reports
+    "AllReportsResponse",
+    "ReportSummaryCounts",
+    "ConflictReportItem",
+    "ChangeRequestItem",
+    # session setup
+    "SessionSetupCreate",
+    "SessionSetupSummary",
+    "TimeSlot",
 ]

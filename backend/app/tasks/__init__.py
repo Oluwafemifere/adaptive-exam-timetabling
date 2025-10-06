@@ -20,8 +20,6 @@ from .scheduling_tasks import (
 # Import and re-export data processing tasks
 from .data_processing_tasks import (
     process_csv_upload_task,
-    validate_data_integrity_task,
-    bulk_data_import_task,
 )
 
 # Import and re-export post-processing tasks
@@ -44,8 +42,6 @@ __all__ = [
     "generate_timetable_task",
     # Data processing tasks
     "process_csv_upload_task",
-    "validate_data_integrity_task",
-    "bulk_data_import_task",
     # Post-processing tasks
     "enrich_timetable_result_task",
 ]

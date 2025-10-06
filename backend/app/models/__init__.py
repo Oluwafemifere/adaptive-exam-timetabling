@@ -31,13 +31,12 @@ from .infrastructure import (
 )
 from .users import (
     User,
-    UserRole,
-    UserRoleAssignment,
     UserNotification,
     SystemConfiguration,
     SystemEvent,
+    UserFilterPreset,
 )
-from .jobs import TimetableJob
+from .jobs import TimetableJob, TimetableJobExamDay
 from .versioning import (
     TimetableVersion,
     VersionMetadata,
@@ -86,13 +85,13 @@ __all__ = [
     "Room",
     # User and system models
     "User",
-    "UserRole",
-    "UserRoleAssignment",
     "UserNotification",
     "SystemConfiguration",
     "SystemEvent",
+    "UserFilterPreset",  # Added
     # Job models
     "TimetableJob",
+    "TimetableJobExamDay",  # Added
     # Versioning models
     "TimetableVersion",
     "VersionMetadata",

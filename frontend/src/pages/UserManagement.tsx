@@ -11,7 +11,8 @@ import {
   UserCheck,
   UserX,
   Mail,
-  Eye
+  Eye,
+  Users
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -186,24 +187,48 @@ export function UserManagement() {
       <Card>
         <CardHeader><CardTitle>Users ({filteredUsers.length})</CardTitle><CardDescription>Manage user accounts and permissions</CardDescription></CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader><TableRow><TableHead>User</TableHead><TableHead>Role</TableHead><TableHead>Department</TableHead><TableHead>Status</TableHead><TableHead>Last Login</TableHead><TableHead className="w-[100px]">Actions</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {filteredUsers.map((user) => {
-                const RoleIcon = getRoleIcon(user.role);
-                return (
-                  <TableRow key={user.id}>
-                    <TableCell><div className="flex items-center space-x-3"><Avatar className="h-8 w-8"><AvatarFallback><AvatarInitials name={user.name} /></AvatarFallback></Avatar><div><div className="font-medium">{user.name}</div><div className="text-sm text-muted-foreground">{user.email}</div></div></div></TableCell>
-                    <TableCell><Badge className={getRoleColor(user.role)}><RoleIcon className="h-3 w-3 mr-1" />{user.role}</Badge></TableCell>
-                    <TableCell>{user.department}</TableCell>
-                    <TableCell><Badge className={getStatusColor(user.status)}>{user.status}</Badge></TableCell>
-                    <TableCell className="text-muted-foreground">{user.lastLogin}</TableCell>
-                    <TableCell><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="sm"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => handleUserAction('edit', user.id)}><Edit className="h-4 w-4 mr-2" />Edit User</DropdownMenuItem><DropdownMenuItem><Mail className="h-4 w-4 mr-2" />Send Email</DropdownMenuItem><DropdownMenuSeparator />{user.status === 'active' ? <DropdownMenuItem onClick={() => handleUserAction('deactivate', user.id)}><UserX className="h-4 w-4 mr-2" />Deactivate</DropdownMenuItem> : <DropdownMenuItem onClick={() => handleUserAction('activate', user.id)}><UserCheck className="h-4 w-4 mr-2" />Activate</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem className="text-destructive" onClick={() => handleUserAction('delete', user.id)}><Trash2 className="h-4 w-4 mr-2" />Delete User</DropdownMenuItem></DropdownMenuContent></DropdownMenu></TableCell>
+          {/* --- MODIFICATION START: Added conditional rendering for the table --- */}
+          {users.length === 0 ? (
+            <div className="py-16 text-center">
+              <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="font-semibold">No Users Found</h3>
+              <p className="text-muted-foreground text-sm">
+                There are no user accounts in the system yet.
+              </p>
+              <Button className="mt-4" onClick={() => { setSelectedUser(null); setIsCreateDialogOpen(true); }}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add First User
+              </Button>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader><TableRow><TableHead>User</TableHead><TableHead>Role</TableHead><TableHead>Department</TableHead><TableHead>Status</TableHead><TableHead>Last Login</TableHead><TableHead className="w-[100px]">Actions</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {filteredUsers.length > 0 ? (
+                  filteredUsers.map((user) => {
+                    const RoleIcon = getRoleIcon(user.role);
+                    return (
+                      <TableRow key={user.id}>
+                        <TableCell><div className="flex items-center space-x-3"><Avatar className="h-8 w-8"><AvatarFallback><AvatarInitials name={user.name} /></AvatarFallback></Avatar><div><div className="font-medium">{user.name}</div><div className="text-sm text-muted-foreground">{user.email}</div></div></div></TableCell>
+                        <TableCell><Badge className={getRoleColor(user.role)}><RoleIcon className="h-3 w-3 mr-1" />{user.role}</Badge></TableCell>
+                        <TableCell>{user.department}</TableCell>
+                        <TableCell><Badge className={getStatusColor(user.status)}>{user.status}</Badge></TableCell>
+                        <TableCell className="text-muted-foreground">{user.lastLogin}</TableCell>
+                        <TableCell><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="sm"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => handleUserAction('edit', user.id)}><Edit className="h-4 w-4 mr-2" />Edit User</DropdownMenuItem><DropdownMenuItem><Mail className="h-4 w-4 mr-2" />Send Email</DropdownMenuItem><DropdownMenuSeparator />{user.status === 'active' ? <DropdownMenuItem onClick={() => handleUserAction('deactivate', user.id)}><UserX className="h-4 w-4 mr-2" />Deactivate</DropdownMenuItem> : <DropdownMenuItem onClick={() => handleUserAction('activate', user.id)}><UserCheck className="h-4 w-4 mr-2" />Activate</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem className="text-destructive" onClick={() => handleUserAction('delete', user.id)}><Trash2 className="h-4 w-4 mr-2" />Delete User</DropdownMenuItem></DropdownMenuContent></DropdownMenu></TableCell>
+                      </TableRow>
+                    );
+                  })
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-24 text-center">
+                      No users match your current filters.
+                    </TableCell>
                   </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+                )}
+              </TableBody>
+            </Table>
+          )}
+          {/* --- MODIFICATION END --- */}
         </CardContent>
       </Card>
 

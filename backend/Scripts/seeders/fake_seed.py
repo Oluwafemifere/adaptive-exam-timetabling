@@ -64,8 +64,6 @@ try:
         UploadedFile,
         User,
         UserNotification,
-        UserRole,
-        UserRoleAssignment,
         VersionDependency,
         VersionMetadata,
         TimetableScenario,
@@ -75,8 +73,6 @@ try:
         TimetableConflict,
     )
 
-    # MODIFIED: Import UserRoleEnum for type-safe role assignment
-    from app.models.users import UserRoleEnum
     from app.core.security import hash_password
 except ImportError as e:
     print(
@@ -206,8 +202,7 @@ class ComprehensiveFakeSeeder:
 
         base_counts = MAGNITUDE_LEVELS[level]
 
-        # REWRITTEN: User count is now derived from students and staff
-        base_counts["users"] = base_counts["students"] + base_counts["staff"] + 5
+        base_counts["users"] = base_counts["students"] + base_counts["staff"] + 3
 
         global SCALE_LIMITS
         SCALE_LIMITS = {
@@ -220,8 +215,6 @@ class ComprehensiveFakeSeeder:
             "course_instructors": int(base_counts["courses"] * 1.5),
             "exam_departments": int(base_counts["exams"] * 1.2),
             "exam_prerequisites": int(base_counts["exams"] * 0.2),
-            "user_roles": 6,
-            "user_role_assignments": base_counts["users"],
             "staff_unavailability": int(base_counts["staff"] * 2),
             "timetable_jobs": 5,
             "timetable_versions": 10,
@@ -231,7 +224,7 @@ class ComprehensiveFakeSeeder:
             "audit_logs": 500,
             "system_configurations": 3,
             "constraint_categories": 5,
-            "constraint_rules": 15,
+            "constraint_rules": 17,
             "configuration_constraints": 25,
             "system_events": 50,
             "user_notifications": 100,
@@ -241,7 +234,7 @@ class ComprehensiveFakeSeeder:
             "version_metadata": 10,
             "version_dependencies": 8,
             "timetable_scenarios": 3,
-            "timetable_locks": int(base_counts["exams"] * 0.1),
+            "timetable_locks": 0,
             "timetable_conflicts": 40,
             "assignment_change_requests": 20,
             "conflict_reports": 30,
@@ -267,10 +260,10 @@ class ComprehensiveFakeSeeder:
                 logger.warning("🧹 Clearing all existing data from database...")
                 await self._clear_all_data()
 
-            # REWRITTEN: Seeding order is crucial and has been adjusted.
             await self._seed_core_entities()
             await self._seed_academic_structure()
-            await self._seed_people_and_users()  # This now handles students, staff, and their users together
+            await self._seed_demo_users()
+            await self._seed_people_and_users()
             await self._seed_course_instructors_and_unavailability()
             await self._seed_scheduling_data()
             await self._seed_hitl_and_versioning()
@@ -318,7 +311,6 @@ class ComprehensiveFakeSeeder:
                 "exams",
                 "courses",
                 "staff",
-                "user_role_assignments",
                 "students",
                 "programmes",
                 "departments",
@@ -333,7 +325,6 @@ class ComprehensiveFakeSeeder:
                 "constraint_rules",
                 "constraint_categories",
                 "system_configurations",
-                "user_roles",
                 "users",
             ]
             for table in tables_to_clear:
@@ -363,30 +354,33 @@ class ComprehensiveFakeSeeder:
         await self._seed_academic_sessions()
         await self._seed_courses()
 
+    async def _seed_demo_users(self):
+        logger.info("Phase 3: Seeding Demo User Accounts...")
+        await self._seed_demo_user_accounts()
+
     async def _seed_people_and_users(self):
-        logger.info("Phase 3: Seeding People and Linking Users...")
-        await self._seed_users_and_roles()  # Now seeds only roles and admin
+        logger.info("Phase 4: Seeding People and Linking Users...")
         await self._seed_students_and_create_users()
         await self._seed_staff_and_create_users()
 
     async def _seed_course_instructors_and_unavailability(self):
-        logger.info("Phase 4: Seeding Staff-Course Relations...")
+        logger.info("Phase 5: Seeding Staff-Course Relations...")
         await self._seed_course_instructors()
         await self._seed_staff_unavailability()
 
     async def _seed_scheduling_data(self):
-        logger.info("Phase 5: Seeding Core Scheduling Data...")
+        logger.info("Phase 6: Seeding Core Scheduling Data...")
         await self._seed_exams_and_registrations()
         await self._seed_exam_relations()
 
     async def _seed_hitl_and_versioning(self):
-        logger.info("Phase 6: Seeding Timetabling, HITL, and Versioning...")
+        logger.info("Phase 7: Seeding Timetabling, HITL, and Versioning...")
         await self._seed_timetable_jobs_and_versions()
         await self._seed_timetable_assignments_and_invigilators()
         await self._seed_hitl_entities()
 
     async def _seed_system_and_logging(self):
-        logger.info("Phase 7: Seeding System, Logging, and Feedback Entities...")
+        logger.info("Phase 8: Seeding System, Logging, and Feedback Entities...")
         await self._seed_timetable_edits()
         await self._seed_file_uploads()
         await self._seed_system_events_and_notifications()
@@ -475,11 +469,45 @@ class ComprehensiveFakeSeeder:
             )
 
     async def _seed_constraints_and_config(self):
-        """Seed system configurations and constraints with realistic parameters."""
+        """
+        FIXED: Seed system configurations and constraints with realistic parameters.
+        This version uses raw SQL for a temporary admin user to bypass a potential
+        mismatch between the SQLAlchemy User model's 'role' column type and the
+        actual database schema (varchar vs enum).
+        """
         async with db_manager.get_db_transaction() as session:
             logger.info(
                 "  ⚙️ Seeding realistic system configurations and constraints..."
             )
+
+            # --- Create a temporary admin user via raw SQL to get a valid ID ---
+            temp_admin_email = "temp_admin_for_config@baze.edu.ng"
+            # Using simple varchar insert for the role, which matches the schema
+            await session.execute(
+                text(
+                    "INSERT INTO exam_system.users (email, first_name, last_name, is_active, is_superuser, role, created_at, updated_at) "
+                    "VALUES (:email, 'Temp', 'Admin', true, true, 'admin', now(), now())"
+                ),
+                {"email": temp_admin_email},
+            )
+
+            # Fetch the ID of the user we just created
+            admin_user_result = await session.execute(
+                select(User).where(User.email == temp_admin_email)
+            )
+            temp_admin_user = admin_user_result.scalars().first()
+
+            if not temp_admin_user:
+                logger.error(
+                    "Failed to create and fetch temporary admin user. Cannot seed configurations."
+                )
+                raise Exception(
+                    "Could not create temporary admin user for seeding configurations."
+                )
+
+            admin_user_id = temp_admin_user.id
+
+            # --- Seed Categories and Rules (as before) ---
             categories_data = [
                 "Student Constraints",
                 "Resource",
@@ -602,6 +630,24 @@ class ComprehensiveFakeSeeder:
                     10.0,
                     {},
                 ),
+                (
+                    "ROOM_SEQUENTIAL_USE",
+                    "Room Sequential Use",
+                    "Ensures no new exam starts in a room while another is ongoing (flexible mode only).",
+                    "hard",
+                    "Spatial",
+                    100.0,
+                    {},
+                ),
+                (
+                    "ROOM_DURATION_HOMOGENEITY",
+                    "Room Duration Homogeneity",
+                    "Penalizes using a room for exams of different durations on the same day (flexible mode only).",
+                    "soft",
+                    "Fairness",
+                    80.0,
+                    {},
+                ),
             ]
             rules = []
             for code, name, desc, c_type, cat_name, weight, params in rules_data:
@@ -629,34 +675,13 @@ class ComprehensiveFakeSeeder:
             await session.flush()
             self.seeded_data["constraint_rules"] = len(rules)
 
-            admin_user_result = await session.execute(
-                select(User).where(User.email == "config_admin@baze.edu.ng")
-            )
-            admin_user = admin_user_result.scalars().first()
-            if not admin_user:
-                admin_user = User(
-                    email="config_admin@baze.edu.ng",
-                    first_name="Config",
-                    last_name="Admin",
-                    is_active=True,
-                    is_superuser=True,
-                    password_hash=hash_password("temp"),
-                    role=UserRoleEnum.admin,
-                )
-                session.add(admin_user)
-                await session.flush()
-                self.seeded_data["users"] += 1
-
-            config_names = [
-                "Default",
-                "Fast Solve",
-                "High Quality scheduling parameters",
-            ]
+            # --- Seed Configurations using the temporary admin user ID ---
+            config_names = ["Default", "Fast Solve", "High Quality"]
             configs = [
                 SystemConfiguration(
                     name=name,
                     description=f"Parameters for {name}",
-                    created_by=admin_user.id,
+                    created_by=admin_user_id,
                     is_default=(name == "Default"),
                 )
                 for name in config_names
@@ -677,6 +702,7 @@ class ComprehensiveFakeSeeder:
             ]
             session.add_all(config_constraints)
             self.seeded_data["configuration_constraints"] = len(config_constraints)
+
             logger.info(
                 f"  ✓ Seeded {len(categories)} categories, {len(rules)} rules, {len(configs)} configs, and {len(config_constraints)} links."
             )
@@ -863,6 +889,9 @@ class ComprehensiveFakeSeeder:
                         end_date=end_date,
                         is_active=is_active_session,
                         timeslot_template_id=template_id,
+                        slot_generation_mode=(
+                            "flexible" if is_active_session else "fixed"
+                        ),
                     )
                 )
             session.add_all(sessions)
@@ -908,7 +937,6 @@ class ComprehensiveFakeSeeder:
                         generated_course_codes.add(code)
                         break
 
-                # REWRITTEN: Exam duration limited to 60, 120, 180
                 c = Course(
                     code=code,
                     title=random.choice(course_titles).format(
@@ -926,30 +954,13 @@ class ComprehensiveFakeSeeder:
             self.seeded_data["courses"] = len(courses)
             logger.info(f"  ✓ Seeded {len(courses)} courses.")
 
-    async def _seed_users_and_roles(self):
-        """REWRITTEN: Seeds only UserRoles and the primary admin user."""
+    async def _seed_demo_user_accounts(self):
+        """Creates the three main demo user accounts: admin, staff, and student."""
         async with db_manager.get_db_transaction() as session:
-            logger.info("  👥 Seeding user roles and demo admin account...")
-            roles_def = {
-                "super_admin": {"*": ["*"]},
-                "admin": {"scope": "admin"},
-                "staff": {"scope": "staff"},
-                "student": {"scope": "student"},
-                "dean": {},
-                "hod": {},
-                "scheduler": {},
-            }
-            roles = [
-                UserRole(name=name, permissions=perms)
-                for name, perms in roles_def.items()
-            ]
-            session.add_all(roles)
-            await session.flush()
-            self.seeded_data["user_roles"] = len(roles)
-            roles_map = {r.name: r for r in roles}
-
-            # Create Demo Admin User
+            logger.info("  👥 Seeding demo user accounts (admin, staff, student)...")
             demo_password = hash_password("demo")
+
+            # 1. Create Demo Admin
             admin_user = User(
                 email="admin@baze.edu.ng",
                 first_name="Demo",
@@ -957,89 +968,132 @@ class ComprehensiveFakeSeeder:
                 password_hash=demo_password,
                 is_active=True,
                 is_superuser=True,
-                role=UserRoleEnum.admin,
+                role="admin",
             )
             session.add(admin_user)
-            await session.flush()
             self.demo_users["admin"] = admin_user
 
-            # Assign super_admin role
-            if "super_admin" in roles_map:
-                session.add(
-                    UserRoleAssignment(
-                        user_id=admin_user.id, role_id=roles_map["super_admin"].id
-                    )
-                )
-                self.seeded_data["user_role_assignments"] += 1
-
-            self.seeded_data["users"] += 1
-            logger.info(f"  ✓ Seeded {len(roles)} roles and 1 demo admin user.")
-
-    async def _seed_students_and_create_users(self):
-        """FIXED: Seeds students and creates a corresponding user account for each, ensuring the link."""
-        async with db_manager.get_db_transaction() as session:
-            logger.info("  👨‍🎓 Seeding students and their user accounts...")
-            programmes_result = await session.execute(
-                select(Programme).options(selectinload(Programme.department))
-            )
-            programmes = programmes_result.scalars().all()
-            if not programmes:
-                logger.warning("  - Skipping student seeding: no programmes found.")
+            # 2. Create Demo Staff and linked User
+            departments = (await session.execute(select(Department))).scalars().all()
+            if not departments:
+                logger.error("Cannot create demo staff user without departments.")
                 return
 
-            students_created = []
-            current_year = datetime.now().year
-            default_password = hash_password("password123")
-            demo_password = hash_password("demo")
-
-            # Create Demo Student and User
-            demo_prog = random.choice(programmes)
-            demo_entry_year = current_year - random.randint(
-                0, demo_prog.duration_years - 1
+            staff_user = User(
+                email="staff@baze.edu.ng",
+                first_name="Demo",
+                last_name="Staff",
+                password_hash=demo_password,
+                is_active=True,
+                role="staff",
             )
-            demo_user = User(
+            session.add(staff_user)
+            await session.flush([staff_user])
+            demo_staff = Staff(
+                user_id=staff_user.id,
+                staff_number="ST_DEMO",
+                first_name="Demo",
+                last_name="Staff",
+                department_id=random.choice(departments).id,
+                staff_type="academic",
+                can_invigilate=True,
+                is_active=True,
+            )
+            session.add(demo_staff)
+
+            # 3. Create Demo Student and linked User
+            programmes = (
+                (
+                    await session.execute(
+                        select(Programme).options(selectinload(Programme.department))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not programmes:
+                logger.error("Cannot create demo student user without programmes.")
+                return
+
+            student_user = User(
                 email="student@baze.edu.ng",
                 first_name="Demo",
                 last_name="Student",
                 password_hash=demo_password,
                 is_active=True,
-                role=UserRoleEnum.student,
+                role="student",
             )
-            session.add(demo_user)
-            await session.flush([demo_user])  # Get the ID
+            session.add(student_user)
+            await session.flush([student_user])
+
+            demo_prog = random.choice(programmes)
+            current_year = datetime.now().year
+            demo_entry_year = current_year - random.randint(
+                0, demo_prog.duration_years - 1
+            )
 
             demo_student = Student(
-                user_id=demo_user.id,  # Guaranteed link
-                matric_number=f"BU/{str(demo_entry_year)[-2:]}/{demo_prog.department.code}/0000",
+                user_id=student_user.id,
+                matric_number=f"BU/{str(demo_entry_year)[-2:]}/{demo_prog.department.code}/_DEMO",
                 first_name="Demo",
                 last_name="Student",
                 entry_year=demo_entry_year,
                 programme_id=demo_prog.id,
             )
             session.add(demo_student)
-            students_created.append(demo_student)
 
-            # Create other fake students
+            self.seeded_data["users"] += 3
+            self.seeded_data["staff"] += 1
+            self.seeded_data["students"] += 1
+            logger.info(
+                "  ✓ Seeded 3 demo accounts with linked staff/student profiles."
+            )
+
+    async def _seed_students_and_create_users(self):
+        """Seeds students and creates a corresponding user account for each."""
+        async with db_manager.get_db_transaction() as session:
+            logger.info("  👨‍🎓 Seeding students and their user accounts...")
+            programmes = (
+                (
+                    await session.execute(
+                        select(Programme).options(selectinload(Programme.department))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not programmes:
+                logger.warning("  - Skipping student seeding: no programmes found.")
+                return
+
+            students_created = []
+            users_created = 0
+            current_year = datetime.now().year
+            default_password = hash_password("password123")
+
+            # We already created 1 demo student, so generate N-1
             for i in range(SCALE_LIMITS["students"] - 1):
                 first_name = fake.first_name()
                 last_name = fake.last_name()
+                email = f"{first_name}.{last_name}{random.randint(1,999)}@fake.baze.edu.ng".lower()
 
                 user = User(
-                    email=f"{first_name}.{last_name}{random.randint(1,99)}@fake.baze.edu.ng".lower(),
+                    email=email,
                     first_name=first_name,
                     last_name=last_name,
                     password_hash=default_password,
                     is_active=True,
-                    role=UserRoleEnum.student,
+                    role="student",
                 )
                 session.add(user)
-                await session.flush([user])  # Get ID
+                await session.flush([user])
+                users_created += 1
 
                 prog = random.choice(programmes)
                 entry_year = current_year - random.randint(0, prog.duration_years - 1)
 
                 student = Student(
-                    user_id=user.id,  # Guaranteed link
+                    user_id=user.id,
                     matric_number=f"BU/{str(entry_year)[-2:]}/{prog.department.code}/{i+1:04d}",
                     first_name=first_name,
                     last_name=last_name,
@@ -1049,17 +1103,25 @@ class ComprehensiveFakeSeeder:
                 session.add(student)
                 students_created.append(student)
 
-            self.seeded_data["students"] = len(students_created)
-            self.seeded_data["users"] += len(students_created)
+            self.seeded_data["students"] += len(students_created)
+            self.seeded_data["users"] += users_created
 
-            # Create Enrollments for the created students
+            # Create Enrollments
+            all_students = (
+                (
+                    await session.execute(
+                        select(Student).options(selectinload(Student.programme))
+                    )
+                )
+                .scalars()
+                .all()
+            )
             sessions_list = (
                 (await session.execute(select(AcademicSession))).scalars().all()
             )
             enrollments = []
-            for student in students_created:
-                # Find the program for the student from the eagerly loaded list
-                prog = next(p for p in programmes if p.id == student.programme_id)
+            for student in all_students:
+                prog = student.programme
                 for sess in sessions_list:
                     level = (
                         int(sess.name.split("/")[0]) - student.entry_year + 1
@@ -1073,64 +1135,41 @@ class ComprehensiveFakeSeeder:
             session.add_all(enrollments)
             self.seeded_data["student_enrollments"] = len(enrollments)
             logger.info(
-                f"  ✓ Seeded {len(students_created)} students, created {len(students_created)} linked users, and {len(enrollments)} enrollments."
+                f"  ✓ Seeded {len(students_created)} additional students, created {users_created} linked users, and {len(enrollments)} enrollments."
             )
 
     async def _seed_staff_and_create_users(self):
-        """FIXED: Seeds staff and creates a corresponding user account for each, ensuring the link."""
+        """Seeds staff and creates a corresponding user account for each."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  👨‍🏫 Seeding staff and their user accounts...")
             departments = (await session.execute(select(Department))).scalars().all()
             if not departments:
+                logger.warning("  - Skipping staff seeding: no departments found.")
                 return
 
             staff_created = 0
+            users_created = 0
             default_password = hash_password("password123")
-            demo_password = hash_password("demo")
 
-            # Create Demo Staff and User
-            demo_user = User(
-                email="staff@baze.edu.ng",
-                first_name="Demo",
-                last_name="Staff",
-                password_hash=demo_password,
-                is_active=True,
-                role=UserRoleEnum.staff,
-            )
-            session.add(demo_user)
-            await session.flush([demo_user])  # Get ID
-
-            demo_staff = Staff(
-                user_id=demo_user.id,  # Guaranteed link
-                staff_number="ST0000",
-                first_name="Demo",
-                last_name="Staff",
-                department_id=random.choice(departments).id,
-                staff_type="academic",
-                can_invigilate=True,
-                is_active=True,
-            )
-            session.add(demo_staff)
-            staff_created += 1
-
-            # Create other fake staff
+            # We already created 1 demo staff, so generate N-1
             for i in range(SCALE_LIMITS["staff"] - 1):
                 first_name = fake.first_name()
                 last_name = fake.last_name()
-
+                email = f"{first_name}.{last_name}{random.randint(1,99)}@fake.baze.edu.ng".lower()
                 user = User(
-                    email=f"{first_name}.{last_name}{random.randint(1,99)}@fake.baze.edu.ng".lower(),
+                    email=email,
                     first_name=first_name,
                     last_name=last_name,
                     password_hash=default_password,
                     is_active=True,
-                    role=UserRoleEnum.staff,
+                    role="staff",
                 )
                 session.add(user)
-                await session.flush([user])  # Get ID
+                await session.flush([user])
+                users_created += 1
 
                 staff_member = Staff(
-                    user_id=user.id,  # Guaranteed link
+                    user_id=user.id,
                     staff_number=f"ST{1001+i}",
                     first_name=first_name,
                     last_name=last_name,
@@ -1142,10 +1181,10 @@ class ComprehensiveFakeSeeder:
                 session.add(staff_member)
                 staff_created += 1
 
-            self.seeded_data["staff"] = staff_created
-            self.seeded_data["users"] += staff_created
+            self.seeded_data["staff"] += staff_created
+            self.seeded_data["users"] += users_created
             logger.info(
-                f"  ✓ Seeded {staff_created} staff and created {staff_created} linked users."
+                f"  ✓ Seeded {staff_created} additional staff and created {users_created} linked users."
             )
 
     async def _seed_course_instructors(self):
@@ -1182,7 +1221,6 @@ class ComprehensiveFakeSeeder:
             )
             staff_members = staff_members_q.scalars().all()
 
-            # EAGER LOADING
             active_session_q = await session.execute(
                 select(AcademicSession)
                 .where(AcademicSession.is_active == True)
@@ -1252,7 +1290,6 @@ class ComprehensiveFakeSeeder:
             if not active_session:
                 return
 
-            # EAGER LOADING
             courses = (
                 (
                     await session.execute(
@@ -1344,7 +1381,6 @@ class ComprehensiveFakeSeeder:
             logger.info(
                 "  🔗 Seeding exam relations (departments, rooms, prerequisites)..."
             )
-            # EAGER LOADING
             exams_q = await session.execute(
                 select(Exam).options(
                     selectinload(Exam.course), selectinload(Exam.prerequisites)
@@ -1399,16 +1435,26 @@ class ComprehensiveFakeSeeder:
             configs = (
                 (await session.execute(select(SystemConfiguration))).scalars().all()
             )
-            users = (await session.execute(select(User))).scalars().all()
-            if not all([sessions_list, configs, users]):
+
+            # Make sure admin user exists for 'initiated_by'
+            admin_user_result = await session.execute(
+                select(User).where(User.email == "admin@baze.edu.ng")
+            )
+            admin_user = admin_user_result.scalars().first()
+
+            if not all([sessions_list, configs, admin_user]):
+                logger.warning(
+                    "Skipping timetable jobs/versions due to missing sessions, configs, or admin user."
+                )
                 return
 
             jobs, versions = [], []
             for _ in range(SCALE_LIMITS["timetable_jobs"]):
+                assert admin_user
                 job = TimetableJob(
                     session_id=random.choice(sessions_list).id,
                     configuration_id=random.choice(configs).id,
-                    initiated_by=random.choice(users).id,
+                    initiated_by=admin_user.id,
                     status=random.choice(["completed", "failed", "running"]),
                     progress_percentage=random.randint(0, 100),
                 )
@@ -1436,7 +1482,6 @@ class ComprehensiveFakeSeeder:
         """Seed timetable assignments and exam invigilators."""
         async with db_manager.get_db_transaction() as session:
             logger.info("  ✍️ Seeding timetable assignments and invigilators...")
-            # EAGER LOADING
             versions_q = await session.execute(
                 select(TimetableVersion).options(
                     selectinload(TimetableVersion.job)
@@ -1526,24 +1571,16 @@ class ComprehensiveFakeSeeder:
             )
 
     async def _seed_hitl_entities(self):
-        """Seed Human-in-the-Loop entities like scenarios and locks."""
+        """Seed Human-in-the-Loop entities like scenarios."""
         async with db_manager.get_db_transaction() as session:
-            logger.info("  🔒 Seeding HITL scenarios and locks...")
+            logger.info("  🔒 Seeding HITL scenarios...")
             versions = (await session.execute(select(TimetableVersion))).scalars().all()
             users = (await session.execute(select(User))).scalars().all()
-            # EAGER LOADING
-            exams_q = await session.execute(
-                select(Exam).options(
-                    selectinload(Exam.session)
-                    .selectinload(AcademicSession.timeslot_template)
-                    .selectinload(TimeSlotTemplate.periods)
-                )
-            )
-            exams = exams_q.scalars().all()
-            if not all([versions, users, exams]):
+
+            if not versions or not users:
                 return
 
-            scenarios, locks = [], []
+            scenarios = []
             for i in range(SCALE_LIMITS["timetable_scenarios"]):
                 scenarios.append(
                     TimetableScenario(
@@ -1554,40 +1591,10 @@ class ComprehensiveFakeSeeder:
                     )
                 )
             session.add_all(scenarios)
-            await session.flush()
-
-            for _ in range(SCALE_LIMITS["timetable_locks"]):
-                exam = random.choice(exams)
-                if not (
-                    exam.session
-                    and exam.session.timeslot_template
-                    and exam.session.timeslot_template.periods
-                ):
-                    continue
-
-                duration = (exam.session.end_date - exam.session.start_date).days
-                exam_date = exam.session.start_date + timedelta(
-                    days=random.randint(0, duration)
-                )
-                period = random.choice(exam.session.timeslot_template.periods)
-                locks.append(
-                    TimetableLock(
-                        scenario_id=random.choice(scenarios).id,
-                        exam_id=exam.id,
-                        timeslot_template_period_id=period.id,
-                        exam_date=exam_date,
-                        locked_by=random.choice(users).id,
-                        reason="Administrative lock",
-                        is_active=True,
-                    )
-                )
-            session.add_all(locks)
 
             self.seeded_data["timetable_scenarios"] = len(scenarios)
-            self.seeded_data["timetable_locks"] = len(locks)
-            logger.info(
-                f"  ✓ Seeded {len(scenarios)} scenarios and {len(locks)} locks."
-            )
+            self.seeded_data["timetable_locks"] = 0
+            logger.info(f"  ✓ Seeded {len(scenarios)} scenarios. (Skipped locks)")
 
     async def _seed_timetable_edits(self):
         """Seed timetable edits."""
@@ -1742,22 +1749,31 @@ class ComprehensiveFakeSeeder:
 
             change_reqs, conflict_reps, timetable_conflicts = [], [], []
 
+            # Ensure every staff member has one assignment change request.
             if staff and assignments:
-                for _ in range(SCALE_LIMITS["assignment_change_requests"]):
+                for staff_member in staff:
                     change_reqs.append(
                         AssignmentChangeRequest(
-                            staff_id=random.choice(staff).id,
+                            staff_id=staff_member.id,
                             timetable_assignment_id=random.choice(assignments).id,
-                            reason="Personal emergency",
+                            reason=random.choice(
+                                [
+                                    "Personal emergency",
+                                    "Scheduling clash",
+                                    "Medical appointment",
+                                ]
+                            ),
+                            description=fake.sentence(),
                             status=random.choice(["pending", "approved", "denied"]),
                         )
                     )
 
+            # Ensure every student has one conflict report.
             if students and exams:
-                for _ in range(SCALE_LIMITS["conflict_reports"]):
+                for student in students:
                     conflict_reps.append(
                         ConflictReport(
-                            student_id=random.choice(students).id,
+                            student_id=student.id,
                             exam_id=random.choice(exams).id,
                             description="I have a documented medical appointment.",
                             status=random.choice(["pending", "resolved"]),
@@ -1765,7 +1781,11 @@ class ComprehensiveFakeSeeder:
                     )
 
             if versions and exams and students:
-                for _ in range(SCALE_LIMITS["timetable_conflicts"]):
+                # Limit the number of timetable conflicts to avoid excessive data
+                num_conflicts = min(
+                    SCALE_LIMITS["timetable_conflicts"], len(students) * 2
+                )
+                for _ in range(num_conflicts):
                     timetable_conflicts.append(
                         TimetableConflict(
                             version_id=random.choice(versions).id,

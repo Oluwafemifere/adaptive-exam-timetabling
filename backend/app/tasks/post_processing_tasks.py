@@ -13,6 +13,7 @@ from ..services.scheduling.enrichment_service import EnrichmentService
 from ..services.notification.websocket_manager import publish_job_update
 from ..core.config import settings
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import event
 from sqlalchemy.pool import NullPool
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,14 @@ logger = logging.getLogger(__name__)
 async def _async_enrich_timetable_result(job_id: str):
     """Async implementation for enriching timetable results."""
     engine = create_async_engine(settings.DATABASE_URL, poolclass=NullPool)
+    schema_search_path = "staging, exam_system, public"
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_search_path(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute(f"SET search_path TO {schema_search_path};")
+        cursor.close()
+
     async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
     job_uuid = UUID(job_id)
 

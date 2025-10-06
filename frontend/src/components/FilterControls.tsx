@@ -7,7 +7,7 @@ import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Separator } from "./ui/separator";
-import { X, Search, Filter, ChevronDown, Save, Bookmark, Settings, Calendar, MapPin, User } from "lucide-react";
+import { X, Search, Filter, ChevronDown, Save, Bookmark, Settings, Calendar, MapPin, User, Building } from "lucide-react";
 import { useState } from "react";
 
 // interface definitions
@@ -36,6 +36,9 @@ interface FilterControlsProps {
   staff?: string[];
   selectedStaff?: string[];
   onStaffChange?: (staff: string[]) => void;
+  buildings?: string[];
+  selectedBuildings?: string[];
+  onBuildingsChange?: (buildings: string[]) => void;
   searchTerm?: string;
   onSearchChange?: (term: string) => void;
   showAdvancedFilters?: boolean;
@@ -61,6 +64,9 @@ export function FilterControls({
   staff = [],
   selectedStaff = [],
   onStaffChange,
+  buildings = [],
+  selectedBuildings = [],
+  onBuildingsChange,
   searchTerm = '',
   onSearchChange,
 }: FilterControlsProps) {
@@ -72,6 +78,7 @@ export function FilterControls({
     selectedFaculties.length > 0,
     selectedRooms.length > 0,
     selectedStaff.length > 0,
+    selectedBuildings.length > 0,
     searchTerm.length > 0
   ].filter(Boolean).length;
 
@@ -80,6 +87,7 @@ export function FilterControls({
     onFacultiesChange?.([]);
     onRoomsChange?.([]);
     onStaffChange?.([]);
+    onBuildingsChange?.([]);
     onSearchChange?.('');
     setLocalSearchTerm('');
   };
@@ -166,6 +174,7 @@ export function FilterControls({
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {onDepartmentsChange && <MultiSelectFilter label="Departments" options={departments} selected={selectedDepartments} onChange={onDepartmentsChange} placeholder="All Departments" />}
               {onFacultiesChange && <MultiSelectFilter label="Faculties" options={faculties} selected={selectedFaculties} onChange={onFacultiesChange} placeholder="All Faculties" />}
+              {onBuildingsChange && <MultiSelectFilter label="Buildings" options={buildings} selected={selectedBuildings} onChange={onBuildingsChange} placeholder="All Buildings" />}
               {onRoomsChange && <MultiSelectFilter label="Rooms" options={rooms} selected={selectedRooms} onChange={onRoomsChange} placeholder="All Rooms" />}
               {onStaffChange && <MultiSelectFilter label="Staff" options={staff} selected={selectedStaff} onChange={onStaffChange} placeholder="All Staff" />}
             </div>

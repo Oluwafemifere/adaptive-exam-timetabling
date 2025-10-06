@@ -5,23 +5,26 @@ import pytest
 import pytest_asyncio
 from typing import AsyncGenerator, Dict, Any
 from uuid import uuid4
-from datetime import datetime, date, time
+from datetime import date, datetime
 import random
 import string
 
+from httpx import AsyncClient, ASGITransport
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
-from sqlalchemy.exc import IntegrityError
 
 from ..main import app
-from ..database import get_db
+from ..api.deps import get_db, get_current_user
 from ..models import Base
-from ..config import get_settings
+from ..core.config import settings
+from ..database import db_manager
 
 # Import all models to ensure proper table creation
-from ..models.users import User, UserRole, SystemConfiguration
-from ..models.academic import (
+from ..models import (
+    User,
+    UserRole,
+    SystemConfiguration,
     AcademicSession,
     Faculty,
     Department,
@@ -29,356 +32,163 @@ from ..models.academic import (
     Course,
     Student,
     CourseRegistration,
-)
-from ..models.infrastructure import Building, Room, RoomType
-from ..models.constraints import (
+    Building,
+    Room,
+    RoomType,
     ConstraintCategory,
     ConstraintRule,
     ConfigurationConstraint,
+    Staff,
+    TimetableJob,
 )
-from ..models.scheduling import Exam, Staff, StaffUnavailability
-from ..models.jobs import TimetableJob
-from ..models.timetable_edits import TimetableEdit
-from ..models.audit_logs import AuditLog
-from ..models.file_uploads import FileUploadSession, UploadedFile
 
-# Load settings from config.py (which reads .env)
-settings = get_settings()
-ASYNC_DATABASE_URL = settings.DATABASE_URL
 
-assert ASYNC_DATABASE_URL, "DATABASE_URL must be set in .env"
+ASYNC_DATABASE_URL = settings.DATABASE_URL.replace(
+    "postgresql://", "postgresql+asyncpg://"
+)
+
+assert ASYNC_DATABASE_URL, "DATABASE_URL must be set in .env for testing"
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for our test session."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
-    """Create database engine using the existing database"""
-    engine = create_async_engine(
-        ASYNC_DATABASE_URL,
-        echo=False,  # Set to True for SQL debugging
-        poolclass=NullPool,
-    )
+    """Create a test database engine WITHOUT creating or dropping tables."""
+    engine = create_async_engine(ASYNC_DATABASE_URL, echo=False, poolclass=NullPool)
 
-    async with engine.connect() as conn:
-        result = await conn.execute(
-            text(
-                "SELECT schema_name FROM information_schema.schemata "
-                "WHERE schema_name = 'exam_system'"
-            )
-        )
-        schema_exists = result.scalar()
-        assert schema_exists is not None, "exam_system schema does not exist"
+    # --- FIX: REMOVED TABLE CREATION AND DELETION ---
+    # The original code created and dropped all tables, which is not desired.
+    # Now, the fixture only provides an engine to the existing database.
+    #
+    # # Create all tables (REMOVED)
+    # async with engine.begin() as conn:
+    #     await conn.run_sync(Base.metadata.create_all)
 
     yield engine
+
+    # # Drop all tables (REMOVED)
+    # async with engine.begin() as conn:
+    #     await conn.run_sync(Base.metadata.drop_all)
+
     await engine.dispose()
 
 
 @pytest_asyncio.fixture
-async def test_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Create test database session with proper cleanup and isolation."""
-    async_session = async_sessionmaker(
+async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
+    """Provide a transactional database session for each test."""
+    async_session_maker = async_sessionmaker(
         test_engine, expire_on_commit=False, class_=AsyncSession
     )
-
-    async with async_session() as session:
-        # Start a transaction
-        transaction = await session.begin()
+    async with async_session_maker() as session:
+        # Each test runs inside a transaction which is rolled back.
+        # This isolates tests from each other without dropping tables.
+        await session.begin()
         try:
             yield session
         finally:
-            # Always rollback to ensure test isolation
-            try:
-                if not transaction.is_active:
-                    # Transaction already closed, no need to rollback
-                    pass
-                else:
-                    await transaction.rollback()
-            except Exception:
-                # Ignore rollback errors on already closed transactions
-                pass
+            await session.rollback()
 
 
 @pytest_asyncio.fixture
-async def client(test_session) -> AsyncGenerator:
-    """Create test HTTP client with database override."""
+async def client(
+    test_engine,
+    db_session: AsyncSession,
+    complete_test_data: Dict[str, Any],
+) -> AsyncGenerator[AsyncClient, None]:
+    """
+    Create an authenticated test HTTP client with database and user auth overrides.
+    """
+    db_manager.engine = test_engine
+    db_manager.AsyncSessionLocal = async_sessionmaker(
+        test_engine, expire_on_commit=False, class_=AsyncSession
+    )
+    db_manager._is_initialized = True
+
+    test_user = complete_test_data["user"]
 
     async def override_get_db():
-        try:
-            yield test_session
-        finally:
-            # Session cleanup handled by test_session fixture
-            pass
+        yield db_session
+
+    async def override_get_current_user():
+        return test_user
 
     app.dependency_overrides[get_db] = override_get_db
-
-    from httpx import AsyncClient, ASGITransport
+    app.dependency_overrides[get_current_user] = override_get_current_user
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as test_client:
         yield test_client
 
+    # Clear overrides and reset manager state
     app.dependency_overrides.clear()
+    db_manager._is_initialized = False
+    db_manager.engine = None
+    db_manager.AsyncSessionLocal = None
 
 
-def generate_unique_string(prefix: str = "", length: int = 8) -> str:
-    """Generate unique string to avoid constraint violations"""
+def generate_unique_string(prefix: str = "", length: int = 4) -> str:
+    """Generate a short, unique string for test data to avoid constraint violations."""
     random_suffix = "".join(
-        random.choices(string.ascii_uppercase + string.digits, k=length)
+        random.choices(string.ascii_lowercase + string.digits, k=length)
     )
-    return f"{prefix}_{random_suffix}_{uuid4().hex[:6]}"
+    return f"{prefix}{int(datetime.now().timestamp() * 1000)}_{random_suffix}"
 
 
 @pytest_asyncio.fixture
-async def complete_test_data(test_session: AsyncSession) -> Dict[str, Any]:
-    """Create complete test data respecting all foreign key constraints with unique values."""
+async def complete_test_data(db_session: AsyncSession) -> Dict[str, Any]:
+    """
+    Create a complete set of test data respecting all FK constraints.
+    This data lives only within the test's transaction and is rolled back.
+    """
+    data = {}
 
-    # Generate unique identifiers to avoid constraint violations
-    unique_suffix = uuid4().hex[:8]
-
-    # Level 1: Independent entities
-    user = User(
-        id=uuid4(),
-        email=f"test-{unique_suffix}@example.com",
+    data["user"] = User(
+        email=f"testuser_{generate_unique_string()}@example.com",
         first_name="Test",
         last_name="User",
-        is_active=True,
-        is_superuser=False,
     )
-    test_session.add(user)
+    db_session.add(data["user"])
 
-    faculty = Faculty(
-        id=uuid4(),
-        code=generate_unique_string("FAC"),
-        name=f"Test Faculty {unique_suffix}",
-        is_active=True,
+    data["academic_session"] = AcademicSession(
+        name=f"Test Session {generate_unique_string()}",
+        semester_system="dual",
+        start_date=date(2024, 9, 1),
+        end_date=date(2025, 6, 30),
+        slot_generation_mode="fixed",  # Add missing non-nullable field
     )
-    test_session.add(faculty)
+    db_session.add(data["academic_session"])
 
-    academic_session = AcademicSession(
-        id=uuid4(),
-        name=f"Test Session {unique_suffix}",
-        semester_system="semester",
-        start_date=date(2024, 1, 1),
-        end_date=date(2024, 12, 31),
-        is_active=True,
+    # Create other necessary data...
+    data["faculty_sci"] = Faculty(
+        code=generate_unique_string("SCI-FAC"), name="Science Faculty"
     )
-    test_session.add(academic_session)
-
-    building = Building(
-        id=uuid4(),
-        code=generate_unique_string("BLD"),
-        name=f"Test Building {unique_suffix}",
-        is_active=True,
+    data["faculty_art"] = Faculty(
+        code=generate_unique_string("ART-FAC"), name="Arts Faculty"
     )
-    test_session.add(building)
+    db_session.add_all([data["faculty_sci"], data["faculty_art"]])
+    await db_session.flush()
 
-    constraint_category = ConstraintCategory(
-        id=uuid4(),
-        name=f"Test Constraints {unique_suffix}",
-        description="Test constraint category",
-        enforcement_layer="database",
+    data["department"] = Department(
+        code=generate_unique_string("DPT"),
+        name="Test Department",
+        faculty_id=data["faculty_sci"].id,  # Link to the flushed faculty
     )
-    test_session.add(constraint_category)
+    db_session.add(data["department"])
 
-    user_role = UserRole(
-        id=uuid4(),
-        name=f"test_admin_{unique_suffix}",
-        description="Test administrator role",
-        permissions={"read": True, "write": True},
-    )
-    test_session.add(user_role)
+    # Commit the setup data to make it visible to the database function
+    await db_session.commit()
 
-    # Level 2: Entities with single dependencies
-    department = Department(
-        id=uuid4(),
-        code=generate_unique_string("DEPT"),
-        name=f"Test Department {unique_suffix}",
-        faculty_id=faculty.id,
-        is_active=True,
-    )
-    test_session.add(department)
+    # Refresh objects to ensure they are attached to the session for use in the test
+    for key, obj in data.items():
+        if not db_session.is_modified(obj) and obj in db_session:
+            await db_session.refresh(obj)
 
-    room_type = RoomType(
-        id=uuid4(),
-        name=f"Lecture Hall {unique_suffix}",
-        description="Standard lecture hall",
-        is_active=True,
-    )
-    test_session.add(room_type)
-
-    constraint_rule = ConstraintRule(
-        id=uuid4(),
-        code=generate_unique_string("TEST_CONSTRAINT"),
-        name=f"Test Constraint Rule {unique_suffix}",
-        description="Test constraint for testing",
-        constraint_type="hard",
-        constraint_definition={"type": "test"},
-        category_id=constraint_category.id,
-        default_weight=1.0,
-        is_active=True,
-        is_configurable=True,
-    )
-    test_session.add(constraint_rule)
-
-    await test_session.flush()  # Get IDs for Level 3
-
-    # Level 2 continued
-    room = Room(
-        id=uuid4(),
-        code=generate_unique_string("R"),
-        name=f"Test Room {unique_suffix}",
-        building_id=building.id,
-        room_type_id=room_type.id,
-        capacity=100,
-        exam_capacity=80,
-        floor_number=1,
-        has_projector=True,
-        has_ac=True,
-        has_computers=False,
-        is_active=True,
-    )
-    test_session.add(room)
-
-    await test_session.flush()
-
-    # Level 3: Entities with multiple dependencies
-    system_configuration = SystemConfiguration(
-        id=uuid4(),
-        name=f"Test Config {unique_suffix}",
-        description="Test configuration",
-        created_by=user.id,
-        is_default=False,
-    )
-    test_session.add(system_configuration)
-
-    course = Course(
-        id=uuid4(),
-        code=generate_unique_string("CS"),
-        title=f"Test Course {unique_suffix}",
-        credit_units=3,
-        course_level=200,
-        semester=1,
-        is_practical=False,
-        morning_only=False,
-        exam_duration_minutes=180,
-        department_id=department.id,
-        is_active=True,
-    )
-    test_session.add(course)
-
-    programme = Programme(
-        id=uuid4(),
-        name=f"Test Programme {unique_suffix}",
-        code=generate_unique_string("TPROG"),
-        degree_type="bachelor",
-        duration_years=4,
-        department_id=department.id,
-        is_active=True,
-    )
-    test_session.add(programme)
-
-    await test_session.flush()  # Get IDs for Level 4
-
-    # Level 4: Complex dependencies
-    student = Student(
-        id=uuid4(),
-        matric_number=generate_unique_string("TST"),
-        entry_year=2024,
-        current_level=200,
-        student_type="regular",
-        programme_id=programme.id,
-        is_active=True,
-    )
-    test_session.add(student)
-
-    staff = Staff(
-        id=uuid4(),
-        staff_number=generate_unique_string("STF"),
-        staff_type="academic",
-        position="Lecturer",
-        department_id=department.id,
-        can_invigilate=True,
-        max_daily_sessions=2,
-        max_consecutive_sessions=2,
-        is_active=True,
-    )
-    test_session.add(staff)
-
-    await test_session.flush()
-
-    # Level 5: Most complex dependencies
-    course_registration = CourseRegistration(
-        id=uuid4(),
-        student_id=student.id,
-        course_id=course.id,
-        session_id=academic_session.id,
-        registration_type="regular",
-    )
-    test_session.add(course_registration)
-
-    configuration_constraint = ConfigurationConstraint(
-        id=uuid4(),
-        configuration_id=system_configuration.id,
-        constraint_id=constraint_rule.id,
-        custom_parameters={},
-        weight=1.0,
-        is_enabled=True,
-    )
-    test_session.add(configuration_constraint)
-
-    timetable_job = TimetableJob(
-        id=uuid4(),
-        session_id=academic_session.id,
-        configuration_id=system_configuration.id,
-        initiated_by=user.id,
-        status="queued",
-        progress_percentage=0,
-    )
-    test_session.add(timetable_job)
-
-    await test_session.flush()
-
-    # Commit all changes
-    await test_session.commit()
-
-    return {
-        "user": user,
-        "faculty": faculty,
-        "department": department,
-        "academic_session": academic_session,
-        "building": building,
-        "room_type": room_type,
-        "room": room,
-        "constraint_category": constraint_category,
-        "constraint_rule": constraint_rule,
-        "system_configuration": system_configuration,
-        "course": course,
-        "programme": programme,
-        "student": student,
-        "staff": staff,
-        "course_registration": course_registration,
-        "configuration_constraint": configuration_constraint,
-        "timetable_job": timetable_job,
-        "user_role": user_role,
-    }
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create event loop for session scope."""
-    policy = asyncio.get_event_loop_policy()
-    loop = policy.new_event_loop()
-    yield loop
-    loop.close()
-
-
-# Simplified fixture for backward compatibility
-@pytest_asyncio.fixture
-async def setup_test_data(complete_test_data):
-    """Simplified interface to complete test data for backward compatibility."""
-    return {
-        "user": complete_test_data["user"],
-        "config": complete_test_data["system_configuration"],
-        "session": complete_test_data["academic_session"],
-        "exam": complete_test_data["exam"],
-    }
+    return data

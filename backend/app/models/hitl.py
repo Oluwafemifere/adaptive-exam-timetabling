@@ -34,8 +34,14 @@ class TimetableScenario(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
-    parent_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("timetable_versions.id"), nullable=True
+    parent_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "exam_system.timetable_versions.id",
+            use_alter=True,
+            name="timetable_scenarios_parent_version_id_fkey",
+        ),
+        nullable=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

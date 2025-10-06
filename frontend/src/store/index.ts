@@ -1,6 +1,6 @@
 // frontend/src/store/index.ts
 import { create } from 'zustand';
-import { AppState, TimetableResponseData, RenderableExam, JobStatus, TimetableAssignmentData, Conflict, StaffSchedules, ConflictReport, StudentExam, ChangeRequest, Notification, HistoryEntry } from './types';
+import { AppState, TimetableResponseData, RenderableExam, JobStatus, TimetableAssignmentData, Conflict, StaffSchedules, ConflictReport, StudentExam, ChangeRequest, Notification, HistoryEntry, AllReportsResponse, DashboardKpis, ConflictHotspot, TopBottleneck } from './types';
 import { api } from '../services/api';
 import { toast } from 'sonner';
 
@@ -44,6 +44,15 @@ export const useAppStore = create<AppState>()((set, get) => ({
     constraintWeights: {},
     notifications: { emailNotifications: true, conflictAlerts: true, schedulingUpdates: true },
   },
+  reportSummaryCounts: null,
+  allConflictReports: [],
+  allChangeRequests: [],
+  
+  // NEW: Dashboard state initialized
+  dashboardKpis: null,
+  conflictHotspots: [],
+  topBottlenecks: [],
+  recentActivity: [],
 
   // Actions
   setCurrentPage: (page) => set({ currentPage: page }),
@@ -127,55 +136,83 @@ export const useAppStore = create<AppState>()((set, get) => ({
   addNotification: (notification: Omit<Notification, 'id' | 'createdAt'>) => set((state) => ({ notifications: [{ ...notification, id: `notif-${Date.now()}`, createdAt: new Date().toISOString(), isRead: false }, ...state.notifications] })),
   markNotificationAsRead: (id: string) => set((state) => ({ notifications: state.notifications.map(n => n.id === id ? { ...n, isRead: true } : n) })),
   clearNotifications: () => set({ notifications: [] }),
-  addHistoryEntry: (entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => set((state) => ({ history: [{ ...entry, id: `hist-${Date.now()}`, timestamp: new Date().toISOString() }, ...state.history] })),
+  addHistoryEntry: (entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => { /* ... */ },
+
+  setAllReports: (data: AllReportsResponse) => set({
+    reportSummaryCounts: data.summary_counts,
+    allConflictReports: data.conflict_reports,
+    allChangeRequests: data.assignment_change_requests,
+  }),
+
+  // NEW: Dashboard actions
+  setDashboardKpis: (kpis: DashboardKpis) => set({ dashboardKpis: kpis }),
+  setConflictHotspots: (hotspots: ConflictHotspot[]) => set({ conflictHotspots: hotspots }),
+  setTopBottlenecks: (bottlenecks: TopBottleneck[]) => set({ topBottlenecks: bottlenecks }),
+  setRecentActivity: (activity: HistoryEntry[]) => set({ recentActivity: activity }),
 
   startSchedulingJob: async () => { /* ... */ },
   cancelSchedulingJob: async (jobId: string) => { /* ... */ },
   pollJobStatus: (jobId: string) => { /* This function is now handled by the hook */ },
-  
-  initializeApp: async () => {
-    const token = localStorage.getItem('authToken');
-    if (!token) {
-      set({ isAuthenticated: false });
-      return;
-    }
     
-    try {
-      // Fetch user data first to ensure user object is populated
-      const userResponse = await api.getCurrentUser();
-      const userData = userResponse.data;
-      const user = {
-        id: userData.id,
-        name: `${userData.first_name} ${userData.last_name}`,
-        email: userData.email,
-        role: userData.role,
-      };
-      set({ user });
-
-      const sessionResponse = await api.getActiveSession();
-      if (sessionResponse.data) {
-        const sessionId = sessionResponse.data.id;
-        set({ activeSessionId: sessionId, isAuthenticated: true });
-        
-        // Fetch main timetable only for admins, portals fetch their own data
-        if (user.role === 'admin') {
-            const timetableResponse = await api.getLatestTimetableForActiveSession();
-            if (timetableResponse.data?.success && timetableResponse.data.data) {
-              get().setTimetable(timetableResponse.data.data);
-              const conflicts = timetableResponse.data.data.timetable?.solution?.conflicts || [];
-              get().setConflicts(conflicts as Conflict[]);
-            } else {
-               toast.info('No timetable found for the active session.');
-            }
-        }
-      } else {
-        throw new Error('No active session found.');
+  initializeApp: async () => {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        set({ isAuthenticated: false });
+        return;
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
-      toast.error(`Initialization failed: ${errorMessage}`);
-      get().setAuthenticated(false, null);
-      localStorage.removeItem('authToken');
-    }
-  },
-}));
+      
+      try {
+        const userResponse = await api.getCurrentUser();
+        const userData = userResponse.data;
+        const user = {
+          id: userData.id,
+          name: `${userData.first_name} ${userData.last_name}`,
+          email: userData.email,
+          role: userData.role,
+        };
+        set({ user, isAuthenticated: true });
+
+        const sessionResponse = await api.getActiveSession();
+        if (sessionResponse.data) {
+          const sessionId = sessionResponse.data.id;
+          set({ activeSessionId: sessionId });
+          
+          // --- MODIFICATION START ---
+          // Fetch timetable only for admin/superuser roles and handle 404 gracefully
+          if (user.role === 'admin' || user.role === 'superuser') {
+            try {
+              const timetableResponse = await api.getLatestTimetableForActiveSession();
+              if (timetableResponse.data?.success && timetableResponse.data.data) {
+                get().setTimetable(timetableResponse.data.data);
+                const conflicts = timetableResponse.data.data.timetable?.solution?.conflicts || [];
+                get().setConflicts(conflicts as Conflict[]);
+              } else {
+                // This case handles a successful API call but no timetable data
+                toast.info('No timetable has been generated for the active session yet.');
+                set({ exams: [], conflicts: [] });
+              }
+            } catch (error: any) {
+              // This specifically handles the 404 error when no timetable exists
+              if (error.response && error.response.status === 404) {
+                toast.info('Welcome! No timetable exists for this session. Please go to the Scheduling page to generate one.');
+                set({ exams: [], conflicts: [] });
+              } else {
+                // Re-throw other errors
+                throw error;
+              }
+            }
+          }
+          // --- MODIFICATION END ---
+
+        } else {
+          toast.warning('No active academic session found. Please set one up.');
+          set({ activeSessionId: null });
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+        toast.error(`Initialization failed: ${errorMessage}`);
+        get().setAuthenticated(false, null);
+        localStorage.removeItem('authToken');
+      }
+    },
+  }));

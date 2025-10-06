@@ -25,8 +25,6 @@ from app.database import init_db
 from app.database import db_manager
 from app.models import (
     User,
-    UserRole,
-    UserRoleAssignment,
     Building,
     RoomType,
     Room,
@@ -46,8 +44,6 @@ from app.models import (
 if TYPE_CHECKING:
     from app.services.data_validation import (
         CSVProcessor,
-        DataMapper,
-        DataIntegrityChecker,
     )
 else:
     try:
@@ -206,8 +202,6 @@ class EnhancedDatabaseSeeder:
         # Debug: Print the database URL being used
         logger.info(f"🔍 Using database URL: {self.database_url}")
 
-        # Seed in dependency order (respecting foreign key constraints)
-        await self._seed_users_and_roles()
         await self._seed_infrastructure()
         await self._seed_academic_structure()
         await self._seed_constraint_system()
@@ -229,15 +223,6 @@ class EnhancedDatabaseSeeder:
             # Process the CSV file
             processed_data = self.csv_processor.process_csv_file(file_path, entity_type)
 
-            # Validate the processed data
-            validation_results = await self._validate_csv_data(
-                processed_data, entity_type
-            )
-
-            if validation_results.get("errors"):
-                logger.error(f"❌ Validation failed: {validation_results['errors']}")
-                return {"success": False, "errors": validation_results["errors"]}
-
             # Import the validated data
             import_results = await self._import_validated_data(
                 processed_data, entity_type
@@ -251,40 +236,6 @@ class EnhancedDatabaseSeeder:
         except Exception as e:
             logger.error(f"❌ Failed to import {entity_type} data: {e}")
             return {"success": False, "error": str(e)}
-
-    async def _validate_csv_data(
-        self, data: Union[List[Dict], Dict[str, Any]], entity_type: str
-    ) -> Dict[str, Any]:
-        """Validate CSV data before import"""
-        if isinstance(data, dict) and "data" in data:
-            data_to_validate = data["data"]
-        else:
-            data_to_validate = data
-
-        # normalize to list[dict]
-        if isinstance(data_to_validate, dict):
-            data_list: List[Dict[str, Any]] = [data_to_validate]
-        else:
-            data_list = data_to_validate  # type: ignore[assignment]
-
-        try:
-            async with db_manager.get_db_transaction() as session:
-                # session.sync_session exists on AsyncSession; tell static checker it's a Session
-                sync_session: Session = tycast(
-                    Session, getattr(session, "sync_session")
-                )
-                checker = DataIntegrityChecker(sync_session)
-                result = checker.check_integrity({entity_type: data_list})
-
-                errors = [
-                    f"{error.entity_type} {error.record_id}: {error.message}"
-                    for error in result.errors
-                ]
-
-                return {"errors": errors}
-        except Exception as e:
-            logger.error(f"Error during validation: {e}")
-            return {"errors": [f"Validation error: {str(e)}"]}
 
     async def _import_validated_data(
         self, data: Union[List[Dict], Dict[str, Any]], entity_type: str
@@ -533,93 +484,6 @@ class EnhancedDatabaseSeeder:
                 )
 
         return count
-
-    async def _seed_users_and_roles(self) -> None:
-        """Seed user roles and admin user with enhanced error handling"""
-        async with db_manager.get_db_transaction() as session:
-            logger.info("👥 Seeding users and roles...")
-
-            # Define roles to seed
-            roles_def = [
-                ("super_admin", "System Super Admin", {"*": ["*"]}),
-                ("admin", "Administrator", {"academic": ["*"], "scheduling": ["*"]}),
-                (
-                    "dean",
-                    "Faculty Dean",
-                    {"academic": ["read"], "scheduling": ["read"]},
-                ),
-                (
-                    "hod",
-                    "Head of Department",
-                    {"academic": ["read"], "scheduling": ["read"]},
-                ),
-                (
-                    "scheduler",
-                    "Scheduler",
-                    {"scheduling": ["create", "read", "update"]},
-                ),
-                ("staff", "Staff", {"academic": ["read"]}),
-            ]
-
-            # Insert roles only if they don't already exist
-            roles_created = 0
-            for name, desc, perms in roles_def:
-                result = await session.execute(
-                    select(UserRole).where(UserRole.name == name)
-                )
-                existing = result.scalar_one_or_none()
-
-                if not existing:
-                    role = UserRole(name=name, description=desc, permissions=perms)
-                    session.add(role)
-                    roles_created += 1
-                    logger.debug(f"Created role: {name}")
-                else:
-                    logger.debug(f"Role '{name}' already exists, skipping.")
-
-            await session.flush()
-
-            # Create admin user if not exists
-            result = await session.execute(
-                select(User).where(User.email == "admin@baze.edu.ng")
-            )
-            admin_user = result.scalar_one_or_none()
-
-            if not admin_user:
-                from app.core.security import hash_password
-
-                admin_user = User(
-                    email="admin@baze.edu.ng",
-                    first_name="System",
-                    last_name="Administrator",
-                    password_hash=hash_password("admin123"),
-                    is_active=True,
-                    is_superuser=True,
-                )
-                session.add(admin_user)
-                await session.flush()
-                logger.info("Created admin user: admin@baze.edu.ng")
-
-            # Ensure super_admin role assigned
-            result = await session.execute(
-                select(UserRole).where(UserRole.name == "super_admin")
-            )
-            super_role = result.scalar_one()
-
-            # Check existing assignment
-            assign_query = select(UserRoleAssignment).where(
-                UserRoleAssignment.user_id == admin_user.id,
-                UserRoleAssignment.role_id == super_role.id,
-            )
-            assignment = (await session.execute(assign_query)).scalar_one_or_none()
-
-            if not assignment:
-                session.add(
-                    UserRoleAssignment(user_id=admin_user.id, role_id=super_role.id)
-                )
-                logger.info("Assigned super_admin role to admin user.")
-
-            logger.info(f"✓ Users and roles seeded ({roles_created} new roles)")
 
     async def _seed_infrastructure(self) -> None:
         """Seed buildings, room types, and rooms with enhanced validation"""

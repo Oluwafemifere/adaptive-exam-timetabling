@@ -1,7 +1,8 @@
-# backend\app\services\data_validation
+# backend/app/services/data_validation/__init__.py
 """
 Data Validation Package for the Adaptive Exam Timetabling System.
-Combines CSV processing, data mapping, and integrity checking functionality.
+Provides tools for processing and validating incoming CSV data before
+it is passed to the database for seeding.
 """
 
 from .csv_processor import (
@@ -15,21 +16,20 @@ from .csv_processor import (
     transform_uuid,
     validate_required,
     validate_email,
-    validate_unique,
 )
 
-from .data_mapper import DataMapper, MappingResult, DataMappingError
+from .validation_schemas import ENTITY_SCHEMAS
 
-from .integrity_checker import (
-    DataIntegrityChecker,
-    IntegrityError,
-    IntegrityCheckResult,
-)
+# The DataMapper and DataIntegrityChecker are deprecated and no longer exposed
+# as part of the public package API.
 
-_all_ = [
-    # CSV Processor
+__all__ = [
+    # Main CSV Processor
     "CSVProcessor",
     "CSVValidationError",
+    # Centralized Schemas
+    "ENTITY_SCHEMAS",
+    # Re-usable transformer and validator functions
     "transform_date",
     "transform_time",
     "transform_integer",
@@ -38,13 +38,4 @@ _all_ = [
     "transform_uuid",
     "validate_required",
     "validate_email",
-    "validate_unique",
-    # Data Mapper
-    "DataMapper",
-    "MappingResult",
-    "DataMappingError",
-    # Integrity Checker
-    "DataIntegrityChecker",
-    "IntegrityError",
-    "IntegrityCheckResult",
 ]

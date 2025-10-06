@@ -14,7 +14,7 @@ export interface RenderableExam {
   building: string;
   invigilator: string;
   departments: string[];
-  facultyName: string; // Added faculty name
+  facultyName: string; 
   notes?: string;
   examType: string;
   instructor: string;
@@ -26,14 +26,13 @@ export interface RenderableExam {
 
 // --- API Data Models ---
 
-// Represents a single assignment from the API response
 export interface TimetableAssignmentData {
   exam_id: string;
   course_code: string;
   course_title: string;
   duration_minutes: number;
   student_count: number;
-  faculty_name: string; // Added faculty name
+  faculty_name: string; 
   department_name: string;
   is_practical: boolean;
   instructor_name: string;
@@ -53,14 +52,12 @@ export interface TimetableAssignmentData {
   conflicts: { message: string }[];
 }
 
-// Represents the structure of the `solution` object
 export interface TimetableSolution {
   status: string;
   assignments: Record<string, TimetableAssignmentData>;
-  conflicts: any[]; // Or a more specific conflict type
+  conflicts: any[]; 
 }
 
-// Represents the nested 'timetable' object from the API response
 export interface TimetableDetails {
   solution: TimetableSolution;
   statistics: { [key: string]: any };
@@ -69,7 +66,6 @@ export interface TimetableDetails {
   completion_percentage: number;
 }
 
-// Represents the top-level data structure for a timetable response from the API
 export interface TimetableResponseData {
   job_id: string;
   session_id: string;
@@ -208,14 +204,14 @@ export interface Notification {
 export interface HistoryEntry {
   id: string;
   action: string;
-  entityType: 'exam' | 'constraint' | 'user' | 'session' | 'schedule' | 'system';
-  entityId?: string;
-  userId: string;
-  userName: string;
-  timestamp: string;
-  details: Record<string, any>;
-  changes?: { before: any, after: any };
+  entity_type: string;
+  entity_id?: string;
+  user_email: string;
+  created_at: string;
+  new_values: Record<string, any>;
+  old_values: Record<string, any>;
 }
+
 
 export interface AcademicSession {
   id: string;
@@ -225,8 +221,104 @@ export interface AcademicSession {
   is_active: boolean;
 }
 
-export interface DashboardKPIs {
-  [key: string]: any;
+// --- NEW DASHBOARD TYPES ---
+export interface DashboardKpis {
+  total_exams_scheduled: number;
+  unresolved_hard_conflicts: number;
+  total_soft_conflicts: number;
+  overall_room_utilization: number;
+}
+
+export interface ConflictHotspot {
+  timeslot: string;
+  conflict_count: number;
+}
+
+export interface TopBottleneck {
+  type: 'exam' | 'room';
+  item: string;
+  reason: string;
+  issue_count: number;
+}
+// --- END NEW DASHBOARD TYPES ---
+
+
+// --- NEW TYPES FOR ADMIN REPORTS & REQUESTS ---
+
+export interface ReportSummaryCounts {
+  total: number;
+  unread: number;
+  urgent_action_required: number;
+}
+
+export interface StudentInfo {
+  id: string;
+  matric_number: string;
+  first_name: string;
+  last_name: string;
+  email?: string;
+}
+
+export interface StaffInfo {
+  id: string;
+  staff_number: string;
+  first_name: string;
+  last_name: string;
+  email?: string;
+  department_code?: string;
+}
+
+export interface ExamDetails {
+  exam_id: string;
+  course_code: string;
+  course_title: string;
+  session_name: string;
+}
+
+export interface AssignmentDetails {
+  assignment_id: string;
+  exam_date: string; // date string
+  course_code: string;
+  course_title: string;
+  room_code: string;
+  room_name: string;
+}
+
+export interface ReviewDetails {
+  reviewed_by_user_id: string;
+  reviewer_email?: string;
+  reviewer_name?: string;
+  resolver_notes?: string;
+  review_notes?: string;
+}
+
+export interface AdminConflictReport {
+  id: string;
+  status: string;
+  description?: string;
+  submitted_at: string; // datetime string
+  reviewed_at?: string;
+  student: StudentInfo;
+  exam_details: ExamDetails;
+  review_details?: ReviewDetails;
+}
+
+export interface AdminChangeRequest {
+  id: string;
+  status: string;
+  reason?: string;
+  description?: string;
+  submitted_at: string; // datetime string
+  reviewed_at?: string;
+  staff: StaffInfo;
+  assignment_details: AssignmentDetails;
+  review_details?: ReviewDetails;
+}
+
+export interface AllReportsResponse {
+  summary_counts: ReportSummaryCounts;
+  conflict_reports: AdminConflictReport[];
+  assignment_change_requests: AdminChangeRequest[];
 }
 
 export interface AppState {
@@ -240,14 +332,25 @@ export interface AppState {
   studentExams: StudentExam[];
   instructorSchedule: StaffAssignment[];
   invigilatorSchedule: StaffAssignment[];
-  conflictReports: ConflictReport[];
-  changeRequests: ChangeRequest[];
+  conflictReports: ConflictReport[]; // User-specific reports
+  changeRequests: ChangeRequest[]; // User-specific requests
   notifications: Notification[];
   history: HistoryEntry[];
   systemStatus: SystemStatus;
   schedulingStatus: SchedulingStatus;
   uploadStatus: UploadStatus;
   settings: AppSettings;
+  // Admin-level reports
+  reportSummaryCounts: ReportSummaryCounts | null;
+  allConflictReports: AdminConflictReport[];
+  allChangeRequests: AdminChangeRequest[];
+  
+  // NEW DASHBOARD STATE
+  dashboardKpis: DashboardKpis | null;
+  conflictHotspots: ConflictHotspot[];
+  topBottlenecks: TopBottleneck[];
+  recentActivity: HistoryEntry[];
+
   setCurrentPage: (page: string) => void;
   setAuthenticated: (isAuth: boolean, user?: User | null) => void;
   setTimetable: (timetableData: TimetableResponseData) => void;
@@ -266,9 +369,16 @@ export interface AppState {
   addNotification: (notification: Omit<Notification, 'id' | 'createdAt'>) => void;
   markNotificationAsRead: (id: string) => void;
   clearNotifications: () => void;
-  addHistoryEntry: (entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => void;
+  addHistoryEntry: (entry: Omit<HistoryEntry, 'id' | 'created_at'>) => void;
   startSchedulingJob: () => Promise<void>;
   cancelSchedulingJob: (jobId: string) => Promise<void>;
   pollJobStatus: (jobId: string) => void;
   initializeApp: () => Promise<void>;
+  setAllReports: (data: AllReportsResponse) => void;
+  
+  // NEW DASHBOARD ACTIONS
+  setDashboardKpis: (kpis: DashboardKpis) => void;
+  setConflictHotspots: (hotspots: ConflictHotspot[]) => void;
+  setTopBottlenecks: (bottlenecks: TopBottleneck[]) => void;
+  setRecentActivity: (activity: HistoryEntry[]) => void;
 }
