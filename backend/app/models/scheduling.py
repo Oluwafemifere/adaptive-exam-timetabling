@@ -1,9 +1,7 @@
-# backend\app\models\scheduling.py
+# app/models/scheduling.py
 
 import uuid
-
 from typing import List, Optional, TYPE_CHECKING
-
 from sqlalchemy import (
     String,
     Integer,
@@ -13,29 +11,25 @@ from sqlalchemy import (
     ForeignKey,
     Text,
     func,
-    Index,
     Table,
     Column,
     Time,
     UniqueConstraint,
+    Index,
 )
-
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.ext.associationproxy import AssociationProxy, association_proxy
 from datetime import date, time, datetime
+
 from .base import Base, TimestampMixin
 
-# Use TYPE_CHECKING to avoid circular imports
 if TYPE_CHECKING:
-    from .academic import AcademicSession, Course, Department, CourseInstructor, Student
+    from .academic import AcademicSession, Course, Department, Student, CourseInstructor
     from .infrastructure import Room
     from .versioning import TimetableVersion
     from .users import User
 
-
-# Association table for Exam prerequisites (self-referencing many-to-many)
 exam_prerequisites_association = Table(
     "exam_prerequisites_association",
     Base.metadata,
@@ -61,53 +55,41 @@ class Exam(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
     )
-    duration_minutes: Mapped[int] = mapped_column(Integer, default=180, nullable=False)
-    expected_students: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    requires_special_arrangements: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
-    status: Mapped[str] = mapped_column(String, default="pending", nullable=False)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_practical: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    requires_projector: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
-    is_common: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    morning_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # REMOVED: instructor_id is no longer on the Exam model.
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_students: Mapped[int] = mapped_column(Integer, nullable=False)
+    requires_special_arrangements: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    is_practical: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    requires_projector: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_common: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    morning_only: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
-    course: Mapped["Course"] = relationship("Course", back_populates="exams")
-    session: Mapped["AcademicSession"] = relationship(
-        "AcademicSession", back_populates="exams"
-    )
+    course: Mapped["Course"] = relationship(back_populates="exams")
+    session: Mapped["AcademicSession"] = relationship(back_populates="exams")
     exam_departments: Mapped[List["ExamDepartment"]] = relationship(
-        "ExamDepartment",
-        back_populates="exam",
-        cascade="all, delete-orphan",
-        lazy="selectin",
+        back_populates="exam", cascade="all, delete-orphan"
     )
-    departments = association_proxy("exam_departments", "department")
+    departments: AssociationProxy[List["Department"]] = association_proxy(
+        "exam_departments", "department"
+    )
     timetable_assignments: Mapped[List["TimetableAssignment"]] = relationship(
         back_populates="exam"
     )
 
-    # Self-referencing many-to-many relationship for prerequisites
     prerequisites: Mapped[List["Exam"]] = relationship(
         "Exam",
         secondary=exam_prerequisites_association,
-        primaryjoin=exam_prerequisites_association.c.exam_id == id,
-        secondaryjoin=exam_prerequisites_association.c.prerequisite_id == id,
+        primaryjoin=id == exam_prerequisites_association.c.exam_id,
+        secondaryjoin=id == exam_prerequisites_association.c.prerequisite_id,
         back_populates="dependent_exams",
-        lazy="selectin",
     )
-
     dependent_exams: Mapped[List["Exam"]] = relationship(
         "Exam",
         secondary=exam_prerequisites_association,
-        primaryjoin=exam_prerequisites_association.c.prerequisite_id == id,
-        secondaryjoin=exam_prerequisites_association.c.exam_id == id,
+        primaryjoin=id == exam_prerequisites_association.c.prerequisite_id,
+        secondaryjoin=id == exam_prerequisites_association.c.exam_id,
         back_populates="prerequisites",
-        lazy="selectin",
     )
 
 
@@ -128,72 +110,8 @@ class ExamDepartment(Base, TimestampMixin):
         nullable=False,
     )
 
-    exam: Mapped["Exam"] = relationship("Exam", back_populates="exam_departments")
-    department: Mapped["Department"] = relationship(
-        "Department", back_populates="exam_departments"
-    )
-
-
-# NEW MODEL: Replaces ExamDay and TimeSlot with a template system
-class TimeSlotTemplate(Base):
-    __tablename__ = "timeslot_templates"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # MODIFIED: Override TimestampMixin to match DB schema (timezone aware)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    periods: Mapped[List["TimeSlotTemplatePeriod"]] = relationship(
-        "TimeSlotTemplatePeriod",
-        back_populates="template",
-        cascade="all, delete-orphan",
-    )
-    academic_sessions: Mapped[List["AcademicSession"]] = relationship(
-        "AcademicSession", back_populates="timeslot_template"
-    )
-
-
-# NEW MODEL: Represents a period within a timeslot template
-class TimeSlotTemplatePeriod(Base):
-    __tablename__ = "timeslot_template_periods"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
-    )
-    timeslot_template_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("timeslot_templates.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    period_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    start_time: Mapped[time] = mapped_column(Time, nullable=False)
-    end_time: Mapped[time] = mapped_column(Time, nullable=False)
-
-    template: Mapped["TimeSlotTemplate"] = relationship(
-        "TimeSlotTemplate", back_populates="periods"
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "timeslot_template_id", "period_name", name="uq_template_period_name"
-        ),
-    )
-
-
-# REMOVED: ExamDay model is obsolete
-# REMOVED: TimeSlot model is obsolete
+    exam: Mapped["Exam"] = relationship(back_populates="exam_departments")
+    department: Mapped["Department"] = relationship()
 
 
 class Staff(Base, TimestampMixin):
@@ -206,45 +124,35 @@ class Staff(Base, TimestampMixin):
     first_name: Mapped[str] = mapped_column(String, nullable=False)
     last_name: Mapped[str] = mapped_column(String, nullable=False)
     department_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True
+        PG_UUID(as_uuid=True), ForeignKey("departments.id")
     )
-    position: Mapped[str | None] = mapped_column(String, nullable=True)
+    position: Mapped[str | None] = mapped_column(String)
     staff_type: Mapped[str] = mapped_column(String, nullable=False)
-    can_invigilate: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    max_daily_sessions: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
-    max_consecutive_sessions: Mapped[int] = mapped_column(
-        Integer, default=2, nullable=False
-    )
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    max_concurrent_exams: Mapped[int] = mapped_column(
-        Integer, default=1, nullable=False
-    )
-    max_students_per_invigilator: Mapped[int] = mapped_column(
-        Integer, default=50, nullable=False
-    )
-    generic_availability_preferences: Mapped[dict | None] = mapped_column(
-        JSONB, nullable=True
+    can_invigilate: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    max_daily_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_consecutive_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    max_concurrent_exams: Mapped[int] = mapped_column(Integer, nullable=False)
+    # FIX: Corrected column name from max_students_per_invigilator to match schema
+    max_students_per_invigilator: Mapped[int] = mapped_column(Integer, nullable=False)
+    # FIX: Added missing column from schema
+    generic_availability_preferences: Mapped[dict | None] = mapped_column(JSONB)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id"), unique=True
     )
 
-    department: Mapped["Department"] = relationship(
-        "Department", back_populates="staff"
+    department: Mapped[Optional["Department"]] = relationship(back_populates="staff")
+    user: Mapped[Optional["User"]] = relationship(back_populates="staff_profile")
+    exam_invigilations: Mapped[List["ExamInvigilator"]] = relationship(
+        back_populates="staff"
     )
-    invigilations: Mapped[List["ExamInvigilator"]] = relationship(
-        "ExamInvigilator", back_populates="staff"
-    )
-    unavailability: Mapped[List["StaffUnavailability"]] = relationship(
-        "StaffUnavailability", back_populates="staff"
-    )
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, unique=True
-    )
-    user: Mapped[Optional["User"]] = relationship(
-        "User", back_populates="staff", uselist=False
+    unavailabilities: Mapped[List["StaffUnavailability"]] = relationship(
+        back_populates="staff"
     )
     course_associations: Mapped[List["CourseInstructor"]] = relationship(
         back_populates="staff"
     )
-    taught_courses: AssociationProxy[List["Course"]] = association_proxy(
+    courses: AssociationProxy[List["Course"]] = association_proxy(
         "course_associations", "course"
     )
 
@@ -261,12 +169,11 @@ class ExamInvigilator(Base, TimestampMixin):
     timetable_assignment_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("timetable_assignments.id"), nullable=False
     )
-    # MODIFIED: Changed to role to match schema
-    role: Mapped[str] = mapped_column(String(30), default="invigilator", nullable=False)
+    role: Mapped[str] = mapped_column(String(30), nullable=False)
 
-    staff: Mapped["Staff"] = relationship("Staff", back_populates="invigilations")
+    staff: Mapped["Staff"] = relationship(back_populates="exam_invigilations")
     timetable_assignment: Mapped["TimetableAssignment"] = relationship(
-        "TimetableAssignment", back_populates="invigilators"
+        back_populates="invigilators"
     )
 
 
@@ -282,13 +189,82 @@ class StaffUnavailability(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
     )
-    time_slot_period: Mapped[str | None] = mapped_column(String, nullable=True)
-    unavailable_date: Mapped[Date] = mapped_column(Date, nullable=False)
-    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    time_slot_period: Mapped[str | None] = mapped_column(String)
+    unavailable_date: Mapped[date] = mapped_column(Date, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String)
 
-    staff: Mapped["Staff"] = relationship("Staff", back_populates="unavailability")
+    staff: Mapped["Staff"] = relationship(back_populates="unavailabilities")
     session: Mapped["AcademicSession"] = relationship(
-        "AcademicSession", back_populates="staff_unavailability"
+        back_populates="staff_unavailability"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "staff_id",
+            "unavailable_date",
+            "time_slot_period",
+            name="staff_unavailability_unique",
+        ),
+        UniqueConstraint(
+            "staff_id",
+            "session_id",
+            "unavailable_date",
+            "time_slot_period",
+            name="staff_unavailability_unique_idx",
+        ),
+    )
+
+
+class TimeSlotTemplate(Base):
+    __tablename__ = "timeslot_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    periods: Mapped[List["TimeSlotTemplatePeriod"]] = relationship(
+        back_populates="template", cascade="all, delete-orphan"
+    )
+    academic_sessions: Mapped[List["AcademicSession"]] = relationship(
+        back_populates="timeslot_template"
+    )
+
+
+class TimeSlotTemplatePeriod(Base):
+    __tablename__ = "timeslot_template_periods"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    timeslot_template_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("timeslot_templates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    period_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+
+    template: Mapped["TimeSlotTemplate"] = relationship(back_populates="periods")
+    timetable_assignments: Mapped[List["TimetableAssignment"]] = relationship(
+        back_populates="timeslot_period"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "timeslot_template_id", "period_name", name="uq_template_period_name"
+        ),
     )
 
 
@@ -304,7 +280,6 @@ class TimetableAssignment(Base):
     room_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("rooms.id"), nullable=False
     )
-    # MODIFIED: Replaced time_slot_id with fields from the schema
     exam_date: Mapped[date] = mapped_column(Date, nullable=False)
     timeslot_template_period_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -312,35 +287,32 @@ class TimetableAssignment(Base):
         nullable=False,
     )
     student_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     version_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("timetable_versions.id"), nullable=True
+        PG_UUID(as_uuid=True), ForeignKey("timetable_versions.id")
     )
     allocated_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
-    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    seating_arrangement: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    seating_arrangement: Mapped[dict | None] = mapped_column(JSONB)
 
     exam: Mapped["Exam"] = relationship(back_populates="timetable_assignments")
     room: Mapped["Room"] = relationship(back_populates="timetable_assignments")
-    # MODIFIED: Relationship updated to point to TimeSlotTemplatePeriod
     timeslot_period: Mapped["TimeSlotTemplatePeriod"] = relationship(
-        "TimeSlotTemplatePeriod"
+        back_populates="timetable_assignments"
     )
-    version: Mapped["TimetableVersion"] = relationship(
-        "TimetableVersion", back_populates="timetable_assignments"
+    version: Mapped[Optional["TimetableVersion"]] = relationship(
+        back_populates="timetable_assignments"
     )
     invigilators: Mapped[List["ExamInvigilator"]] = relationship(
-        "ExamInvigilator", back_populates="timetable_assignment"
+        back_populates="timetable_assignment"
     )
 
-    # Add indexes for performance
     __table_args__ = (
         Index("idx_timetable_assignments_version_id", "version_id"),
         Index("idx_timetable_assignments_exam_id", "exam_id"),
     )
 
 
-# NEW MODEL from schema: assignment_change_requests
 class AssignmentChangeRequest(Base):
     __tablename__ = "assignment_change_requests"
 
@@ -355,7 +327,7 @@ class AssignmentChangeRequest(Base):
     )
     reason: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -365,14 +337,11 @@ class AssignmentChangeRequest(Base):
     )
     review_notes: Mapped[str | None] = mapped_column(Text)
 
-    staff: Mapped["Staff"] = relationship("Staff")
-    timetable_assignment: Mapped["TimetableAssignment"] = relationship(
-        "TimetableAssignment"
-    )
-    reviewer: Mapped[Optional["User"]] = relationship("User")
+    staff: Mapped["Staff"] = relationship()
+    timetable_assignment: Mapped["TimetableAssignment"] = relationship()
+    reviewer: Mapped[Optional["User"]] = relationship()
 
 
-# NEW MODEL from schema: conflict_reports
 class ConflictReport(Base):
     __tablename__ = "conflict_reports"
 
@@ -386,7 +355,7 @@ class ConflictReport(Base):
         PG_UUID(as_uuid=True), ForeignKey("exams.id"), nullable=False
     )
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -396,6 +365,6 @@ class ConflictReport(Base):
     )
     resolver_notes: Mapped[str | None] = mapped_column(Text)
 
-    student: Mapped["Student"] = relationship("Student")
-    exam: Mapped["Exam"] = relationship("Exam")
-    reviewer: Mapped[Optional["User"]] = relationship("User")
+    student: Mapped["Student"] = relationship(back_populates="conflict_reports")
+    exam: Mapped["Exam"] = relationship()
+    reviewer: Mapped[Optional["User"]] = relationship()

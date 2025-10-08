@@ -3,7 +3,11 @@
 
 import logging
 import json
-from typing import Dict, Any, List
+
+# --- START OF FIX ---
+from typing import Dict, Any, List, Optional
+
+# --- END OF FIX ---
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -28,7 +32,10 @@ class SessionSetupService:
         time_slots: List[Dict[str, time]],
     ) -> Dict[str, Any]:
         """
-        Calls the `setup_new_exam_session` DB function to create the session and its custom timeslots.
+        Calls the `setup_new_exam_session` DB function.
+
+        This function is now expected to create the academic_session, its associated
+        time slots, AND the corresponding data_seeding_session, returning the IDs for both.
         """
         logger.info(f"User {user_id} is setting up a new exam session: {session_name}")
         try:
@@ -40,20 +47,16 @@ class SessionSetupService:
                 )
                 """
             )
-            # The JSONB parameter needs to be a valid JSON string
             time_slots_json = json.dumps(
                 [
                     {
-                        "name": ts.get(
-                            "name", f"Slot {i+1}"
-                        ),  # Add name for robustness
+                        "name": ts.get("name", f"Slot {i+1}"),
                         "start_time": ts["start_time"].isoformat(),
                         "end_time": ts["end_time"].isoformat(),
                     }
                     for i, ts in enumerate(time_slots)
                 ]
             )
-
             result = await self.session.execute(
                 query,
                 {
@@ -72,9 +75,11 @@ class SessionSetupService:
             logger.error(f"Error setting up new exam session: {e}", exc_info=True)
             return {"success": False, "message": f"Database error: {e}"}
 
+    # --- START OF FIX ---
     async def get_session_setup_summary_and_validate(
         self, session_id: UUID
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
+        # --- END OF FIX ---
         """
         Calls the `get_session_setup_summary_and_validate` DB function to get review data.
         """
@@ -87,28 +92,21 @@ class SessionSetupService:
             return result.scalar_one()
         except Exception as e:
             logger.error(f"Error fetching session setup summary: {e}", exc_info=True)
-            return {"success": False, "message": f"Database error: {e}"}
+            return None  # Return None to allow the route to raise a 404
 
-    # --- START OF THE FIX ---
-    # This is the method that was missing.
     async def process_all_staged_data(self, session_id: UUID) -> Dict[str, Any]:
         """
-        Calls the database function to process all staged data for a given session.
+        Calls the database function to process all staged data for a given session
+        within a single transaction.
         """
         logger.info(
             f"Triggering final processing for all staged data in session {session_id}"
         )
         try:
-            # This function calls all the individual process_staging_* functions in the DB
-            # in the correct dependency order.
             query = text("SELECT exam_system.process_all_staged_data(:p_session_id)")
-
             result = await self.session.execute(query, {"p_session_id": session_id})
             await self.session.commit()
-
-            # The DB function returns a JSONB object with a success message
             db_response = result.scalar_one()
-
             return db_response
         except Exception as e:
             await self.session.rollback()
@@ -120,5 +118,3 @@ class SessionSetupService:
                 "success": False,
                 "message": f"A database error occurred during final processing: {e}",
             }
-
-    # --- END OF THE FIX ---

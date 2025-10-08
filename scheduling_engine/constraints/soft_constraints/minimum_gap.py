@@ -47,7 +47,7 @@ class MinimumGapConstraint(CPSATBaseConstraint):
             logger.error(f"{self.constraint_id}: Day/slot groupings not found.")
             return
 
-        min_gap_slots = self.get_parameter_value("min_gap_slots", default=1)
+        min_gap_slots = int(self.get_parameter_value("min_gap_slots", default=1))
         logger.info(
             f"{self.constraint_id}: Using min_gap_slots = {min_gap_slots} for penalty."
         )

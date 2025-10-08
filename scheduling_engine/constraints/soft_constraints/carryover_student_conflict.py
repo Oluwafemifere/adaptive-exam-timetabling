@@ -36,8 +36,8 @@ class CarryoverStudentConflictConstraint(CPSATBaseConstraint):
     def add_constraints(self):
         """Add carryover student conflict penalty constraints."""
 
-        max_allowed_conflicts = self.get_parameter_value(
-            "max_allowed_conflicts", default=3
+        max_allowed_conflicts = int(
+            self.get_parameter_value("max_allowed_conflicts", default=3)
         )
         logger.info(
             f"{self.constraint_id}: Using max_allowed_conflicts = {max_allowed_conflicts}, weight = {self.penalty_weight}"

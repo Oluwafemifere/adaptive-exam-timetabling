@@ -9,16 +9,19 @@ from .start_uniqueness import StartUniquenessConstraint
 from .occupancy_definition import OccupancyDefinitionConstraint
 from .room_assignment_consistency import RoomAssignmentConsistencyConstraint
 from .unified_student_conflict import UnifiedStudentConflictConstraint
-from .max_exams_per_student_per_day import MaxExamsPerStudentPerDayConstraint
 
 
-from .room_capacity_hard import RoomCapacityHardConstraint
+from .room_capacity_hard import RoomCapacityHardConstraint, AggregateCapacityConstraint
 from .room_continuity import RoomContinuityConstraint
 from .start_feasibility import StartFeasibilityConstraint
+
+# --- MODIFICATION START ---
 from .invigilator_single_presence import InvigilatorSinglePresenceConstraint
-from .minimum_invigilators import MinimumInvigilatorsConstraint
+from .invigilator_requirement import InvigilatorRequirementConstraint
+from .invigilator_continuity import InvigilatorContinuityConstraint
+
+# --- MODIFICATION END ---
 from .room_sequential_use import RoomSequentialUseConstraint
-from .instructor_conflict import InstructorConflictConstraint
 
 
 __all__ = [
@@ -26,12 +29,12 @@ __all__ = [
     "OccupancyDefinitionConstraint",
     "RoomAssignmentConsistencyConstraint",
     "UnifiedStudentConflictConstraint",
-    "MaxExamsPerStudentPerDayConstraint",
     "RoomCapacityHardConstraint",
+    "AggregateCapacityConstraint",
     "RoomContinuityConstraint",
     "StartFeasibilityConstraint",
+    "InvigilatorRequirementConstraint",
     "InvigilatorSinglePresenceConstraint",
-    "MinimumInvigilatorsConstraint",
+    "InvigilatorContinuityConstraint",
     "RoomSequentialUseConstraint",
-    "InstructorConflictConstraint",
 ]

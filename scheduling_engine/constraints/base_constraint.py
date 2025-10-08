@@ -41,7 +41,12 @@ class CPSATBaseConstraint(ABC):
         self.x = shared_vars.x_vars
         self.y = shared_vars.y_vars
         self.z = shared_vars.z_vars
-        self.u = shared_vars.u_vars
+        # --- NEW: Simplified invigilator assignment model ---
+        self.w = shared_vars.w_vars
+        # --- Deprecated ---
+        # self.t = shared_vars.t_vars
+        # self.a = shared_vars.a_vars
+        # self.u = shared_vars.u_vars
         self.precomputed_data = shared_vars.precomputed_data
 
         # Precompute entity lookups

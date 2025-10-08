@@ -9,6 +9,8 @@ REFACTORED FOR PURE CP-SAT SOLVER IMPLEMENTATION.
 import asyncio
 import json
 import logging
+import math
+from enum import Enum  # <-- Import Enum
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 from datetime import datetime, date
@@ -18,7 +20,7 @@ from celery import Task
 from .celery_app import celery_app, _run_coro_in_new_loop
 from .post_processing_tasks import (
     enrich_timetable_result_task,
-)  # Import the new task
+)
 from ..services.scheduling.data_preparation_service import ExactDataFlowService
 from ..services.notification.websocket_manager import publish_job_update
 from ..core.exceptions import SchedulingError
@@ -40,6 +42,28 @@ from scheduling_engine.cp_sat.solver_manager import CPSATSolverManager
 from ortools.sat.python import cp_model
 
 logger = logging.getLogger(__name__)
+
+
+# --- START OF ENHANCED SAFETY NET ---
+def json_safe_default(o):
+    """
+    A robust JSON serializer 'default' function that handles non-serializable types,
+    including datetimes, UUIDs, Enums, and infinity.
+    """
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    if isinstance(o, UUID):
+        return str(o)
+    if isinstance(o, Enum):  # <-- ADDED ENUM HANDLER
+        return o.value
+    if o == float("inf") or o == -float("inf"):
+        return None
+
+    # Let the base class default method raise the TypeError
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
+
+# --- END OF ENHANCED SAFETY NET ---
 
 
 class SchedulingTask(Task):
@@ -77,16 +101,12 @@ class SchedulingTask(Task):
             )
 
 
-# --- START OF FIX ---
-# The function signature is updated to only accept the arguments passed from the service:
-# self (from bind=True), job_id, and options.
 @celery_app.task(bind=True, base=SchedulingTask, name="generate_timetable")
 def generate_timetable_task(
     self,
     job_id: str,
     options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    # --- END OF FIX ---
     """
     Main timetable generation task using the CP-SAT scheduling engine.
     Runs asynchronously with progress updates.
@@ -118,8 +138,6 @@ def generate_timetable_task(
         raise
 
 
-# The internal logic of this function remains the same, as it was already
-# correctly designed to fetch data using the job_id.
 async def _async_generate_timetable(
     task: SchedulingTask,
     job_id: str,
@@ -169,18 +187,11 @@ async def _async_generate_timetable(
 
             assert options is not None
 
-            try:
-                start_date = date.fromisoformat(options["start_date"])
-                end_date = date.fromisoformat(options["end_date"])
-                logger.info(
-                    f"Using date range from user options: {start_date} to {end_date}"
-                )
-            except (KeyError, ValueError):
-                start_date = dataset.exam_period_start
-                end_date = dataset.exam_period_end
-                logger.warning(
-                    f"Using full date range from dataset as fallback: {start_date} to {end_date}"
-                )
+            # --- START OF FIX: Remove fallback logic for date range ---
+            start_date = dataset.exam_period_start
+            end_date = dataset.exam_period_end
+            logger.info(f"Using date range from dataset: {start_date} to {end_date}")
+            # --- END OF FIX ---
 
             if not start_date or not end_date:
                 raise SchedulingError(
@@ -253,7 +264,9 @@ async def _async_generate_timetable(
                 ),
                 {
                     "p_job_id": job_uuid,
-                    "p_results_data": json.dumps(results_payload, default=str),
+                    "p_results_data": json.dumps(
+                        results_payload, default=json_safe_default
+                    ),
                 },
             )
             await db.commit()

@@ -1,20 +1,30 @@
 # scheduling_engine/cp_sat/solver_manager.py
 
 """
-REFACTORED - Solves the CP-SAT model and returns the extracted solution.
-This version aligns with the dynamic model builder and supports parameterized solver settings.
+REFACTORED - Orchestrates the two-phase decomposition solve process.
+This manager first solves the timetabling problem (Phase 1), then solves a
+single, large packing problem for all rooms and invigilators (Phase 2).
 """
 
 import logging
 from typing import Optional, Dict, Any, Tuple, cast
-from datetime import datetime
+from datetime import date, datetime
+from collections import defaultdict
+from uuid import UUID
 
 from ortools.sat.python import cp_model
 
-from scheduling_engine.core.solution import SolutionStatus, TimetableSolution
+from scheduling_engine.core.solution import (
+    SolutionStatus,
+    TimetableSolution,
+    ExamAssignment,
+    AssignmentStatus,
+)
 from scheduling_engine.cp_sat.solution_extractor import SolutionExtractor
 from scheduling_engine.data_flow_tracker import track_data_flow
 from scheduling_engine.cp_sat.model_builder import CPSATModelBuilder
+from scheduling_engine.constraints.constraint_manager import CPSATConstraintManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -27,132 +37,112 @@ class CPSATSolverManager:
         self.model: Optional[cp_model.CpModel] = None
         self.shared_vars = None
         self.solver = cp_model.CpSolver()
-        logger.info("Initialized CPSATSolverManager.")
+        logger.info("Initialized CPSATSolverManager for Two-Phase Decomposition.")
 
-    @track_data_flow("solve_model", include_stats=True)
+    @track_data_flow("solve_model_decomposed", include_stats=True)
     def solve(self) -> Tuple[int, TimetableSolution]:
-        """Builds the model, configures the solver, runs the solve process, and returns the solution."""
-        logger.info("Starting CP-SAT solve process...")
+        """Orchestrates the full two-phase solve process."""
+        logger.info("=============================================")
+        logger.info("===   STARTING TWO-PHASE DECOMPOSED SOLVE   ===")
+        logger.info("=============================================")
 
-        # 1. Build the CP-SAT model using the refactored builder
+        # --- PHASE 1: Timetabling (Assign Exams to Slots) ---
+        logger.info("\n--- PHASE 1: TIMETABLING ---")
         builder = CPSATModelBuilder(problem=self.problem)
-        # The 'configure' call is no longer needed; the builder uses the active constraints
-        # already present in the problem's constraint registry.
-        self.model, self.shared_vars = builder.build()
+        phase1_model, phase1_vars = builder.build_phase1()
 
-        # 2. Configure solver runtime parameters (now parameterized)
-        self._configure_solver_parameters()
+        status, exam_slot_map = self._solve_phase1(phase1_model, phase1_vars)
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            logger.error("Phase 1 failed. Problem is likely infeasible. Aborting.")
+            final_solution = TimetableSolution(self.problem)
+            final_solution.status = SolutionStatus.INFEASIBLE
+            return cast(int, status), final_solution
 
-        # 3. Set up a callback to log progress during the solve
-        class SolutionCallback(cp_model.CpSolverSolutionCallback):
-            def __init__(self):
-                super().__init__()
-                self._solution_count = 0
+        # --- PHASE 2: Full Packing (Assign All Rooms & Invigilators) ---
+        logger.info("\n--- PHASE 2: FULL PACKING & ASSIGNMENT ---")
+        phase2_builder = CPSATModelBuilder(problem=self.problem)
+        phase2_model, phase2_vars = phase2_builder.build_phase2_full_model(
+            exam_slot_map
+        )
 
-            def on_solution_callback(self):
-                self._solution_count += 1
-                logger.info(
-                    f"Found solution #{self._solution_count}, Objective: {self.ObjectiveValue()}"
-                )
+        phase2_status = self._solve_phase2_full(phase2_model)
 
-            @property
-            def solution_count(self):
-                return self._solution_count
+        # --- FINAL SOLUTION EXTRACTION & ASSEMBLY ---
+        final_solution = TimetableSolution(self.problem)
+        if phase2_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            logger.info("Phase 2 solved successfully. Extracting final assignments.")
+            extractor = SolutionExtractor(self.problem, phase2_vars, self.solver)
+            extractor.extract_full_solution(final_solution, exam_slot_map)
+        else:
+            logger.error("Phase 2 FAILED. Solution will only contain time assignments.")
+            # Populate with just Phase 1 data for a partial solution
+            self._populate_solution_from_phase1(exam_slot_map, final_solution)
 
-        callback = SolutionCallback()
+        final_solution.update_statistics()
+        final_solution.status = (
+            SolutionStatus.FEASIBLE
+            if final_solution.is_feasible()
+            else SolutionStatus.INFEASIBLE
+        )
 
-        # 4. Run the solver
-        logger.info("Running CP-SAT solver...")
-        raw_status = self.solver.Solve(self.model, callback)
-        status = cast(int, raw_status)
+        logger.info("\n✅ Two-phase decomposition solve complete.")
+        return cast(int, phase2_status), final_solution
 
-        # 5. Process the results and return the solution
-        return self._process_solve_results(status, callback.solution_count)
+    def _solve_phase1(
+        self, model, shared_vars
+    ) -> Tuple[int, Dict[UUID, Tuple[UUID, date]]]:
+        """Solves the Phase 1 model and extracts the exam-to-slot mapping."""
+        self._configure_solver_parameters(log_progress=True)
+        status = cast(int, self.solver.Solve(model))
+        status_name = self.solver.StatusName()
+        logger.info(f"Phase 1 solver finished with status: {status_name}")
 
-    def _configure_solver_parameters(self) -> None:
-        """Configures solver parameters, sourcing values from the problem model for HITL configurability."""
-        logger.info("Configuring CP-SAT solver parameters from problem definition.")
-        params = self.solver.parameters
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            extractor = SolutionExtractor(self.problem, shared_vars, self.solver)
+            return status, extractor.extract_phase1_solution()
+        return status, {}
 
-        # --- Standard Parameters ---
-        params.enumerate_all_solutions = False
-        params.log_search_progress = True
-
-        # --- Parameterized from UI/Config ---
-        # Get time limit from the problem object, with a safe default
+    def _solve_phase2_full(self, model) -> int:
+        """Solves the single, large Phase 2 packing model."""
         time_limit = getattr(self.problem, "solver_time_limit_seconds", 300.0)
+        self._configure_solver_parameters(
+            time_limit_override=time_limit, log_progress=True
+        )
+        status = cast(int, self.solver.Solve(model))
+        status_name = self.solver.StatusName()
+        logger.info(f"Full Phase 2 solver finished with status: {status_name}")
+        return status
+
+    def _populate_solution_from_phase1(
+        self, exam_slot_map: Dict, solution: TimetableSolution
+    ) -> None:
+        """Populates a solution object with only time assignments from Phase 1."""
+        for exam_id, (slot_id, day_date) in exam_slot_map.items():
+            asm = ExamAssignment(
+                exam_id=exam_id,
+                time_slot_id=slot_id,
+                assigned_date=day_date,
+                status=AssignmentStatus.UNASSIGNED,  # Not fully assigned
+            )
+            solution.assignments[exam_id] = asm
+
+    def _configure_solver_parameters(
+        self, time_limit_override: Optional[float] = None, log_progress: bool = True
+    ) -> None:
+        """Configures solver parameters."""
+        params = self.solver.parameters
+        params.enumerate_all_solutions = False
+        params.log_search_progress = log_progress
+
+        time_limit = time_limit_override or getattr(
+            self.problem, "solver_time_limit_seconds", 300.0
+        )
         params.max_time_in_seconds = float(time_limit)
 
-        # Get worker count from the problem object, with a safe default
-        num_workers = getattr(self.problem, "solver_num_workers", 8)
+        num_workers = getattr(self.problem, "solver_num_workers", 24)
         params.num_workers = int(num_workers)
 
-        logger.info(
-            f"Solver configured: TimeLimit={params.max_time_in_seconds}s, Workers={params.num_workers}"
-        )
-
-    def _process_solve_results(
-        self, status: int, solution_count: int
-    ) -> Tuple[int, TimetableSolution]:
-        """Interprets solver status, logs statistics, and extracts the final solution."""
-        status_map: Dict[int, str] = {
-            cp_model.OPTIMAL: "OPTIMAL",
-            cp_model.FEASIBLE: "FEASIBLE",
-            cp_model.INFEASIBLE: "INFEASIBLE",
-            cp_model.MODEL_INVALID: "MODEL_INVALID",
-            cp_model.UNKNOWN: "UNKNOWN",
-        }
-        status_name = status_map.get(status, f"STATUS_{status}")
-        logger.info(f"Solver finished with status: {status_name}")
-
-        logger.info(
-            "Solver Stats: Solutions Found=%d, Conflicts=%d, Branches=%d, WallTime=%.2fs",
-            solution_count,
-            self.solver.NumConflicts(),
-            self.solver.NumBranches(),
-            self.solver.WallTime(),
-        )
-
-        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            logger.error(
-                f"No solution found. Status: {status_name}. The problem may be infeasible or too complex for the time limit."
+        if log_progress:
+            logger.info(
+                f"Solver configured: TimeLimit={params.max_time_in_seconds}s, Workers={params.num_workers}, LogProgress={log_progress}"
             )
-            return status, TimetableSolution(self.problem)
-
-        try:
-            solution_objective_value = self.solver.ObjectiveValue()
-            logger.info(f"Best solution objective value: {solution_objective_value}")
-        except Exception:
-            solution_objective_value = 0.0
-            logger.warning("Solution found but no objective value is available.")
-
-        logger.info("Extracting best solution found...")
-        extractor = SolutionExtractor(self.problem, self.shared_vars, self.solver)
-        solution = extractor.extract()
-        solution.objective_value = solution_objective_value
-
-        # --- START OF FIX ---
-        # Update the solution's status based on the solver's result before returning.
-        if status == cp_model.OPTIMAL:
-            solution.status = SolutionStatus.OPTIMAL
-        elif status == cp_model.FEASIBLE:
-            solution.status = SolutionStatus.FEASIBLE
-        # --- END OF FIX ---
-
-        logger.info("Solution extraction complete.")
-
-        return status, solution
-
-    def get_solver_statistics(self) -> Dict[str, Any]:
-        """Returns runtime solver statistics after a solve is complete."""
-        stats = {
-            "wall_time": self.solver.WallTime(),
-            "user_time": self.solver.UserTime(),
-            "num_conflicts": self.solver.NumConflicts(),
-            "num_branches": self.solver.NumBranches(),
-        }
-        try:
-            stats["objective_value"] = self.solver.ObjectiveValue()
-        except Exception:
-            stats["objective_value"] = None
-        return stats

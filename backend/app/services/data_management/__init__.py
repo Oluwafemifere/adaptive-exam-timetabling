@@ -6,9 +6,8 @@ Provides services for core CRUD operations and database seeding.
 """
 
 from .core_data_service import CoreDataService
-from .database_seeder import DatabaseSeeder
+
 
 __all__ = [
     "CoreDataService",
-    "DatabaseSeeder",
 ]

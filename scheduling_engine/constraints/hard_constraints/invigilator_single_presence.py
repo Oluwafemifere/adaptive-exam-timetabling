@@ -1,8 +1,7 @@
 # scheduling_engine/constraints/hard_constraints/invigilator_single_presence.py
 """
-CRITICAL FIX - InvigilatorSinglePresenceConstraint
-This constraint ensures that an invigilator can only be assigned to ONE room at a time during any given time slot.
-An invigilator cannot be in multiple rooms simultaneously.
+REWRITTEN - InvigilatorSinglePresenceConstraint (Simplified Model)
+Ensures an invigilator can only be assigned to ONE room in any given time slot.
 """
 
 from collections import defaultdict
@@ -16,13 +15,12 @@ class InvigilatorSinglePresenceConstraint(CPSATBaseConstraint):
     """
     H12: Ensure invigilators are assigned to at most one room per time slot.
 
-    Constraint Logic:
-    - For each invigilator I and time slot T:
-    - Sum of all u(I, exam, room, T) variables <= 1
-    - This prevents an invigilator from being assigned to multiple rooms simultaneously
+    Constraint Logic (Simplified Model):
+    - For each invigilator `i` and time slot `s`:
+    - The sum of all assignment variables w(i, r, s) over all rooms `r` must be <= 1.
     """
 
-    dependencies = ["MinimumInvigilatorsConstraint"]
+    dependencies = []
 
     def initialize_variables(self):
         """No local variables needed for this constraint."""
@@ -30,31 +28,33 @@ class InvigilatorSinglePresenceConstraint(CPSATBaseConstraint):
 
     def add_constraints(self):
         """
-        Enhanced constraint to prevent invigilator conflicts.
-
-        Core Logic: For each (invigilator, timeslot) pair, ensure that the invigilator
-        is assigned to at most one room/exam combination at that time.
+        Prevents an invigilator from being assigned to multiple rooms at the same time.
         """
-        uvars = self.u
-        if not uvars:
-            logger.info(f"{self.constraint_id}: No u variables, skipping.")
+        w_vars = self.w
+        if not w_vars:
+            logger.info(
+                f"{self.constraint_id}: No invigilator assignment variables (w_vars), skipping."
+            )
             self.constraint_count = 0
             return
 
         logger.info(
-            f"{self.constraint_id}: Processing {len(uvars)} invigilator assignment variables."
+            f"{self.constraint_id}: Processing {len(w_vars)} invigilator-in-room assignment variables."
         )
 
         invigilator_slot_assignments = defaultdict(list)
-        for (invid, examid, roomid, slotid), uvar in uvars.items():
-            key = (invid, slotid)
-            invigilator_slot_assignments[key].append(uvar)
+        # The key for a `w_var` is (invigilator_id, room_id, slot_id)
+        for (inv_id, room_id, slot_id), w_var in w_vars.items():
+            grouping_key = (inv_id, slot_id)
+            invigilator_slot_assignments[grouping_key].append(w_var)
 
         constraints_added = 0
-        for (invid, slotid), assignments in invigilator_slot_assignments.items():
+        for (
+            inv_id,
+            slot_id,
+        ), assignments in invigilator_slot_assignments.items():
             if len(assignments) > 1:
-                # CRITICAL CONSTRAINT: An invigilator can only be in one place at a time
-                # Sum of all u(invid, *, *, slotid) <= 1
+                # An invigilator can only be in one room in a given slot.
                 self.model.Add(sum(assignments) <= 1)
                 constraints_added += 1
 

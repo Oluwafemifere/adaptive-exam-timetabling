@@ -30,6 +30,10 @@ def calculate_fitness_pygad(
     This version includes a DURATION-AWARE and BIN-PACKING-HEURISTIC capacity check.
     Fitness is calculated as: - ( (hard_violations * 1000) + soft_penalty )
     The goal is to maximize this value (i.e., bring it closer to 0).
+
+    FIXED: The 'max_exams_per_day' check is now correctly treated as a hard violation
+    to align with the CP-SAT solver's hard constraints, preventing the GA from
+    proposing inherently infeasible solutions.
     """
     individual = list(map(int, solution))
     individual_id = id(individual)
@@ -119,7 +123,7 @@ def calculate_fitness_pygad(
                 hard_violations += 5
                 break
 
-    # Soft Penalty Checks
+    # 3. Max Exams Per Day (as a Hard Violation)
     student_exam_start_slots = defaultdict(list)
     for exam_id, start_slot_id in schedule.items():
         students = problem_spec["student_exam_map"].get(exam_id, [])
@@ -133,11 +137,14 @@ def calculate_fitness_pygad(
             if day_id:
                 student_day_counts[student_id][day_id] += 1
 
-    total_soft_penalty = 0
+    max_exams_per_day = problem_spec["ga_params"].get("max_exams_per_day", 2)
     for student_id, day_counts in student_day_counts.items():
         for day, count in day_counts.items():
-            if count > 2:
-                total_soft_penalty += (count - 2) * 50
+            if count > max_exams_per_day:
+                # Add a significant penalty for each exam over the limit.
+                hard_violations += (count - max_exams_per_day) * 50
+
+    total_soft_penalty = 0
     soft_penalty = total_soft_penalty
 
     # Final fitness value (higher is better)

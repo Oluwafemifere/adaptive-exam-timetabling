@@ -12,6 +12,7 @@ from .timetables import router as timetables_router
 from .users import router as users_router
 from .academic_sessions import router as sessions_router
 from .session_setup import router as session_setup_router
+from .seeding import router as seeding_router
 
 # FIX: Correctly import the 'router' object from the 'versions' module
 from .versions import router as versions_router
@@ -73,7 +74,7 @@ router.include_router(websockets_router, prefix="/ws", tags=["WebSockets"])
 router.include_router(
     session_setup_router, prefix="/setup", tags=["Session Setup Wizard"]
 )
-
+router.include_router(seeding_router, prefix="/seeding", tags=["File Upload"])
 
 # Export the main router for use in the main API
 __all__ = ["router"]

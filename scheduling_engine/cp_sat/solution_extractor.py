@@ -15,13 +15,14 @@ from scheduling_engine.core.solution import (
 from datetime import date, datetime
 
 if TYPE_CHECKING:
-    from scheduling_engine.core.problem_model import ExamSchedulingProblem
+    from scheduling_engine.core.problem_model import ExamSchedulingProblem, Exam
+
 
 logger = logging.getLogger(__name__)
 
 
 class SolutionExtractor:
-    """FIXED - Enhanced solution extractor with UUID keys only and proper room sharing"""
+    """Extractor for the two-phase (Timetable -> Full Pack) model."""
 
     def __init__(self, problem: "ExamSchedulingProblem", shared_vars, solver):
         self.problem = problem
@@ -30,230 +31,96 @@ class SolutionExtractor:
         self.x_vars = shared_vars.x_vars
         self.y_vars = shared_vars.y_vars
         self.z_vars = shared_vars.z_vars
-        self.u_vars = shared_vars.u_vars
+        self.w_vars = shared_vars.w_vars
 
-        self.extraction_stats = {
-            "assignments_from_x": 0,
-            "assignments_from_z": 0,
-            "room_assignments": 0,
-            "conflicts_detected": 0,
-        }
+    def extract_phase1_solution(self) -> Dict[UUID, Tuple[UUID, date]]:
+        """
+        Extracts the result of the Phase 1 solve: a mapping of each exam
+        to its assigned (start_slot_id, date).
+        """
+        if not self.has_solution():
+            return {}
 
-        logger.info(
-            f"UUID-only: Initialized SolutionExtractor for problem with {len(problem.exams)} exams"
-        )
-        logger.info(
-            f"Available variables: x={len(self.x_vars)}, y={len(self.y_vars)}, z={len(self.z_vars)}, u={len(self.u_vars)}"
-        )
-
-    def extract(self) -> TimetableSolution:
-        """Extracts the complete timetable solution from the solver."""
-        solution = TimetableSolution(self.problem)
-        logger.info("Extracting scheduled exams from solver...")
-
-        assignments_found = 0  # <-- ADD a counter
-
-        for (exam_id, slot_id), x_var in self.shared_vars.x_vars.items():
+        exam_slot_map = {}
+        for (exam_id, slot_id), x_var in self.x_vars.items():
             if self.solver.Value(x_var) == 1:
-                assignments_found += 1  # <-- Increment counter
-                start_slot_id = slot_id
-                day = self.problem.get_day_for_timeslot(start_slot_id)
-                if not day:
-                    logger.warning(f"Could not find day for start slot {start_slot_id}")
-                    continue
+                day = self.problem.get_day_for_timeslot(slot_id)
+                if day:
+                    exam_slot_map[exam_id] = (slot_id, day.date)
+                else:
+                    logger.error(f"Could not find day for slot {slot_id}!")
+        return exam_slot_map
 
-                room_ids, invigilator_ids = self._extract_allocations(
-                    exam_id, start_slot_id
-                )
+    def extract_full_solution(
+        self, final_solution: TimetableSolution, phase1_results: Dict
+    ):
+        """
+        Extracts all room and invigilator assignments from the full Phase 2 model
+        and populates the final solution object.
+        """
+        if not self.has_solution():
+            logger.error("No solution found for the full Phase 2 model.")
+            return
 
-                allocations = self.calculate_room_allocations(exam_id, set(room_ids))
+        # 1. Populate the time assignments from Phase 1 results
+        for exam_id, (slot_id, day_date) in phase1_results.items():
+            asm = ExamAssignment(
+                exam_id=exam_id,
+                time_slot_id=slot_id,
+                assigned_date=day_date,
+                status=AssignmentStatus.UNASSIGNED,
+            )
+            final_solution.assignments[exam_id] = asm
 
-                solution.assign(
-                    exam_id=exam_id,
-                    date=day.date,
-                    slot_id=start_slot_id,
-                    rooms=room_ids,
-                    allocations=allocations,
-                    invigilator_ids=invigilator_ids,
-                )
+        # 2. Pre-calculate assigned rooms for each exam's occupied slots
+        exam_room_map = defaultdict(lambda: defaultdict(list))
+        for (exam_id, room_id, slot_id), y_var in self.y_vars.items():
+            if self.solver.Value(y_var):
+                exam_room_map[exam_id][slot_id].append(room_id)
 
-        # --- START OF MODIFICATION ---
-        logger.info(
-            f"Extracted {assignments_found} completed assignments from the solver."
-        )
-        # --- END OF MODIFICATION ---
+        # 3. Pre-calculate assigned invigilators for each room and slot
+        invigilator_room_map = defaultdict(lambda: defaultdict(set))
+        for (inv_id, room_id, slot_id), w_var in self.w_vars.items():
+            if self.solver.Value(w_var):
+                invigilator_room_map[slot_id][room_id].add(inv_id)
 
-        solution.update_statistics()
-        solution.update_assignment_statuses()
-        return solution
+        # 4. Assemble the final assignments
+        for exam_id, assignment in final_solution.assignments.items():
+            start_slot_id, _ = phase1_results.get(exam_id, (None, None))
+            if not start_slot_id:
+                continue
 
-    def _extract_allocations(
-        self, exam_id: UUID, start_slot_id: UUID
-    ) -> Tuple[List[UUID], List[UUID]]:
-        """Extracts room and invigilator UUIDs for a specific exam start."""
-        assigned_room_ids = []
-        assigned_invigilator_ids = []
+            occupied_slots = self.problem.get_occupancy_slots(exam_id, start_slot_id)
 
-        for (y_exam_id, room_id, y_slot_id), y_var in self.shared_vars.y_vars.items():
-            if (
-                y_exam_id == exam_id
-                and y_slot_id == start_slot_id
-                and self.solver.Value(y_var) == 1
-            ):
-                assigned_room_ids.append(room_id)
+            # The rooms assigned are those from the start slot
+            assigned_rooms = exam_room_map.get(exam_id, {}).get(start_slot_id, [])
+            assignment.room_ids = assigned_rooms
 
-        invigilator_set = set()
-        for (
-            inv_id,
-            u_exam_id,
-            u_room_id,
-            u_slot_id,
-        ), u_var in self.shared_vars.u_vars.items():
-            if (
-                u_exam_id == exam_id
-                and u_slot_id == start_slot_id
-                and u_room_id in assigned_room_ids
-                and self.solver.Value(u_var) == 1
-            ):
-                invigilator_set.add(inv_id)
+            # The invigilators assigned are the union of all invigilators
+            # in the assigned rooms across all occupied slots.
+            assigned_invigilators = set()
+            for slot_id in occupied_slots:
+                for room_id in assigned_rooms:
+                    invigilators_in_room = invigilator_room_map.get(slot_id, {}).get(
+                        room_id, set()
+                    )
+                    assigned_invigilators.update(invigilators_in_room)
 
-        assigned_invigilator_ids = list(invigilator_set)
+            assignment.invigilator_ids = list(assigned_invigilators)
+            assignment.room_allocations = self.calculate_room_allocations(
+                exam_id, set(assigned_rooms)
+            )
 
-        return assigned_room_ids, assigned_invigilator_ids
+            if assignment.is_complete():
+                assignment.status = AssignmentStatus.ASSIGNED
 
     def has_solution(self) -> bool:
-        """Enhanced solution availability check with multiple methods"""
+        """Checks if the solver found a valid solution."""
         try:
-            if hasattr(self.solver, "StatusName"):
-                status_name = self.solver.StatusName()
-                if status_name in ["OPTIMAL", "FEASIBLE"]:
-                    logger.debug(f"Solution found with status: {status_name}")
-                    return True
-                else:
-                    logger.warning(
-                        f"Solver status is {status_name}, no solution available."
-                    )
-                    return False
+            status_name = self.solver.StatusName()
+            return status_name in ["OPTIMAL", "FEASIBLE"]
+        except Exception:
             return False
-        except Exception as e:
-            logger.error(f"Error checking solution availability: {e}")
-            return False
-
-    def extract_assignments_comprehensive(self, solution: TimetableSolution) -> None:
-        """Extract assignments using UUID keys with fallbacks"""
-        logger.info("Extracting exam assignments with UUID keys...")
-
-        assignments_from_x = self.extract_from_start_variables(solution)
-        self.extraction_stats["assignments_from_x"] = assignments_from_x
-
-        if assignments_from_x == 0:
-            logger.info(
-                "No assignments from start variables, trying occupancy variables..."
-            )
-            assignments_from_z = self.extract_from_occupancy_variables(solution)
-            self.extraction_stats["assignments_from_z"] = assignments_from_z
-
-        room_assignments = self.extract_room_assignments(solution)
-        self.extraction_stats["room_assignments"] = room_assignments
-
-        invigilator_assignments = self.extract_invigilator_assignments(solution)
-        logger.info(f"Extracted {invigilator_assignments} invigilator assignments.")
-
-    def extract_from_start_variables(self, solution: TimetableSolution) -> int:
-        """FIXED - Extract assignments from start variables with UUID keys"""
-        assignments_found = 0
-        for (exam_id, slot_id), var in self.x_vars.items():
-            try:
-                if self.solver.Value(var):
-                    assignment = solution.assignments.get(
-                        exam_id, ExamAssignment(exam_id=exam_id)
-                    )
-                    assignment.time_slot_id = slot_id
-
-                    day = self.problem.get_day_for_timeslot(slot_id)
-                    if day:
-                        assignment.assigned_date = day.date
-
-                    solution.assignments[exam_id] = assignment
-                    assignments_found += 1
-            except Exception:
-                continue
-        logger.info(f"Extracted {assignments_found} time assignments from X variables.")
-        return assignments_found
-
-    def extract_from_occupancy_variables(self, solution: TimetableSolution) -> int:
-        """FIXED - Extract assignments from occupancy variables with UUID keys"""
-        assignments_found = 0
-        exam_timeslots = defaultdict(list)
-        for (exam_id, slot_id), var in self.z_vars.items():
-            try:
-                if self.solver.Value(var):
-                    exam_timeslots[exam_id].append(slot_id)
-            except Exception:
-                continue
-
-        for exam_id, timeslots in exam_timeslots.items():
-            if timeslots and not solution.assignments[exam_id].is_complete():
-                start_slot_id = min(
-                    timeslots, key=lambda s_id: self.problem.timeslots[s_id].start_time
-                )
-                assignment = solution.assignments.get(
-                    exam_id, ExamAssignment(exam_id=exam_id)
-                )
-                assignment.time_slot_id = start_slot_id
-                day = self.problem.get_day_for_timeslot(start_slot_id)
-                if day:
-                    assignment.assigned_date = day.date
-                solution.assignments[exam_id] = assignment
-                assignments_found += 1
-        logger.info(
-            f"Extracted {assignments_found} time assignments from Z variables as fallback."
-        )
-        return assignments_found
-
-    def extract_room_assignments(self, solution: TimetableSolution) -> int:
-        """FIXED - Extract and validate room assignments with UUID keys"""
-        room_assignments_processed = 0
-        for (exam_id, room_id, slot_id), var in self.y_vars.items():
-            try:
-                if self.solver.Value(var):
-                    assignment = solution.assignments.get(exam_id)
-                    if assignment and assignment.time_slot_id == slot_id:
-                        if room_id not in assignment.room_ids:
-                            assignment.room_ids.append(room_id)
-                        room_assignments_processed += 1
-            except Exception:
-                continue
-
-        for exam_id, assignment in solution.assignments.items():
-            if assignment.room_ids:
-                assignment.room_allocations = self.calculate_room_allocations(
-                    exam_id, set(assignment.room_ids)
-                )
-
-        logger.info(
-            f"Processed {room_assignments_processed} room assignments from Y variables."
-        )
-        return room_assignments_processed
-
-    def extract_invigilator_assignments(self, solution: TimetableSolution) -> int:
-        """FIXED - Extract invigilator assignments with UUID keys"""
-        invigilator_assignments = 0
-        for (inv_id, exam_id, room_id, slot_id), var in self.u_vars.items():
-            try:
-                if self.solver.Value(var):
-                    assignment = solution.assignments.get(exam_id)
-                    if (
-                        assignment
-                        and assignment.time_slot_id == slot_id
-                        and room_id in assignment.room_ids
-                    ):
-                        if inv_id not in assignment.invigilator_ids:
-                            assignment.invigilator_ids.append(inv_id)
-                        invigilator_assignments += 1
-            except Exception:
-                continue
-        return invigilator_assignments
 
     def calculate_room_allocations(
         self, exam_id: UUID, rooms: Set[UUID]
@@ -282,34 +149,3 @@ class SolutionExtractor:
             if students_to_allocate <= 0:
                 break
         return allocations
-
-    def validate_assignments(self, solution: TimetableSolution):
-        """Validate extracted assignments and update status."""
-        for assignment in solution.assignments.values():
-            if not assignment.is_complete():
-                assignment.status = AssignmentStatus.UNASSIGNED
-            else:
-                assignment.status = AssignmentStatus.ASSIGNED
-
-    def ensure_all_exams_assigned(self, solution: TimetableSolution):
-        """Ensure all exam IDs from the problem are present in the solution's assignments."""
-        for exam_id in self.problem.exams:
-            if exam_id not in solution.assignments:
-                solution.assignments[exam_id] = ExamAssignment(
-                    exam_id=exam_id, status=AssignmentStatus.UNASSIGNED
-                )
-
-    def log_extraction_results(self, solution: TimetableSolution, conflicts_found: int):
-        """Log extraction results"""
-        completion = solution.get_completion_percentage()
-        logger.info("--- Solution Extraction Complete ---")
-        logger.info(
-            f"  Status: {solution.status.value}, Feasible: {solution.is_feasible()}"
-        )
-        logger.info(f"  Completion: {completion:.1f}%")
-        logger.info(f"  Conflicts Found: {conflicts_found}")
-        logger.info("------------------------------------")
-
-    def get_completion_percentage(self) -> float:
-        """Calculate completion percentage"""
-        return 0.0

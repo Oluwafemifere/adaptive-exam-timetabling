@@ -1,6 +1,7 @@
 # backend/app/services/system_service.py
 """
-Service for managing system-level configurations, academic sessions, and notifications.
+Service for managing system-level configurations, academic sessions, and other administrative tasks.
+This service acts as a Python wrapper for the corresponding PostgreSQL functions.
 """
 
 import logging
@@ -15,77 +16,183 @@ logger = logging.getLogger(__name__)
 
 
 class SystemService:
-    """Handles system configuration, sessions, and administrative notifications."""
+    """Handles system configuration, sessions, and administrative tasks."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def save_system_configuration(
-        self,
-        user_id: UUID,
-        config_name: str,
-        description: str,
-        is_default: bool,
-        solver_parameters: Dict[str, Any],
-        constraints: List[Dict[str, Any]],
-        config_id: Optional[UUID] = None,
-    ) -> Dict[str, Any]:
-        """
-        Creates or updates a system configuration by calling `create_or_update_system_configuration`.
-        """
-        action = "Updating" if config_id else "Creating"
-        logger.info(f"{action} system configuration '{config_name}' by user {user_id}")
-        query = text(
-            """
-            SELECT exam_system.create_or_update_system_configuration(
-                :p_user_id, :p_config_name, :p_description, :p_is_default,
-                :p_solver_parameters, :p_constraints, :p_config_id
-            )
-            """
-        )
-        result = await self.session.execute(
-            query,
-            {
-                "p_user_id": user_id,
-                "p_config_name": config_name,
-                "p_description": description,
-                "p_is_default": is_default,
-                "p_solver_parameters": json.dumps(solver_parameters),
-                "p_constraints": json.dumps(constraints),
-                "p_config_id": config_id,
-            },
-        )
-        return result.scalar_one()
+    # --- CONSTRAINT & SYSTEM CONFIGURATION MANAGEMENT ---
 
-    async def update_system_configuration_constraints(
-        self, config_id: UUID, user_id: UUID, constraints_payload: List[Dict[str, Any]]
+    async def get_all_constraint_configurations(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        Retrieves a list of all CONSTRAINT configuration profiles.
+        Calls `get_all_constraint_configurations`.
+        """
+        logger.info("Fetching all CONSTRAINT configurations.")
+        query = text("SELECT exam_system.get_all_constraint_configurations()")
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
+
+    async def get_all_system_configurations(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        Retrieves a list of all SYSTEM configurations.
+        Calls `get_all_system_configurations`.
+        """
+        logger.info("Fetching all SYSTEM configurations.")
+        query = text("SELECT exam_system.get_all_system_configurations()")
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
+
+    # Renamed for clarity from get_configuration_details
+    async def get_constraint_configuration_details(
+        self, config_id: UUID
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves the detailed rules and settings for a specific configuration profile.
+        Calls `exam_system.get_constraint_configuration_details(:p_configuration_id)`.
+        """
+        logger.info(f"Fetching details for constraint configuration {config_id}.")
+        try:
+            query = text(
+                "SELECT exam_system.get_constraint_configuration_details(:p_configuration_id)"
+            )
+            result = await self.session.execute(
+                query, {"p_configuration_id": config_id}
+            )
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(
+                f"Failed to fetch configuration details for {config_id}: {e}",
+                exc_info=True,
+            )
+            return None
+
+    async def clone_configuration(
+        self,
+        source_config_id: UUID,
+        new_name: str,
+        new_description: str,
+        user_id: UUID,
     ) -> Dict[str, Any]:
         """
-        Updates only the constraints for a specific system configuration by calling
-        `update_system_configuration_constraints`.
+        Creates a new configuration profile by cloning an existing one.
+        Calls `exam_system.clone_constraint_configuration(...)`.
         """
         logger.info(
-            f"User {user_id} updating constraints for configuration {config_id}"
+            f"User {user_id} cloning configuration {source_config_id} into new config '{new_name}'."
         )
-        query = text(
-            "SELECT exam_system.update_system_configuration_constraints(:p_config_id, :p_user_id, :p_constraints_payload)"
-        )
-        result = await self.session.execute(
-            query,
-            {
-                "p_config_id": config_id,
-                "p_user_id": user_id,
-                "p_constraints_payload": json.dumps(constraints_payload),
-            },
-        )
-        await self.session.commit()
-        return result.scalar_one()
+        try:
+            query = text(
+                """
+                SELECT exam_system.clone_constraint_configuration(
+                    :p_source_config_id, :p_new_name, :p_new_description, :p_user_id
+                )
+                """
+            )
+            result = await self.session.execute(
+                query,
+                {
+                    "p_source_config_id": source_config_id,
+                    "p_new_name": new_name,
+                    "p_new_description": new_description,
+                    "p_user_id": user_id,
+                },
+            )
+            await self.session.commit()
+            return result.scalar_one()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"Failed to clone configuration: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": "Database operation failed during cloning.",
+            }
+
+    async def update_configuration_rules(
+        self, config_id: UUID, rules_payload: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Updates multiple rule settings for a specific configuration in a single transaction.
+        Calls `exam_system.update_configuration_rules(:p_configuration_id, :p_updates)`.
+        """
+        logger.info(f"Updating rules for configuration {config_id}.")
+        try:
+            query = text(
+                "SELECT exam_system.update_configuration_rules(:p_configuration_id, :p_updates)"
+            )
+            result = await self.session.execute(
+                query,
+                {
+                    "p_configuration_id": config_id,
+                    "p_updates": json.dumps(rules_payload, default=str),
+                },
+            )
+            await self.session.commit()
+            return result.scalar_one()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(
+                f"Failed to update configuration rules for {config_id}: {e}",
+                exc_info=True,
+            )
+            return {
+                "success": False,
+                "error": "Database operation failed during update.",
+            }
+
+    async def set_default_configuration(self, config_id: UUID) -> Dict[str, Any]:
+        """
+        Sets a configuration profile as the system-wide default.
+        Calls `exam_system.set_default_constraint_configuration(:p_configuration_id)`.
+        """
+        logger.info(f"Setting constraint configuration {config_id} as default.")
+        try:
+            query = text(
+                "SELECT exam_system.set_default_constraint_configuration(:p_configuration_id)"
+            )
+            result = await self.session.execute(
+                query, {"p_configuration_id": config_id}
+            )
+            await self.session.commit()
+            return result.scalar_one()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"Failed to set default configuration: {e}", exc_info=True)
+            return {"success": False, "error": "Failed to set default configuration."}
+
+    async def delete_configuration(
+        self, config_id: UUID, user_id: UUID
+    ) -> Dict[str, Any]:
+        """
+        Deletes a non-default and unused constraint configuration profile.
+        Calls `exam_system.delete_constraint_configuration(:p_configuration_id)`.
+        (Note: user_id is passed for logging and potential future auditing).
+        """
+        logger.info(f"User {user_id} attempting to delete configuration {config_id}.")
+        try:
+            query = text(
+                "SELECT exam_system.delete_constraint_configuration(:p_configuration_id)"
+            )
+            result = await self.session.execute(
+                query, {"p_configuration_id": config_id}
+            )
+            await self.session.commit()
+            return result.scalar_one()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(
+                f"Failed to delete configuration {config_id}: {e}", exc_info=True
+            )
+            return {"success": False, "error": str(e)}
+
+    # --- ACADEMIC SESSION & NOTIFICATION MANAGEMENT ---
 
     async def set_active_academic_session(
         self, session_id: UUID, user_id: UUID
     ) -> None:
         """
-        Sets the globally active academic session by calling `set_active_academic_session`.
+        Sets the globally active academic session.
+        Calls `exam_system.set_active_academic_session(:p_session_id, :p_user_id)`.
         """
         logger.info(f"User {user_id} setting active academic session to {session_id}")
         query = text(
@@ -105,7 +212,8 @@ class SystemService:
         p_template_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         """
-        Creates a new academic session by calling the corresponding DB function.
+        Creates a new academic session.
+        Calls `exam_system.create_academic_session(...)`.
         """
         logger.info(f"Creating new academic session: {p_name}")
         query = text(
@@ -125,13 +233,15 @@ class SystemService:
                 "p_template_id": p_template_id,
             },
         )
+        await self.session.commit()
         return result.scalar_one()
 
     async def mark_notifications_as_read(
         self, notification_ids: List[UUID], admin_user_id: UUID
     ) -> Dict[str, Any]:
         """
-        Marks administrative notifications as read by calling `mark_notifications_as_read`.
+        Marks administrative notifications as read.
+        Calls `exam_system.mark_notifications_as_read(:p_notification_ids, :p_admin_user_id)`.
         """
         logger.info(
             f"Admin {admin_user_id} marking {len(notification_ids)} notifications as read"
@@ -143,4 +253,5 @@ class SystemService:
             query,
             {"p_notification_ids": notification_ids, "p_admin_user_id": admin_user_id},
         )
+        await self.session.commit()
         return result.scalar_one()

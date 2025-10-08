@@ -2,124 +2,248 @@
 """API endpoints for system configuration, auditing, and reports."""
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from fastapi.responses import StreamingResponse
-import io
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
+
+from pydantic import BaseModel, Field
 
 from ....api.deps import db_session, current_user
 from ....models.users import User
 from ....services.System.system_service import SystemService
-from ....services.auditing.audit_service import AuditService
-from ....services.export.reporting_service import ReportingService
 from ....services.data_retrieval.data_retrieval_service import DataRetrievalService
 from ....schemas.system import (
-    SystemConfigCreate,
-    SystemConfigRead,
-    SystemConfigUpdate,
-    SystemConfigConstraintsUpdate,
-    ReportGenerateRequest,
     GenericResponse,
     PaginatedAuditLogResponse,
+    # --- FIX START ---
+    # Replaced SystemConfigRead with the more accurate ConstraintConfigDetailRead schema
+    # for the details endpoint to prevent response validation errors.
+    ConstraintConfigDetailRead,
+    # --- FIX END ---
 )
 
 router = APIRouter()
 
+# --- Schemas specific to this route file for clarity ---
 
-# -- Configuration --
-@router.post(
-    "/configs", response_model=SystemConfigRead, status_code=status.HTTP_201_CREATED
+
+class ConstraintConfigRead(BaseModel):
+    """Lean schema for listing constraint configuration profiles."""
+
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    is_default: bool
+
+
+class SystemConfigReadList(BaseModel):
+    """Lean schema for listing system configurations."""
+
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    is_default: bool
+
+
+class ConfigCloneRequest(BaseModel):
+    """Schema for cloning a CONSTRAINT configuration."""
+
+    name: str = Field(..., min_length=3)
+    description: Optional[str] = None
+    source_config_id: UUID
+
+
+class ConfigRulesUpdate(BaseModel):
+    """Schema for updating the rules of a CONSTRAINT configuration."""
+
+    constraints: List[dict]
+
+
+# --- 1. Endpoints for SYSTEM Configurations (for Scheduling Page) ---
+
+
+@router.get(
+    "/system-configs",
+    response_model=List[SystemConfigReadList],
+    summary="List All System Configurations",
 )
-async def create_system_configuration(
-    config_in: SystemConfigCreate,
+async def list_system_configurations(
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """Create a new system configuration."""
+    """
+    Retrieve a list of all available system configurations. These are the top-level
+    profiles used to start a scheduling job (e.g., 'Default System Setup', 'Fast Draft').
+    """
     service = SystemService(db)
-    result = await service.save_system_configuration(
-        user_id=user.id, **config_in.model_dump()
-    )
-    if not result or not result.get("id"):
-        raise HTTPException(status_code=400, detail="Failed to save configuration.")
-    return result
+    configs = await service.get_all_system_configurations()
+    return configs or []
 
 
-@router.put("/configs/{config_id}", response_model=SystemConfigRead)
-async def update_system_configuration(
+# --- 2. Endpoints for CONSTRAINT Configurations (for Constraints Page) ---
+
+
+@router.get(
+    "/constraint-configs",
+    response_model=List[ConstraintConfigRead],
+    summary="List All Constraint Configuration Profiles",
+)
+async def list_constraint_configurations(
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Retrieve a list of all available constraint configuration profiles, which contain
+    the detailed rule settings (e.g., 'Default', 'Fast Solve', 'High Quality').
+    """
+    service = SystemService(db)
+    configs = await service.get_all_constraint_configurations()
+    return configs or []
+
+
+@router.get(
+    "/constraint-configs/{config_id}",
+    # --- FIX START ---
+    # Changed response_model from SystemConfigRead to ConstraintConfigDetailRead
+    # to match the actual data returned by the service layer.
+    response_model=ConstraintConfigDetailRead,
+    # --- FIX END ---
+    summary="Get Constraint Configuration Details",
+)
+async def get_constraint_configuration_details(
     config_id: UUID,
-    config_in: SystemConfigUpdate,
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """Update an existing system configuration."""
+    """
+    Get the detailed settings for a single constraint profile, including all its
+    rules, parameters, weights, and enabled/disabled status.
+    """
     service = SystemService(db)
-    result = await service.save_system_configuration(
-        config_id=config_id, user_id=user.id, **config_in.model_dump(exclude_unset=True)
-    )
-    if not result or not result.get("id"):
+    config_details = await service.get_constraint_configuration_details(config_id)
+    if not config_details:
         raise HTTPException(
-            status_code=404, detail="Configuration not found or update failed."
+            status_code=404, detail="Constraint configuration profile not found."
         )
-    return result
+    return config_details
 
 
-@router.put("/configs/{config_id}/constraints", response_model=GenericResponse)
-async def update_configuration_constraints(
-    config_id: UUID,
-    constraints_in: SystemConfigConstraintsUpdate,
+@router.post(
+    "/constraint-configs/clone",
+    response_model=ConstraintConfigRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Clone a Constraint Configuration Profile",
+)
+async def clone_constraint_configuration(
+    config_in: ConfigCloneRequest,
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """Update only the constraints for a specific system configuration."""
+    """
+    Create a new constraint profile by cloning an existing one.
+    """
     service = SystemService(db)
-    result = await service.update_system_configuration_constraints(
-        config_id=config_id,
+    result = await service.clone_configuration(
+        source_config_id=config_in.source_config_id,
+        new_name=config_in.name,
+        new_description=config_in.description or "",
         user_id=user.id,
-        constraints_payload=constraints_in.constraints,
+    )
+    if not result or not result.get("success"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error", "Failed to clone configuration."),
+        )
+
+    # Fetch the newly created config to return its full data
+    new_config_id = result["id"]
+    # --- FIX START ---
+    # Corrected method call from get_configuration_details to get_constraint_configuration_details
+    new_config_details = await service.get_constraint_configuration_details(
+        new_config_id
+    )
+    # --- FIX END ---
+    if not new_config_details:
+        raise HTTPException(
+            status_code=404, detail="Could not retrieve newly created configuration."
+        )
+    return new_config_details
+
+
+@router.put(
+    "/constraint-configs/{config_id}/rules",
+    response_model=GenericResponse,
+    summary="Update Rules for a Constraint Configuration",
+)
+async def update_configuration_rules(
+    config_id: UUID,
+    rules_in: ConfigRulesUpdate,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Update multiple rule settings for a constraint profile in a single transaction.
+    """
+    service = SystemService(db)
+    result = await service.update_configuration_rules(
+        config_id=config_id,
+        rules_payload=rules_in.constraints,
     )
     if not result.get("success"):
         raise HTTPException(
-            status_code=400, detail=result.get("error", "Failed to update constraints.")
+            status_code=400, detail=result.get("error", "Failed to update rules.")
         )
     return GenericResponse(
-        success=True,
-        message="Constraints updated successfully.",
-        data=result.get("data"),
+        success=True, message="Configuration rules updated successfully."
     )
 
 
-@router.get("/configs", response_model=List[SystemConfigRead])
-async def list_system_configurations(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(db_session),
-    user: User = Depends(current_user),
-):
-    """List all system configurations."""
-    service = DataRetrievalService(db)
-    result = await service.get_paginated_entities(
-        "system_configurations", page, page_size
-    )
-    return result.get("data", []) if result else []
-
-
-@router.get("/configs/{config_id}", response_model=SystemConfigRead)
-async def get_system_configuration_details(
+@router.post(
+    "/constraint-configs/{config_id}/set-default",
+    response_model=GenericResponse,
+    summary="Set a Constraint Profile as Default",
+)
+async def set_default_constraint_configuration(
     config_id: UUID,
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """Get details for a specific system configuration."""
-    service = DataRetrievalService(db)
-    config = await service.get_system_configuration_details(config_id)
-    if not config:
-        raise HTTPException(status_code=404, detail="Configuration not found.")
-    return config
+    service = SystemService(db)
+    result = await service.set_default_configuration(config_id=config_id)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=400, detail=result.get("error", "Failed to set default.")
+        )
+    return GenericResponse(success=True, message="Default constraint profile updated.")
 
 
-# -- Auditing --
-@router.get("/audit-history", response_model=PaginatedAuditLogResponse)
+@router.delete(
+    "/constraint-configs/{config_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a Constraint Profile",
+)
+async def delete_constraint_configuration(
+    config_id: UUID,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    service = SystemService(db)
+    result = await service.delete_configuration(config_id=config_id, user_id=user.id)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error", "Failed to delete configuration."),
+        )
+    return None
+
+
+# --- 3. General System Endpoints ---
+
+
+@router.get(
+    "/audit-history",
+    response_model=PaginatedAuditLogResponse,
+    summary="Get Audit History",
+)
 async def get_audit_history(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -128,65 +252,8 @@ async def get_audit_history(
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """Retrieve paginated audit history."""
     service = DataRetrievalService(db)
     result = await service.get_audit_history(page, page_size, entity_type, entity_id)
     if not result:
         raise HTTPException(status_code=404, detail="Audit history not found.")
     return result
-
-
-# -- Reports & Dashboard --
-@router.post("/reports/{session_id}")
-async def generate_system_report(
-    session_id: UUID,
-    report_in: ReportGenerateRequest,
-    db: AsyncSession = Depends(db_session),
-    user: User = Depends(current_user),
-):
-    """Generate a system report and return as file download."""
-    service = ReportingService(db)
-    report_bytes = await service.generate_system_report(
-        report_type=report_in.report_type,
-        session_id=session_id,
-        options=report_in.options,
-    )
-
-    if not report_bytes:
-        raise HTTPException(status_code=404, detail="Report generation failed")
-
-    filename = f"{report_in.report_type}_{session_id}.pdf"
-    return StreamingResponse(
-        io.BytesIO(report_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
-    )
-
-
-@router.get("/dashboard/{session_id}", response_model=GenericResponse)
-async def get_dashboard_kpis(
-    session_id: UUID,
-    db: AsyncSession = Depends(db_session),
-    user: User = Depends(current_user),
-):
-    """Retrieve Key Performance Indicators for the dashboard."""
-    service = DataRetrievalService(db)
-    result = await service.get_dashboard_kpis(session_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="KPIs not found for this session")
-    return GenericResponse(success=True, data=result)
-
-
-@router.get("/configs/default", response_model=GenericResponse)
-async def get_default_config(
-    db: AsyncSession = Depends(db_session),
-    user: User = Depends(current_user),
-):
-    """Retrieve the ID of the default system configuration."""
-    service = DataRetrievalService(db)
-    config_id = await service.get_default_system_configuration()
-    if not config_id:
-        raise HTTPException(
-            status_code=404, detail="No default system configuration found."
-        )
-    return GenericResponse(success=True, data={"config_id": config_id})

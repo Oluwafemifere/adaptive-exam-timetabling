@@ -202,11 +202,14 @@ class ExactDataMapper:
                 )
                 expected_students = 0
 
-            # Process registered_students to create a dictionary for the problem model
+            # --- FIX START ---
+            # The 'students' field from the DB is a JSON object (dict) of {student_id: registration_type},
+            # not a list of objects as previously assumed.
             students_dict = {
-                UUID(str(s["student_id"])): s.get("registration_type", "normal")
-                for s in db_exam.get("registered_students", [])
+                UUID(str(student_id)): reg_type
+                for student_id, reg_type in db_exam.get("students", {}).items()
             }
+            # --- FIX END ---
 
             # Process instructors from the nested list of objects into a set of IDs
             instructor_ids = {
@@ -295,7 +298,6 @@ class ExactDataFlowService:
         self.session = session
         self.mapper = ExactDataMapper()
 
-    # --- MODIFICATION START ---
     async def build_exact_problem_model_dataset(
         self, job_id: UUID
     ) -> ProblemModelCompatibleDataset:
@@ -331,8 +333,6 @@ class ExactDataFlowService:
             )
             raise
 
-    # --- MODIFICATION END ---
-
     def _log_dataset_statistics(self, dataset: ProblemModelCompatibleDataset):
         """Log detailed dataset statistics"""
         stats = {
@@ -349,10 +349,10 @@ class ExactDataFlowService:
         }
         logger.info(f"Dataset Statistics: {stats}")
 
-    # --- MODIFICATION START ---
     async def _validate_and_retrieve_raw_data(self, job_id: UUID) -> Dict[str, Any]:
         """
-        Validate and retrieve raw data by calling the job-centric PostgreSQL function.
+        Validate and retrieve raw data by calling the job-centric PostgreSQL function,
+        with enhanced checks for critical data components like constraints.
         """
         logger.info(
             f"Executing get_scheduling_dataset PostgreSQL function for job {job_id}"
@@ -374,12 +374,14 @@ class ExactDataFlowService:
             if not raw_data or not isinstance(raw_data, dict):
                 raise ValueError("Invalid raw data structure from PostgreSQL function")
 
+            # --- START OF MODIFICATION: Enhanced Validation ---
             critical_components = [
                 "exams",
                 "rooms",
                 "students",
-                "exam_days",
+                "days",
                 "session_id",
+                "constraints",  # Now considered a critical component
             ]
             missing_components = [
                 comp for comp in critical_components if not raw_data.get(comp)
@@ -390,6 +392,13 @@ class ExactDataFlowService:
                     f"Missing critical data components from PG function for job {job_id}: {missing_components}"
                 )
 
+            # Specifically check if the constraints object has rules.
+            if not raw_data.get("constraints", {}).get("rules"):
+                logger.warning(
+                    f"The 'constraints' object for job {job_id} was returned but contains no rules. This might indicate a misconfiguration."
+                )
+            # --- END OF MODIFICATION ---
+
             logger.info(
                 f"Retrieved valid raw data for job {job_id}: {len(raw_data.get('exams', []))} exams"
             )
@@ -398,8 +407,6 @@ class ExactDataFlowService:
         except Exception as e:
             logger.error(f"Failed to retrieve raw data for job {job_id}: {e}")
             raise
-
-    # --- MODIFICATION END ---
 
     async def _map_entities_with_validation(
         self, raw_data: Dict[str, Any]
@@ -612,7 +619,7 @@ class ExactDataFlowService:
             )
 
             # Pass through HITL, config, and slot mode data directly from raw source
-            dataset.days = raw_data.get("exam_days", [])
+            dataset.days = raw_data.get("days", [])
             dataset.constraints = raw_data.get("constraints", {})
             dataset.locks = raw_data.get("locks", [])
             dataset.slot_generation_mode = raw_data.get("slot_generation_mode", "fixed")

@@ -32,7 +32,6 @@ from app.models import (
     Faculty,
     Department,
     Programme,
-    ConstraintCategory,
     ConstraintRule,
     Course,
     Student,
@@ -204,7 +203,7 @@ class EnhancedDatabaseSeeder:
 
         await self._seed_infrastructure()
         await self._seed_academic_structure()
-        await self._seed_constraint_system()
+        # await self._seed_constraint_system()
         # await self._seed_time_slots()
 
         if sample_data:
@@ -790,117 +789,117 @@ class EnhancedDatabaseSeeder:
                 f"✓ Academic structure seeded: {sessions_created} sessions, {faculties_created} faculties, {departments_created} departments, {programmes_created} programmes"
             )
 
-    async def _seed_constraint_system(self) -> None:
-        """Seed constraint categories and rules"""
-        async with db_manager.get_db_transaction() as session:
-            logger.info("⚙️ Seeding constraint system...")
+    # async def _seed_constraint_system(self) -> None:
+    #     """Seed constraint categories and rules"""
+    #     async with db_manager.get_db_transaction() as session:
+    #         logger.info("⚙️ Seeding constraint system...")
 
-            # Skip if models don't exist
-            try:
-                # Constraint categories
-                categories_data = [
-                    ("Hard Constraints", "Must be satisfied", "CP_SAT"),
-                    ("Soft Constraints", "Preferences to optimize", "GA"),
-                ]
+    #         # Skip if models don't exist
+    #         try:
+    #             # Constraint categories
+    #             categories_data = [
+    #                 ("Hard Constraints", "Must be satisfied", "CP_SAT"),
+    #                 ("Soft Constraints", "Preferences to optimize", "GA"),
+    #             ]
 
-                categories = []
-                categories_created = 0
-                for name, desc, layer in categories_data:
-                    existing_cat = (
-                        (
-                            await session.execute(
-                                select(ConstraintCategory).where(
-                                    ConstraintCategory.name == name
-                                )
-                            )
-                        )
-                        .scalars()
-                        .first()
-                    )
+    #             categories = []
+    #             categories_created = 0
+    #             for name, desc, layer in categories_data:
+    #                 existing_cat = (
+    #                     (
+    #                         await session.execute(
+    #                             select(ConstraintCategory).where(
+    #                                 ConstraintCategory.name == name
+    #                             )
+    #                         )
+    #                     )
+    #                     .scalars()
+    #                     .first()
+    #                 )
 
-                    if not existing_cat:
-                        category = ConstraintCategory(
-                            name=name, description=desc, enforcement_layer=layer
-                        )
-                        session.add(category)
-                        await session.flush()
-                        categories.append(category)
-                        categories_created += 1
-                    else:
-                        categories.append(existing_cat)
+    #                 if not existing_cat:
+    #                     category = ConstraintCategory(
+    #                         name=name, description=desc, enforcement_layer=layer
+    #                     )
+    #                     session.add(category)
+    #                     await session.flush()
+    #                     categories.append(category)
+    #                     categories_created += 1
+    #                 else:
+    #                     categories.append(existing_cat)
 
-                # Constraint rules
-                hard_category = next(
-                    (c for c in categories if c.name == "Hard Constraints"), None
-                )
-                if hard_category:
-                    rules_data = [
-                        (
-                            "NO_STUDENT_CONFLICT",
-                            "No Student Conflicts",
-                            "hard",
-                            1.0,
-                            {"type": "no_overlap", "scope": "student"},
-                        ),
-                        (
-                            "ROOM_CAPACITY",
-                            "Room Capacity",
-                            "soft",
-                            1.0,
-                            {"type": "capacity_check", "scope": "room"},
-                        ),
-                        (
-                            "TIME_AVAILABILITY",
-                            "Time Slot Availability",
-                            "hard",
-                            1.0,
-                            {"type": "availability_check", "scope": "timeslot"},
-                        ),
-                        (
-                            "EXAM_DISTRIBUTION",
-                            "Exam Distribution",
-                            "soft",
-                            0.8,
-                            {"type": "distribution", "scope": "schedule"},
-                        ),
-                    ]
+    #             # Constraint rules
+    #             hard_category = next(
+    #                 (c for c in categories if c.name == "Hard Constraints"), None
+    #             )
+    #             if hard_category:
+    #                 rules_data = [
+    #                     (
+    #                         "NO_STUDENT_CONFLICT",
+    #                         "No Student Conflicts",
+    #                         "hard",
+    #                         1.0,
+    #                         {"type": "no_overlap", "scope": "student"},
+    #                     ),
+    #                     (
+    #                         "ROOM_CAPACITY",
+    #                         "Room Capacity",
+    #                         "soft",
+    #                         1.0,
+    #                         {"type": "capacity_check", "scope": "room"},
+    #                     ),
+    #                     (
+    #                         "TIME_AVAILABILITY",
+    #                         "Time Slot Availability",
+    #                         "hard",
+    #                         1.0,
+    #                         {"type": "availability_check", "scope": "timeslot"},
+    #                     ),
+    #                     (
+    #                         "EXAM_DISTRIBUTION",
+    #                         "Exam Distribution",
+    #                         "soft",
+    #                         0.8,
+    #                         {"type": "distribution", "scope": "schedule"},
+    #                     ),
+    #                 ]
 
-                    rules_created = 0
-                    for code, name, constraint_type, weight, definition in rules_data:
-                        existing_rule = (
-                            (
-                                await session.execute(
-                                    select(ConstraintRule).where(
-                                        ConstraintRule.code == code
-                                    )
-                                )
-                            )
-                            .scalars()
-                            .first()
-                        )
+    #                 rules_created = 0
+    #                 for code, name, constraint_type, weight, definition in rules_data:
+    #                     existing_rule = (
+    #                         (
+    #                             await session.execute(
+    #                                 select(ConstraintRule).where(
+    #                                     ConstraintRule.code == code
+    #                                 )
+    #                             )
+    #                         )
+    #                         .scalars()
+    #                         .first()
+    #                     )
 
-                        if not existing_rule:
-                            rule = ConstraintRule(
-                                code=code,
-                                name=name,
-                                constraint_type=constraint_type,
-                                category_id=hard_category.id,
-                                constraint_definition=definition,
-                                default_weight=weight,
-                                is_active=True,
-                                is_configurable=True,
-                            )
-                            session.add(rule)
-                            rules_created += 1
+    #                     if not existing_rule:
+    #                         rule = ConstraintRule(
+    #                             code=code,
+    #                             name=name,
+    #                             constraint_type=constraint_type,
+    #                             category_id=hard_category.id,
+    #                             constraint_definition=definition,
+    #                             default_weight=weight,
+    #                             is_active=True,
+    #                             is_configurable=True,
+    #                         )
+    #                         session.add(rule)
+    #                         rules_created += 1
 
-                    logger.info(
-                        f"✓ Constraint system seeded: {categories_created} categories, {rules_created} rules"
-                    )
+    #                 logger.info(
+    #                     f"✓ Constraint system seeded: {categories_created} categories, {rules_created} rules"
+    #                 )
 
-            except Exception as e:
-                logger.warning(
-                    f"Constraint system seeding skipped (models may not exist): {e}"
-                )
+    #         except Exception as e:
+    #             logger.warning(
+    #                 f"Constraint system seeding skipped (models may not exist): {e}"
+    #             )
 
     # async def _seed_time_slots(self) -> None:
     #     """Seed time slots for exams"""

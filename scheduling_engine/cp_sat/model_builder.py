@@ -1,12 +1,14 @@
 # scheduling_engine/cp_sat/model_builder.py
 """
-REFACTORED Model Builder - Orchestrates model creation and delegates to the Constraint Manager.
+REFACTORED Model Builder for Two-Phase Decomposition.
+Orchestrates model creation by delegating to the appropriate phase-specific
+methods in the Constraint Manager and Encoder.
 """
 
 import logging
 import time
 import traceback
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Optional, Tuple, TYPE_CHECKING, List, Dict
 from ortools.sat.python import cp_model
 
 from scheduling_engine.data_flow_tracker import track_data_flow
@@ -16,7 +18,7 @@ from scheduling_engine.core.constraint_types import ConstraintType
 
 if TYPE_CHECKING:
     from .constraint_encoder import SharedVariables
-    from scheduling_engine.core.problem_model import ExamSchedulingProblem
+    from scheduling_engine.core.problem_model import ExamSchedulingProblem, Exam
 
 
 logger = logging.getLogger(__name__)
@@ -29,65 +31,74 @@ class CPSATModelBuilder:
         self.problem = problem
         self.model = cp_model.CpModel()
         self.shared_variables: Optional["SharedVariables"] = None
+        self.encoder: Optional[ConstraintEncoder] = None
         self.build_duration = 0.0
         logger.info(f"Initialized CPSATModelBuilder for problem {problem.id}")
 
-    @track_data_flow("build_cp_sat_model", include_stats=True)
-    def build(self) -> Tuple[cp_model.CpModel, "SharedVariables"]:
-        """Builds the full model by encoding variables and applying constraints."""
+    @track_data_flow("build_phase1_model", include_stats=True)
+    def build_phase1(self) -> Tuple[cp_model.CpModel, "SharedVariables"]:
+        """Builds the Phase 1 (Timetabling) model."""
         build_start_time = time.time()
         try:
-            logger.info("Starting CP-SAT model build process...")
+            logger.info("Starting Phase 1 model build process...")
             self._validate_problem_data()
+            self.model = cp_model.CpModel()  # Reset model
 
-            logger.info("Encoding variables...")
-            encoder = ConstraintEncoder(problem=self.problem, model=self.model)
-            self.shared_variables = encoder.encode()
+            self.encoder = ConstraintEncoder(problem=self.problem, model=self.model)
+            self.shared_variables = self.encoder.encode_phase1()
 
-            logger.info("Applying constraints via ConstraintManager...")
             constraint_manager = CPSATConstraintManager(problem=self.problem)
-            build_stats = constraint_manager.build_model(
-                self.model, self.shared_variables
-            )
+            constraint_manager.build_phase1_model(self.model, self.shared_variables)
 
-            # --- START OF FIX: Add objective function from penalty terms ---
-            all_penalty_terms = []
-            for instance in constraint_manager.get_constraint_instances():
-                if instance.definition.constraint_type == ConstraintType.SOFT:
-                    all_penalty_terms.extend(instance.get_penalty_terms())
+            self._add_objective_function(constraint_manager)
 
-            if all_penalty_terms:
-                objective_expr = sum(
-                    int(weight) * var for weight, var in all_penalty_terms
-                )
-                self.model.Minimize(objective_expr)
-                logger.info(
-                    f"Objective function set with {len(all_penalty_terms)} penalty terms."
-                )
-            else:
-                logger.info(
-                    "No penalty terms found; not setting an objective function."
-                )
-            if not build_stats.get("build_successful"):
-                error_details = build_stats.get("error", "Unknown error")
-                raise RuntimeError(
-                    f"Constraint manager failed to build model. Error: {error_details}"
-                )
-
-            self._validate_final_model()
             self.build_duration = time.time() - build_start_time
-            logger.info(f"Model build SUCCESS after {self.build_duration:.2f}s")
-
+            logger.info(f"Phase 1 model build SUCCESS after {self.build_duration:.2f}s")
             return self.model, self.shared_variables
 
         except Exception as e:
+            raise RuntimeError(f"Phase 1 model building failed: {e}") from e
+
+    @track_data_flow("build_phase2_model", include_stats=True)
+    def build_phase2_full_model(
+        self, phase1_results: Dict
+    ) -> Tuple[cp_model.CpModel, "SharedVariables"]:
+        """Builds the full Phase 2 (Packing) model based on Phase 1 results."""
+        build_start_time = time.time()
+        try:
+            logger.info("Starting FULL Phase 2 model build process (Packing)...")
+            self.model = cp_model.CpModel()  # Reset model
+
+            self.encoder = ConstraintEncoder(problem=self.problem, model=self.model)
+            self.shared_variables = self.encoder.encode_phase2_full(phase1_results)
+
+            constraint_manager = CPSATConstraintManager(problem=self.problem)
+            constraint_manager.build_phase2_model(self.model, self.shared_variables)
+
+            self._add_objective_function(constraint_manager)
+
             self.build_duration = time.time() - build_start_time
-            error_msg = f"Model building failed: {e}"
-            logger.error(
-                f"Model build FAILED after {self.build_duration:.2f}s: {error_msg}"
+            logger.info(
+                f"Full Phase 2 model build SUCCESS after {self.build_duration:.2f}s"
             )
-            logger.error(f"Traceback:\n{traceback.format_exc()}")
-            raise RuntimeError(error_msg) from e
+            return self.model, self.shared_variables
+
+        except Exception as e:
+            raise RuntimeError(f"Full Phase 2 model building failed: {e}") from e
+
+    def _add_objective_function(self, constraint_manager: CPSATConstraintManager):
+        """Adds minimization objective from soft constraint penalty terms."""
+        all_penalty_terms = []
+        for instance in constraint_manager.get_constraint_instances():
+            if instance.definition.constraint_type == ConstraintType.SOFT:
+                all_penalty_terms.extend(instance.get_penalty_terms())
+
+        if all_penalty_terms:
+            objective_expr = sum(int(weight) * var for weight, var in all_penalty_terms)
+            self.model.Minimize(objective_expr)
+            logger.info(
+                f"Objective function set with {len(all_penalty_terms)} penalty terms."
+            )
 
     def _validate_problem_data(self) -> None:
         """Validates that the problem model contains the necessary data."""
@@ -97,21 +108,3 @@ class CPSATModelBuilder:
             raise ValueError("No time slots defined.")
         if not self.problem.rooms:
             raise ValueError("No rooms defined.")
-        if not self.problem.days:
-            raise ValueError("No days defined.")
-
-    def _validate_final_model(self) -> None:
-        """Validates the final constructed CP-SAT model."""
-        try:
-            proto = self.model.Proto()
-            num_vars = len(proto.variables)
-            num_constraints = len(proto.constraints)
-            logger.info(
-                f"Final Model Stats: {num_vars} variables, {num_constraints} constraints."
-            )
-            if num_vars == 0:
-                raise RuntimeError("Model was built with no variables.")
-            if num_constraints == 0:
-                logger.warning("Model has no constraints.")
-        except Exception as e:
-            logger.warning(f"Could not extract final model statistics: {e}")

@@ -1,10 +1,10 @@
 # scheduling_engine/constraints/constraint_manager.py
 
 """
-MODIFIED Constraint Manager for a dynamic, configurable system.
+MODIFIED Constraint Manager for a dynamic, configurable, two-phase system.
 This manager builds the model by instantiating constraint classes based on the
 active, ordered list of ConstraintDefinition objects provided by the registry.
-This version ensures that foundational constraints are always enforced.
+It now strictly separates non-configurable CORE constraints from DYNAMIC ones.
 """
 
 import logging
@@ -20,12 +20,18 @@ from scheduling_engine.core.constraint_types import (
     ConstraintCategory,
 )
 from scheduling_engine.constraints.hard_constraints import (
+    # Foundational (Core) Constraints
     StartUniquenessConstraint,
     StartFeasibilityConstraint,
-    RoomContinuityConstraint,
     OccupancyDefinitionConstraint,
     RoomAssignmentConsistencyConstraint,
+    RoomContinuityConstraint,
+    InvigilatorRequirementConstraint,
     InvigilatorSinglePresenceConstraint,
+    InvigilatorContinuityConstraint,
+    RoomCapacityHardConstraint,
+    AggregateCapacityConstraint,
+    UnifiedStudentConflictConstraint,  # <-- MOVED TO CORE
 )
 
 logger = logging.getLogger(__name__)
@@ -42,186 +48,157 @@ class CPSATConstraintManager:
         self._constraint_instances: Dict[str, Any] = {}
         logger.info("🎛️  Initialized DYNAMIC CPSATConstraintManager.")
 
-    # def _apply_manual_locks(self, model, shared_variables: SharedVariables):
-    #     """
-    #     Enforces HITL locks as immutable hard constraints.
-    #     This is a critical step for HITL integration, applied after foundational constraints.
-    #     """
-    #     if not self.problem.locks:
-    #         logger.info("No manual locks to apply.")
-    #         return
+    def build_phase1_model(
+        self, model, shared_variables: SharedVariables
+    ) -> Dict[str, Any]:
+        """Builds the Phase 1 (Timetabling) model with time-based constraints."""
+        logger.info("🏗️  Starting DYNAMIC Phase 1 model build...")
 
-    #     logger.info(f"Applying {len(self.problem.locks)} manual locks...")
-    #     locks_applied = 0
-    #     x_vars = shared_variables.x_vars
-    #     y_vars = shared_variables.y_vars
+        # --- CORE CONSTRAINTS (ALWAYS APPLIED) ---
+        # These are foundational for a valid timetabling model.
+        # --- START OF MODIFICATION ---
+        core_constraints = {
+            StartUniquenessConstraint,
+            StartFeasibilityConstraint,
+            OccupancyDefinitionConstraint,
+            # AggregateCapacityConstraint,
+            UnifiedStudentConflictConstraint,  # Now a core, non-configurable constraint
+        }
+        # --- END OF MODIFICATION ---
 
-    #     for lock in self.problem.locks:
-    #         try:
-    #             exam_id = self.problem._ensure_uuid(lock["exam_id"])
-    #             slot_id = self.problem._ensure_uuid(lock.get("time_slot_id"))
-    #             room_ids_data = lock.get("room_ids") or []
-    #             room_ids = [self.problem._ensure_uuid(rid) for rid in room_ids_data]
+        # --- DYNAMIC CONSTRAINTS (APPLIED IF ACTIVE) ---
+        # These represent configurable business rules.
+        active_definitions = self.registry.get_active_constraint_classes()
 
-    #             if exam_id not in self.problem.exams:
-    #                 logger.warning(f"Skipping lock for unknown exam ID: {exam_id}")
-    #                 continue
+        return self._build_model_from_definitions(
+            model, shared_variables, active_definitions, core_constraints
+        )
 
-    #             # Lock to a specific time slot
-    #             if slot_id:
-    #                 if not self.problem.is_start_feasible(exam_id, slot_id):
-    #                     logger.error(
-    #                         f"CRITICAL: Cannot apply lock for exam {exam_id} in slot {slot_id}. "
-    #                         "The exam's duration exceeds the available time in the day. "
-    #                         "This lock makes the problem infeasible. Skipping this lock."
-    #                     )
-    #                     continue
+    def build_phase2_model(
+        self, model, shared_variables: SharedVariables
+    ) -> Dict[str, Any]:
+        """Builds the full Phase 2 (Packing) model."""
+        logger.info("🏗️  Starting DYNAMIC Full Phase 2 model build...")
 
-    #                 x_key = (exam_id, slot_id)
-    #                 if x_key in x_vars:
-    #                     model.Add(x_vars[x_key] == 1)
-    #                     locks_applied += 1
-
-    #                 if room_ids:
-    #                     for room_id in room_ids:
-    #                         y_key = (exam_id, room_id, slot_id)
-    #                         if y_key in y_vars:
-    #                             model.Add(y_vars[y_key] == 1)
-
-    #         except Exception as e:
-    #             logger.error(f"Failed to apply lock {lock}: {e}")
-
-    #     logger.info(f"Successfully applied {locks_applied} lock constraints.")
-
-    def build_model(self, model, shared_variables: SharedVariables) -> Dict[str, Any]:
-        """Builds the complete constraint model from active, configured definitions."""
-        logger.info("🏗️  Starting DYNAMIC constraint model build...")
-        build_start_time = time.time()
-        processed_constraint_ids: Set[str] = set()
-        total_constraints_added = 0
-        successful_modules = 0
-
-        foundational_constraints = {
-            StartUniquenessConstraint: "Ensures each exam starts exactly once.",
-            StartFeasibilityConstraint: "Ensures exams only start in feasible slots.",
-            RoomContinuityConstraint: "Ensures multi-slot exams remain in the same room.",
-            OccupancyDefinitionConstraint: "Defines exam occupancy based on start times.",
-            RoomAssignmentConsistencyConstraint: "Links room assignments to occupancy.",
-            InvigilatorSinglePresenceConstraint: "Prevents invigilators being in two places at once.",
+        # --- CORE CONSTRAINTS (ALWAYS APPLIED) ---
+        # These are foundational for a valid packing and assignment model.
+        core_constraints = {
+            RoomAssignmentConsistencyConstraint,
+            RoomCapacityHardConstraint,
+            RoomContinuityConstraint,
+            InvigilatorRequirementConstraint,
+            InvigilatorSinglePresenceConstraint,
+            InvigilatorContinuityConstraint,
         }
 
-        logger.info("Building foundational constraints that are always enforced...")
-        for cls, desc in foundational_constraints.items():
-            constraint_id = cls.__name__
+        # --- DYNAMIC CONSTRAINTS (APPLIED IF ACTIVE) ---
+        active_definitions = self.registry.get_active_constraint_classes()
+
+        return self._build_model_from_definitions(
+            model, shared_variables, active_definitions, core_constraints
+        )
+
+    def _build_model_from_definitions(
+        self,
+        model,
+        shared_variables: SharedVariables,
+        active_definitions: List[ConstraintDefinition],
+        core_classes: Set[type],
+    ) -> Dict[str, Any]:
+        """Generic model builder that separates core from dynamic constraints."""
+        build_start_time = time.time()
+        total_constraints_added = 0
+        successful_modules = 0
+        self._build_errors = []
+        self._constraint_instances = {}
+        processed_classes = set()
+
+        # --- 1. APPLY CORE, NON-CONFIGURABLE CONSTRAINTS ---
+        logger.info(f"Applying {len(core_classes)} CORE constraints...")
+        for cls in core_classes:
             try:
-                definition = ConstraintDefinition(
-                    id=constraint_id,
-                    name=constraint_id.replace("Constraint", ""),
-                    description=desc,
-                    constraint_type=ConstraintType.HARD,
-                    category=ConstraintCategory.CORE,
-                    enabled=True,
-                    constraint_class=cls,
+                # Use the definition from the registry if available (e.g., for params),
+                # otherwise create a default one.
+                definition = next(
+                    (d for d in active_definitions if d.constraint_class == cls),
+                    ConstraintDefinition(
+                        id=cls.__name__,
+                        name=cls.__name__,
+                        description="Core foundational constraint.",
+                        constraint_type=ConstraintType.HARD,
+                        category=ConstraintCategory.CORE,
+                        enabled=True,
+                        constraint_class=cls,
+                    ),
                 )
 
-                instance = cls(
-                    definition=definition,
-                    problem=self.problem,
-                    shared_vars=shared_variables,
-                    model=model,
+                instance = self._instantiate_and_apply(
+                    definition, model, shared_variables
                 )
-                self._constraint_instances[definition.id] = instance
-
-                instance.initialize_variables()
-                instance.add_constraints()
-
-                stats = instance.get_statistics()
-                constraints_added = stats.get("constraint_count", 0)
-                total_constraints_added += constraints_added
-                successful_modules += 1
-                logger.info(
-                    f"✅ Foundational Module '{definition.id}': {constraints_added} constraints added."
-                )
-                processed_constraint_ids.add(constraint_id)
-
+                if instance:
+                    stats = instance.get_statistics()
+                    total_constraints_added += stats.get("constraint_count", 0)
+                    successful_modules += 1
+                processed_classes.add(cls)
             except Exception as e:
-                error_msg = (
-                    f"Failed to build foundational module '{constraint_id}': {e}"
-                )
+                error_msg = f"Failed to build CORE module '{cls.__name__}': {e}"
                 logger.error(f"❌ {error_msg}\n{traceback.format_exc()}")
                 self._build_errors.append(error_msg)
 
-        # logger.info("Applying manual HITL locks...")
-        # try:
-        #     self._apply_manual_locks(model, shared_variables)
-        # except Exception as e:
-        #     error_msg = f"Failed to apply manual locks: {e}"
-        #     logger.error(f"❌ {error_msg}\n{traceback.format_exc()}")
-        #     self._build_errors.append(error_msg)
-
-        active_definitions = self.registry.get_active_constraint_classes()
-
-        if not active_definitions:
-            logger.warning("No active (dynamic) constraint definitions found to build.")
-        else:
-            logger.info(
-                f"Building model with {len(active_definitions)} active dynamic constraints."
-            )
-            logger.info(f"Dynamic build order: {[d.id for d in active_definitions]}")
-
-        for definition in active_definitions:
+        # --- 2. APPLY DYNAMIC, CONFIGURABLE CONSTRAINTS ---
+        dynamic_definitions = [
+            d for d in active_definitions if d.constraint_class not in processed_classes
+        ]
+        logger.info(
+            f"Applying {len(dynamic_definitions)} DYNAMIC (configurable) constraints..."
+        )
+        for definition in dynamic_definitions:
             try:
-                if definition.id in processed_constraint_ids:
-                    logger.info(
-                        f"Skipping '{definition.id}' as it was already enforced."
-                    )
-                    continue
-
-                if not definition.constraint_class:
-                    logger.warning(
-                        f"Skipping constraint '{definition.id}' as it has no linked class."
-                    )
-                    continue
-
-                instance = definition.constraint_class(
-                    definition=definition,
-                    problem=self.problem,
-                    shared_vars=shared_variables,
-                    model=model,
+                instance = self._instantiate_and_apply(
+                    definition, model, shared_variables
                 )
-                self._constraint_instances[definition.id] = instance
-                instance.initialize_variables()
-                instance.add_constraints()
-
-                stats = instance.get_statistics()
-                constraints_added = stats.get("constraint_count", 0)
-                total_constraints_added += constraints_added
-                successful_modules += 1
-                logger.info(
-                    f"✅ Module '{definition.id}': {constraints_added} constraints added."
-                )
-
+                if instance:
+                    stats = instance.get_statistics()
+                    total_constraints_added += stats.get("constraint_count", 0)
+                    successful_modules += 1
             except Exception as e:
-                error_msg = f"Failed to build module '{definition.id}': {e}"
+                error_msg = f"Failed to build DYNAMIC module '{definition.id}': {e}"
                 logger.error(f"❌ {error_msg}\n{traceback.format_exc()}")
                 self._build_errors.append(error_msg)
 
         build_time = time.time() - build_start_time
         self._build_stats = {
             "build_successful": not self._build_errors,
-            "total_modules_processed": len(foundational_constraints)
-            + len(active_definitions),
+            "total_modules_processed": len(active_definitions),
             "successful_modules": successful_modules,
             "total_constraints_added": total_constraints_added,
             "build_time_seconds": build_time,
             "errors": self._build_errors,
         }
-
         logger.info("🎉 DYNAMIC CONSTRAINT MODEL BUILD COMPLETE!")
         logger.info(f"   • Total constraints added: {total_constraints_added}")
         logger.info(f"   • Build time: {build_time:.2f}s")
-
         return self._build_stats
+
+    def _instantiate_and_apply(self, definition, model, shared_variables):
+        """Instantiates, initializes, and applies a single constraint definition."""
+        if not definition.constraint_class:
+            logger.warning(f"Skipping '{definition.id}', no linked class.")
+            return None
+
+        instance = definition.constraint_class(
+            definition=definition,
+            problem=self.problem,
+            shared_vars=shared_variables,
+            model=model,
+        )
+        self._constraint_instances[definition.id] = instance
+        instance.initialize_variables()
+        instance.add_constraints()
+        logger.info(
+            f"✅ Module '{definition.id}' ({definition.constraint_type.value}): {instance.get_statistics().get('constraint_count', 0)} constraints added."
+        )
+        return instance
 
     def get_build_statistics(self) -> Dict[str, Any]:
         """Return comprehensive build statistics."""

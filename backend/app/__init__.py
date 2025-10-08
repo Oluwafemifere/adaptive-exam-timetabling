@@ -13,7 +13,6 @@ from .core import (
 
 # Services
 from .services import (
-    DatabaseSeeder,
     data_management,
     data_retrieval,
     data_validation,
@@ -36,5 +35,4 @@ __all__ = [
     "data_validation",
     "data_retrieval",
     "data_management",
-    "DatabaseSeeder",
 ]

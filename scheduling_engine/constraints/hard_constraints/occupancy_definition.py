@@ -23,7 +23,7 @@ class OccupancyDefinitionConstraint(CPSATBaseConstraint):
         pass
 
     def add_constraints(self):
-        """Add occupancy definition constraints with StartCovers logic."""
+        """FIXED: Add occupancy definition constraints with robust equivalence logic."""
         constraints_added = 0
 
         for (exam_id, slot_id), z_var in self.z.items():
@@ -31,10 +31,23 @@ class OccupancyDefinitionConstraint(CPSATBaseConstraint):
             start_vars = [self.x[key] for key in start_covers if key in self.x]
 
             if start_vars:
-                self.model.Add(z_var == sum(start_vars))
+                # --- START OF FIX ---
+                # This establishes the robust equivalence: z_var <=> OR(start_vars)
+
+                # 1. Forward Implication: OR(start_vars) => z_var
+                # This is equivalent to: for each x in start_vars, x => z_var
+                for x_var in start_vars:
+                    self.model.AddImplication(x_var, z_var)
+                    constraints_added += 1
+
+                # 2. Reverse Implication: z_var => OR(start_vars)
+                self.model.AddBoolOr(start_vars).OnlyEnforceIf(z_var)
+                constraints_added += 1
+                # --- END OF FIX ---
             else:
+                # If there are no possible start times that cover this slot, z must be false.
                 self.model.Add(z_var == 0)
-            constraints_added += 1
+                constraints_added += 1
 
         self.constraint_count = constraints_added
         logger.info(

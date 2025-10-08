@@ -19,16 +19,12 @@ from .scheduling import (
     ExamInvigilator,
     StaffUnavailability,
     TimetableAssignment,
-    TimeSlotTemplate,  # Added
-    TimeSlotTemplatePeriod,  # Added
+    TimeSlotTemplate,
+    TimeSlotTemplatePeriod,
     AssignmentChangeRequest,
     ConflictReport,
 )
-from .infrastructure import (
-    Building,
-    RoomType,
-    Room,
-)
+from .infrastructure import Building, RoomType, Room
 from .users import (
     User,
     UserNotification,
@@ -44,13 +40,21 @@ from .versioning import (
     SessionTemplate,
     TimetableConflict,
 )
+
+# Correctly import all new constraint models
 from .constraints import (
-    ConfigurationConstraint,
     ConstraintRule,
-    ConstraintCategory,
+    ConstraintParameter,
+    ConstraintConfiguration,
+    ConfigurationRuleSetting,
 )
 from .audit_logs import AuditLog
-from .file_uploads import FileUploadSession, UploadedFile
+from .file_uploads import (
+    FileUploadSession,
+    UploadedFile,
+    DataSeedingSession,
+    FileUpload,
+)
 from .timetable_edits import TimetableEdit
 from .hitl import TimetableScenario, TimetableLock
 
@@ -88,10 +92,10 @@ __all__ = [
     "UserNotification",
     "SystemConfiguration",
     "SystemEvent",
-    "UserFilterPreset",  # Added
+    "UserFilterPreset",
     # Job models
     "TimetableJob",
-    "TimetableJobExamDay",  # Added
+    "TimetableJobExamDay",
     # Versioning models
     "TimetableVersion",
     "VersionMetadata",
@@ -99,13 +103,16 @@ __all__ = [
     "SessionTemplate",
     "TimetableConflict",
     # Constraint models
-    "ConfigurationConstraint",
     "ConstraintRule",
-    "ConstraintCategory",
+    "ConstraintParameter",
+    "ConstraintConfiguration",
+    "ConfigurationRuleSetting",
     # Audit and file models
     "AuditLog",
     "FileUploadSession",
     "UploadedFile",
+    "DataSeedingSession",
+    "FileUpload",
     "TimetableEdit",
     # HITL models
     "TimetableScenario",

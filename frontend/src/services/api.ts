@@ -46,6 +46,52 @@ export interface LoginResponse {
   role: string;
 }
 
+export interface SystemConfiguration {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
+
+export interface ConstraintParameter {
+  key: string;
+  type: string;
+  value: any;
+}
+
+export interface Constraint {
+  id: string;
+  name: string;
+  description: string;
+  type: 'hard' | 'soft';
+  category_id: string;
+  is_enabled: boolean;
+  weight: number;
+  parameters: ConstraintParameter[];
+}
+
+export interface SystemConfigurationDetails extends SystemConfiguration {
+  solver_parameters: Record<string, any>;
+  constraints: Constraint[];
+}
+
+export interface SystemConfigConstraintsUpdate {
+  constraints: {
+    constraint_id: string;
+    is_enabled: boolean;
+    weight: number;
+    custom_parameters: ConstraintParameter[];
+  }[];
+}
+export interface SystemConfigRulesUpdate {
+  constraints: { // The API endpoint expects a key named 'constraints' for the update
+    rule_id: string;
+    is_enabled: boolean;
+    weight: number;
+    parameter_overrides: Record<string, any>;
+  }[];
+}
+
 // Define API methods
 export const api = {
   login: async (username: string, password: string): Promise<{ success: boolean; data: LoginResponse }> => {
@@ -59,7 +105,6 @@ export const api = {
   },
 
   getActiveSession: () => apiService.get('/sessions/active'),
-  
   getCurrentUser: () => apiService.get('/users/me'),
   
   // --- UPDATED & NEW DASHBOARD ENDPOINTS ---
@@ -75,14 +120,14 @@ export const api = {
 
   getPortalData: (userId: string) => apiService.get(`/portal/${userId}`),
   
-  startScheduling: (data: any) => {
+  startScheduling: (data: { session_id: string, configuration_id: string }) => {
     return apiService.post('/scheduling/generate', data);
   },
   
   cancelScheduling: (jobId: string) => apiService.delete(`/jobs/${jobId}`),
   
   uploadFile: (formData: FormData, entityType: string, academicSessionId: string) => {
-    return apiService.post(`/uploads/?entity_type=${entityType}&academic_session_id=${academicSessionId}`, formData, {
+    return apiService.post(`/uploads/${academicSessionId}/${entityType}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
@@ -97,6 +142,13 @@ export const api = {
   // --- NEW SESSION SETUP ENDPOINTS ---
   createExamSessionSetup: (setupData: SessionSetupCreate) => apiService.post('/setup/session', setupData),
   getSessionSummary: (sessionId: string) => apiService.get(`/setup/session/${sessionId}/summary`),
+  getAllConstraintConfigurations: () => apiService.get<SystemConfiguration[]>('/system/constraint-configs'),
+  getAllSystemConfigurations: () => apiService.get<SystemConfiguration[]>('/system/system-configs'),
+  getConfigurationDetails: (configId: string) => apiService.get<SystemConfigurationDetails>(`/system/constraint-configs/${configId}`),
+  updateConfigurationRules: (configId: string, payload: SystemConfigRulesUpdate) => apiService.put(`/system/constraint-configs/${configId}/rules`, payload),
+  cloneConfiguration: (payload: { name: string; description?: string; source_config_id: string }) => apiService.post('/system/configs/clone', payload),
+  setDefaultConfiguration: (configId: string) => apiService.post(`/system/configs/${configId}/set-default`),
+  deleteConfiguration: (configId: string) => apiService.delete(`/system/configs/${configId}`),
 };
 
 

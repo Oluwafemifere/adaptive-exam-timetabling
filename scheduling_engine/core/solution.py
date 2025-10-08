@@ -10,6 +10,7 @@
 # 6. FIXED conflict detection to allow valid room sharing
 # 7. FIXED Update assignment status to CONFLICT when conflicts are detected
 # 8. FIXED division by zero errors in statistics calculation
+# 9. FIXED non-JSON-compliant 'Infinity' and Enum serialization
 
 import json
 import traceback
@@ -167,7 +168,8 @@ class TimetableSolution:
         conflict_penalty = len(conflicts) * 10
         completion_bonus = completion
 
-        return conflict_penalty - completion_bonus
+        self.objective_value = conflict_penalty - completion_bonus
+        return self.objective_value
 
     def get_students_for_exam_enhanced(self, exam_id: UUID) -> Set[UUID]:
         """FIXED - Enhanced student retrieval for exam using UUID keys"""
@@ -229,7 +231,7 @@ class TimetableSolution:
     def _detect_student_temporal_conflicts(
         self, slot_assignments: List[ExamAssignment], day: date, slot_id: UUID
     ) -> List[ConflictReport]:
-        """Detect students scheduled for multiple exams at the same time"""
+        """Detect students scheduled for multiple exams at the same time, differentiating by registration type."""
         conflicts = []
         student_exam_map: Dict[UUID, List[UUID]] = defaultdict(list)
         for assignment in slot_assignments:
@@ -238,17 +240,42 @@ class TimetableSolution:
                 student_exam_map[student_id].append(assignment.exam_id)
 
         for student_id, exam_list in student_exam_map.items():
-            if len(exam_list) > 1:
-                conflicts.append(
-                    ConflictReport(
-                        conflict_id=uuid4(),
-                        conflict_type="student_temporal_conflict",
-                        severity=ConstraintSeverity.CRITICAL,
-                        affected_exams=exam_list,
-                        affected_students=[student_id],
-                        description=f"Student has {len(exam_list)} exams in the same slot.",
-                    )
+            if len(exam_list) <= 1:
+                continue
+
+            # --- START MODIFICATION ---
+            # Check if this conflict involves only carryover registrations for this student
+            is_carryover_conflict = True
+            for exam_id in exam_list:
+                exam = self.problem.exams.get(exam_id)
+                if exam and exam.students.get(student_id) == "normal":
+                    is_carryover_conflict = False
+                    break
+
+            if is_carryover_conflict:
+                conflict_type = "student_carryover_conflict"
+                severity = ConstraintSeverity.MEDIUM  # Less severe
+                description = (
+                    f"Carryover student has {len(exam_list)} exams in the same slot."
                 )
+            else:
+                conflict_type = "student_temporal_conflict"
+                severity = (
+                    ConstraintSeverity.CRITICAL
+                )  # This is a hard constraint violation
+                description = f"Student has {len(exam_list)} exams in the same slot (involving at least one normal registration)."
+            # --- END MODIFICATION ---
+
+            conflicts.append(
+                ConflictReport(
+                    conflict_id=uuid4(),
+                    conflict_type=conflict_type,
+                    severity=severity,
+                    affected_exams=exam_list,
+                    affected_students=[student_id],
+                    description=description,
+                )
+            )
         return conflicts
 
     def _detect_room_capacity_conflicts(
@@ -263,9 +290,15 @@ class TimetableSolution:
             exam = self.problem.exams.get(assignment.exam_id)
             if not exam:
                 continue
-            for room_id in assignment.room_ids:
-                room_student_count[room_id] += exam.expected_students
-                room_exams_map[room_id].append(assignment.exam_id)
+            # Use room_allocations for precise student count per room if available
+            if assignment.room_allocations:
+                for room_id, count in assignment.room_allocations.items():
+                    room_student_count[room_id] += count
+                    room_exams_map[room_id].append(assignment.exam_id)
+            else:  # Fallback for simpler assignments
+                for room_id in assignment.room_ids:
+                    room_student_count[room_id] += exam.expected_students
+                    room_exams_map[room_id].append(assignment.exam_id)
 
         for room_id, total_students in room_student_count.items():
             room = self.problem.rooms.get(room_id)
@@ -322,6 +355,7 @@ class TimetableSolution:
         """
         MODIFIED: Creates a comprehensive dictionary representation of the solution,
         ideal for serialization to JSON for frontend display.
+        Handles non-JSON-compliant float values and Enums.
         """
         self.update_statistics()
         self.update_assignment_statuses()
@@ -329,12 +363,31 @@ class TimetableSolution:
         metrics_calculator = SolutionMetrics()
         quality_score = metrics_calculator.evaluate_solution_quality(self.problem, self)
 
+        objective_value = self.calculate_objective_value()
+        objective_value_serializable = (
+            None
+            if objective_value == float("inf") or objective_value == -float("inf")
+            else objective_value
+        )
+
+        # --- START OF ENUM FIX ---
+        # Manually build the conflicts list to ensure Enums are converted to strings
+        serializable_conflicts = []
+        for c in self.conflicts.values():
+            conflict_dict = asdict(c)
+            conflict_dict["severity"] = (
+                c.severity.value
+            )  # Convert Enum member to its string value
+            serializable_conflicts.append(conflict_dict)
+        # --- END OF ENUM FIX ---
+
         return {
             "solution_id": str(self.id),
             "problem_id": str(self.problem.id),
             "created_at": self.created_at.isoformat(),
             "last_modified": self.last_modified.isoformat(),
             "status": self.status.value,
+            "objective_value": objective_value_serializable,
             "statistics": self.statistics.to_dict(),
             "quality_metrics": quality_score.to_dict(),
             "assignments": {
@@ -351,7 +404,7 @@ class TimetableSolution:
                 }
                 for eid, a in self.assignments.items()
             },
-            "conflicts": [asdict(c) for c in self.conflicts.values()],
+            "conflicts": serializable_conflicts,  # Use the sanitized list
         }
 
     def update_soft_constraint_metrics(self, problem: "ExamSchedulingProblem"):

@@ -320,7 +320,9 @@ class GAProcessor:
     def _generate_search_hints(self, top_individuals: List[Any]) -> Dict[Any, Any]:
         """Generates high-confidence search hints for the CP-SAT solver."""
         hints = {}
+        # --- START OF FIX: Make hint_threshold configurable ---
         hint_threshold = self.ga_params.get("hint_threshold", 0.9)
+        # --- END OF FIX ---
         num_individuals = len(top_individuals)
 
         if num_individuals == 0:

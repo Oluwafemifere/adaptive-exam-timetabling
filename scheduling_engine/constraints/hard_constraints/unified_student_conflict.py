@@ -27,7 +27,7 @@ class UnifiedStudentConflictConstraint(CPSATBaseConstraint):
             self.precomputed_data["student_exams"] = self.student_exams
 
     def add_constraints(self):
-        """Add correct student conflict constraints FOR NORMAL REGISTRATIONS ONLY."""
+        """FIXED: Add correct student conflict constraints for conflicts involving at least one normal registration."""
         constraints_added = 0
         if not self.z:
             raise RuntimeError(
@@ -41,24 +41,66 @@ class UnifiedStudentConflictConstraint(CPSATBaseConstraint):
             self.constraint_count = 0
             return
 
+        # --- START OF NEW VALIDATION LOGIC ---
+        total_available_minutes = sum(
+            ts.duration_minutes
+            for day in self.problem.days.values()
+            for ts in day.timeslots
+        )
+        logger.info(
+            f"VALIDATION: Total available exam minutes in period: {total_available_minutes}"
+        )
+
+        for student_id, exam_ids in self.student_exams.items():
+            total_student_exam_minutes = sum(
+                self.problem.exams[eid].duration_minutes
+                for eid in exam_ids
+                if eid in self.problem.exams
+            )
+            if total_student_exam_minutes > total_available_minutes:
+                logger.critical(
+                    f"IMPOSSIBLE SCHEDULE DETECTED FOR STUDENT: {student_id}"
+                )
+                logger.critical(
+                    f"  -> Total required exam time: {total_student_exam_minutes} minutes."
+                )
+                logger.critical(
+                    f"  -> Total available time in whole period: {total_available_minutes} minutes."
+                )
+                logger.critical(f"  -> Exams: {exam_ids}")
+                # You could raise an error here to stop the process immediately
+                # raise ValueError(f"Impossible schedule for student {student_id}")
+        # --- END OF NEW VALIDATION LOGIC ---
+
         for student_id, exam_ids in self.student_exams.items():
             if len(exam_ids) <= 1:
                 continue
 
             for slot_id in self.problem.timeslots:
-                # Filter for exams where the student has a 'normal' registration
-                student_normal_exams_in_slot = []
+                # --- START OF FIX ---
+                # Step 1: Gather ALL potential exam occupancies for this student in this slot.
+                all_student_exams_in_slot = []
+                has_normal_registration = False
+
                 for exam_id in exam_ids:
                     exam = self.problem.exams.get(exam_id)
-                    # Check registration type is 'normal'
-                    if exam and exam.students.get(student_id) == "normal":
-                        z_key = (exam_id, slot_id)
-                        if z_key in self.z:
-                            student_normal_exams_in_slot.append(self.z[z_key])
+                    if not exam:
+                        continue
 
-                if len(student_normal_exams_in_slot) > 1:
-                    self.model.Add(sum(student_normal_exams_in_slot) <= 1)
+                    # Check the registration type for this specific exam and student
+                    if exam.students.get(student_id) == "normal":
+                        has_normal_registration = True
+
+                    z_key = (exam_id, slot_id)
+                    if z_key in self.z:
+                        all_student_exams_in_slot.append(self.z[z_key])
+
+                # Step 2: If there's a potential for an overlap (more than 1 exam) AND at least one of them
+                # is a normal registration, then enforce the hard constraint.
+                if len(all_student_exams_in_slot) > 1 and has_normal_registration:
+                    self.model.Add(sum(all_student_exams_in_slot) <= 1)
                     constraints_added += 1
+                # --- END OF FIX ---
 
         self.constraint_count = constraints_added
         logger.info(

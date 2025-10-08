@@ -236,6 +236,7 @@ class Invigilator:
     staff_type: Optional[str] = None
     max_daily_sessions: int = 2
     max_consecutive_sessions: int = 1
+    department_id: Optional[UUID] = None  # For heuristics
 
     def __post_init__(self):
         """Validate invigilator data"""
@@ -252,6 +253,7 @@ class Invigilator:
         """Converts the Invigilator object to a dictionary."""
         d = asdict(self)
         d["id"] = str(self.id)
+        d["department_id"] = str(self.department_id) if self.department_id else None
         return d
 
     @classmethod
@@ -264,12 +266,14 @@ class Invigilator:
             uuid_obj = UUID(str(id_value))
 
         full_name = data.get("name", f"Staff {data.get('staff_number', '')}")
+        dept_id = data.get("department_id")
 
         return cls(
             id=uuid_obj,
             name=full_name,
             email=data.get("email"),
             department=data.get("department"),
+            department_id=UUID(str(dept_id)) if dept_id else None,
             can_invigilate=data.get("can_invigilate", True),
             max_concurrent_exams=data.get("max_concurrent_exams", 1),
             max_students_per_exam=data.get("max_students_per_exam", 50),
@@ -486,30 +490,33 @@ class ExamSchedulingProblem:
         # --- HITL and Dynamic Configuration ---
         self.locks: List[Dict[str, Any]] = []
         self.constraint_definitions: List[ConstraintDefinition] = []
+
         self.module_map: Dict[str, str] = {
-            # --- CORE (Always Enforced by Manager) ---
+            # --- CORE (Internally enforced by ConstraintManager) ---
             "StartUniquenessConstraint": "scheduling_engine.constraints.hard_constraints.start_uniqueness.StartUniquenessConstraint",
-            "OccupancyDefinitionConstraint": "scheduling_engine.constraints.hard_constraints.occupancy_definition.OccupancyDefinitionConstraint",
-            "RoomAssignmentConsistencyConstraint": "scheduling_engine.constraints.hard_constraints.room_assignment_consistency.RoomAssignmentConsistencyConstraint",
-            "RoomContinuityConstraint": "scheduling_engine.constraints.hard_constraints.room_continuity.RoomContinuityConstraint",
             "StartFeasibilityConstraint": "scheduling_engine.constraints.hard_constraints.start_feasibility.StartFeasibilityConstraint",
+            "OccupancyDefinitionConstraint": "scheduling_engine.constraints.hard_constraints.occupancy_definition.OccupancyDefinitionConstraint",
+            "RoomContinuityConstraint": "scheduling_engine.constraints.hard_constraints.room_continuity.RoomContinuityConstraint",
+            "RoomAssignmentConsistencyConstraint": "scheduling_engine.constraints.hard_constraints.room_assignment_consistency.RoomAssignmentConsistencyConstraint",
+            "InvigilatorRequirementConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_requirement.InvigilatorRequirementConstraint",
             "InvigilatorSinglePresenceConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_single_presence.InvigilatorSinglePresenceConstraint",
-            # --- DYNAMIC HARD (Configurable) ---
-            "UNIFIED_STUDENT_CONFLICT": "scheduling_engine.constraints.hard_constraints.unified_student_conflict.UnifiedStudentConflictConstraint",
-            "MAX_EXAMS_PER_STUDENT_PER_DAY": "scheduling_engine.constraints.hard_constraints.max_exams_per_student_per_day.MaxExamsPerStudentPerDayConstraint",
+            "InvigilatorContinuityConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_continuity.InvigilatorContinuityConstraint",
+            "AggregateCapacityConstraint": "scheduling_engine.constraints.hard_constraints.room_capacity_hard.AggregateCapacityConstraint",
             "ROOM_CAPACITY_HARD": "scheduling_engine.constraints.hard_constraints.room_capacity_hard.RoomCapacityHardConstraint",
-            "MINIMUM_INVIGILATORS": "scheduling_engine.constraints.hard_constraints.minimum_invigilators.MinimumInvigilatorsConstraint",
-            "INSTRUCTOR_CONFLICT": "scheduling_engine.constraints.hard_constraints.instructor_conflict.InstructorConflictConstraint",
+            "UNIFIED_STUDENT_CONFLICT": "scheduling_engine.constraints.hard_constraints.unified_student_conflict.UnifiedStudentConflictConstraint",
+            # --- DYNAMIC HARD (Configurable via DB) ---
             "ROOM_SEQUENTIAL_USE": "scheduling_engine.constraints.hard_constraints.room_sequential_use.RoomSequentialUseConstraint",
-            # --- DYNAMIC SOFT (Configurable) ---
+            # --- DYNAMIC SOFT (Configurable via DB) ---
+            "INSTRUCTOR_CONFLICT": "scheduling_engine.constraints.soft_constraints.instructor_conflict.InstructorConflictConstraint",
             "MINIMUM_GAP": "scheduling_engine.constraints.soft_constraints.minimum_gap.MinimumGapConstraint",
             "OVERBOOKING_PENALTY": "scheduling_engine.constraints.soft_constraints.overbooking_penalty.OverbookingPenaltyConstraint",
+            "MAX_EXAMS_PER_STUDENT_PER_DAY": "scheduling_engine.constraints.soft_constraints.max_exams_per_student_per_day.MaxExamsPerStudentPerDayConstraint",
             "PREFERENCE_SLOTS": "scheduling_engine.constraints.soft_constraints.preference_slots.PreferenceSlotsConstraint",
             "INVIGILATOR_LOAD_BALANCE": "scheduling_engine.constraints.soft_constraints.invigilator_load_balance.InvigilatorLoadBalanceConstraint",
             "CARRYOVER_STUDENT_CONFLICT": "scheduling_engine.constraints.soft_constraints.carryover_student_conflict.CarryoverStudentConflictConstraint",
-            "INVIGILATOR_AVAILABILITY": "scheduling_engine.constraints.soft_constraints.invigilator_availability.InvigilatorAvailabilityConstraint",
             "DAILY_WORKLOAD_BALANCE": "scheduling_engine.constraints.soft_constraints.daily_workload_balance.DailyWorkloadBalanceConstraint",
             "ROOM_DURATION_HOMOGENEITY": "scheduling_engine.constraints.soft_constraints.room_duration_homogeneity.RoomDurationHomogeneityConstraint",
+            "ROOM_FIT_PENALTY": "scheduling_engine.constraints.soft_constraints.room_fit_penalty.RoomFitPenaltyConstraint",
         }
 
         self.constraint_registry = ConstraintRegistry()
@@ -522,6 +529,7 @@ class ExamSchedulingProblem:
         self.max_students_per_invigilator = 50
         self.allow_back_to_back_exams = False
         self.require_same_day_practicals = True
+        self.subproblem_time_limit_seconds: float = 30.0
 
         # Configuration parameters
         self.min_gap_slots = 1
@@ -565,34 +573,23 @@ class ExamSchedulingProblem:
             logger.info("Activated all enabled constraints from configuration.")
 
     def _parse_constraint_definitions(self, constraints_data: Dict[str, Any]) -> None:
-        """Parses the raw constraint JSON from the DB into structured dataclasses."""
+        """
+        Parses the raw constraint JSON from the DB into structured dataclasses
+        with robust weight parsing.
+        """
         self.constraint_definitions = []
         rules = constraints_data.get("rules", [])
         config_id = self._ensure_uuid(constraints_data.get("system_configuration_id"))
 
-        # Define a comprehensive map for known constraints to ensure correct categorization.
         known_categories = {
-            # Core/Foundational
-            "StartUniquenessConstraint": ConstraintCategory.CORE,
-            "StartFeasibilityConstraint": ConstraintCategory.CORE,
-            "OccupancyDefinitionConstraint": ConstraintCategory.CORE,
-            "RoomContinuityConstraint": ConstraintCategory.CORE,
-            "RoomAssignmentConsistencyConstraint": ConstraintCategory.CORE,
-            # Student Constraints
-            "UnifiedStudentConflictConstraint": ConstraintCategory.STUDENT_CONSTRAINTS,
+            "UNIFIED_STUDENT_CONFLICT": ConstraintCategory.STUDENT_CONSTRAINTS,
             "MAX_EXAMS_PER_STUDENT_PER_DAY": ConstraintCategory.STUDENT_CONSTRAINTS,
-            "MaxExamsPerStudentPerDayConstraint": ConstraintCategory.STUDENT_CONSTRAINTS,
-            "MinimumGapConstraint": ConstraintCategory.STUDENT_CONSTRAINTS,
             "MINIMUM_GAP": ConstraintCategory.STUDENT_CONSTRAINTS,
-            # Resource Constraints
-            "RoomCapacityHardConstraint": ConstraintCategory.RESOURCE_CONSTRAINTS,
-            "RoomSequentialUseConstraint": ConstraintCategory.RESOURCE_CONSTRAINTS,
-            # Invigilator Constraints
-            "MinimumInvigilatorsConstraint": ConstraintCategory.INVIGILATOR_CONSTRAINTS,
-            "MINIMUM_INVIGILATORS": ConstraintCategory.INVIGILATOR_CONSTRAINTS,
-            "InvigilatorSinglePresenceConstraint": ConstraintCategory.INVIGILATOR_CONSTRAINTS,
-            # Optimization Constraints
-            "RoomDurationHomogeneityConstraint": ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
+            "ROOM_CAPACITY_HARD": ConstraintCategory.RESOURCE_CONSTRAINTS,
+            "ROOM_SEQUENTIAL_USE": ConstraintCategory.RESOURCE_CONSTRAINTS,
+            "INSTRUCTOR_CONFLICT": ConstraintCategory.INVIGILATOR_CONSTRAINTS,
+            "ROOM_DURATION_HOMOGENEITY": ConstraintCategory.OPTIMIZATION_CONSTRAINTS,
+            "ROOM_FIT_PENALTY": ConstraintCategory.RESOURCE_CONSTRAINTS,
         }
 
         for rule in rules:
@@ -602,19 +599,52 @@ class ExamSchedulingProblem:
                     rule_code, ConstraintCategory.OTHER
                 )
 
-                custom_params_data = rule.get("custom_parameters") or []
-                params = [
-                    ParameterDefinition(
-                        key=p["key"],
-                        value=p.get("value"),
-                        type=p.get("type", "any"),
-                        default=p.get("default"),
-                        description=p.get("description"),
-                        options=p.get("options"),
-                        validation=p.get("validation", {}),
+                # --- START OF MODIFICATION: Robust Weight Parsing ---
+                weight = 1.0  # Default value
+                weight_val = rule.get("weight")
+                try:
+                    # Ensure weight is a valid float, defaulting if missing or invalid.
+                    if weight_val is not None:
+                        weight = float(weight_val)
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"Invalid or non-numeric weight '{weight_val}' for rule '{rule_code}'. Defaulting to 1.0."
                     )
-                    for p in custom_params_data
-                ]
+                    weight = 1.0
+                # --- END OF MODIFICATION ---
+
+                custom_params_data = rule.get("custom_parameters") or {}
+                params = (
+                    [
+                        ParameterDefinition(
+                            key=p["key"],
+                            value=p.get("value"),
+                            type=p.get("type", "any"),
+                            default=p.get("default"),
+                            description=p.get("description"),
+                            options=p.get("options"),
+                            validation=p.get("validation", {}),
+                        )
+                        for p in (
+                            custom_params_data
+                            if isinstance(custom_params_data, list)
+                            else []
+                        )
+                    ]
+                    if isinstance(custom_params_data, list)
+                    else [
+                        ParameterDefinition(
+                            key=key,
+                            value=value,
+                            type=str(type(value).__name__),
+                            default=None,
+                            description=f"Parameter for {key}",
+                            options=None,
+                            validation={},
+                        )
+                        for key, value in custom_params_data.items()
+                    ]
+                )
 
                 definition = ConstraintDefinition(
                     id=rule_code,
@@ -623,7 +653,7 @@ class ExamSchedulingProblem:
                     constraint_type=ConstraintType(rule.get("type", "soft")),
                     category=category_enum,
                     enabled=rule.get("is_enabled", True),
-                    weight=float(rule.get("weight", 1.0)),
+                    weight=weight,
                     parameters=params,
                     config_id=config_id,
                     database_rule_id=self._ensure_uuid(rule.get("id")),
@@ -711,15 +741,8 @@ class ExamSchedulingProblem:
             logger.info("📋 PHASE 5: Configuring days and timeslots from dataset...")
             self._configure_days_and_timeslots(dataset)
 
-            # --- START OF FIX: Process and translate locks after timeslots are created ---
-            # logger.info("📋 PHASE 5a: Translating HITL locks to specific timeslots...")
-            # self._process_and_translate_locks(dataset)
-            # --- END OF FIX ---
-
-            # --- START OF FIX: Conditionally activate constraints based on config ---
             logger.info("📋 PHASE 5b: Activating constraints from configuration...")
             self._activate_constraints_from_config()
-            # --- END OF FIX ---
 
             # Phase 6: Final validation
             logger.info("📋 PHASE 6: Final validation...")
@@ -740,17 +763,23 @@ class ExamSchedulingProblem:
             logger.error(f"📍 Stack trace: {traceback.format_exc()}")
             raise
 
-    # --- START OF FIX ---
     def _activate_constraints_from_config(self) -> None:
         """
         Activates all constraints that are marked as 'enabled' in the loaded
         database configuration. Also handles conditional activation based on
         problem settings like slot generation mode.
         """
-        # 1. Activate all constraints marked as enabled in the configuration.
         activated_count = 0
         for definition in self.constraint_definitions:
             if definition.enabled:
+                if definition.id in [
+                    "MINIMUM_INVIGILATORS",
+                    "INVIGILATOR_AVAILABILITY",
+                ]:
+                    logger.warning(
+                        f"Skipping activation of obsolete constraint: {definition.id}"
+                    )
+                    continue
                 self.constraint_registry.activate(definition.id)
                 activated_count += 1
 
@@ -758,7 +787,6 @@ class ExamSchedulingProblem:
             f"Activated {activated_count} constraints based on 'enabled' flag in configuration."
         )
 
-        # 2. Conditionally activate mode-specific constraints (if not already active).
         if self.slot_generation_mode == "flexible":
             logger.info(
                 "Flexible slot mode detected. Ensuring mode-specific constraints are active."
@@ -769,7 +797,6 @@ class ExamSchedulingProblem:
             ]
             for constraint_id in constraints_to_activate:
                 if self.constraint_registry.get_definition(constraint_id):
-                    # The activate method handles duplicates, so it's safe to call again.
                     self.constraint_registry.activate(constraint_id)
                 else:
                     logger.warning(
@@ -780,14 +807,11 @@ class ExamSchedulingProblem:
                 "Fixed slot mode detected. No additional conditional constraints needed."
             )
 
-    # --- END OF FIX ---
-
     def _build_course_student_mappings(self):
         """Populates the self.course_students dictionary for quick lookups."""
         self.course_students.clear()
         for exam in self.exams.values():
             if exam.course_id and exam.students:
-                # The keys of the exam.students dict are the student UUIDs
                 self.course_students[exam.course_id].update(exam.students.keys())
         logger.info(f"Built mappings for {len(self.course_students)} courses.")
 
@@ -848,10 +872,12 @@ class ExamSchedulingProblem:
         """Validate relationships between entities in the dataset"""
         if entities_loaded["exams"] > 0 and entities_loaded["rooms"] > 0:
             max_exam_size = max(exam.expected_students for exam in self.exams.values())
-            max_room_capacity = max(room.exam_capacity for room in self.rooms.values())
-            if max_exam_size > max_room_capacity:
+            total_room_capacity = sum(
+                room.exam_capacity for room in self.rooms.values()
+            )
+            if max_exam_size > total_room_capacity:
                 raise ValueError(
-                    f"Largest exam ({max_exam_size} students) exceeds largest room capacity ({max_room_capacity})"
+                    f"Largest exam ({max_exam_size} students) exceeds total capacity of all rooms combined ({total_room_capacity})"
                 )
 
     def _generate_fallback_days(self) -> None:
@@ -862,7 +888,6 @@ class ExamSchedulingProblem:
         logger.warning(
             "Executing fallback day generation. The schedule will be based on a default Mon-Fri, 3-slots-per-day structure."
         )
-        # Default timeslot definitions if none are provided
         default_timeslots_def = [
             {"name": "Morning", "start": "09:00", "end": "12:00"},
             {"name": "Afternoon", "start": "13:00", "end": "16:00"},
@@ -871,7 +896,6 @@ class ExamSchedulingProblem:
 
         current_date = self.exam_period_start
         while current_date <= self.exam_period_end:
-            # Skip weekends (Saturday=5, Sunday=6) and holidays
             if current_date.weekday() >= 5 or current_date in self.holidays:
                 current_date += timedelta(days=1)
                 continue
@@ -938,7 +962,6 @@ class ExamSchedulingProblem:
                         logger.debug(
                             f"Executing FLEXIBLE slot generation for {day_date}."
                         )
-                        # Generate granular, hour-based slots
                         period_start_time = time.fromisoformat(ts_data["start_time"])
                         period_end_time = time.fromisoformat(ts_data["end_time"])
                         slot_duration = timedelta(
@@ -966,7 +989,6 @@ class ExamSchedulingProblem:
                             slot_counter += 1
                     else:
                         logger.debug(f"Executing FIXED slot generation for {day_date}.")
-                        # Original fixed-slot logic
                         start_t = time.fromisoformat(ts_data["start_time"])
                         end_t = time.fromisoformat(ts_data["end_time"])
                         duration = (
@@ -1003,7 +1025,6 @@ class ExamSchedulingProblem:
                 f"Successfully loaded {len(self.days)} days and {len(self.timeslots)} total timeslots."
             )
 
-        # Set base slot duration for calculations
         if self.slot_generation_mode == "flexible":
             self.base_slot_duration_minutes = self.flexible_slot_duration_minutes
         elif self.timeslots:
@@ -1023,6 +1044,56 @@ class ExamSchedulingProblem:
         if not exam or self.base_slot_duration_minutes <= 0:
             return 1
         return math.ceil(exam.duration_minutes / self.base_slot_duration_minutes)
+
+    def get_occupancy_slots(self, exam_id: UUID, start_slot_id: UUID) -> List[UUID]:
+        """
+        Calculates the list of timeslot IDs that an exam will occupy if it
+        starts at the given start_slot_id.
+        """
+        exam = self.exams.get(exam_id)
+        if not exam:
+            logger.warning(f"get_occupancy_slots: Exam {exam_id} not found.")
+            return []
+
+        day = self.get_day_for_timeslot(start_slot_id)
+        if not day:
+            logger.warning(
+                f"get_occupancy_slots: Day for slot {start_slot_id} not found."
+            )
+            return []
+
+        try:
+            day_slot_ids = [ts.id for ts in day.timeslots]
+            start_index = day_slot_ids.index(start_slot_id)
+        except ValueError:
+            logger.warning(
+                f"get_occupancy_slots: Start slot {start_slot_id} not found in its day."
+            )
+            return []
+
+        duration_in_slots = self.get_exam_duration_in_slots(exam_id)
+
+        if start_index + duration_in_slots > len(day.timeslots):
+            return []
+
+        occupied_slot_ids = day_slot_ids[start_index : start_index + duration_in_slots]
+        return occupied_slot_ids
+
+    def is_invigilator_available(self, invigilator_id: UUID, slot_id: UUID) -> bool:
+        """
+        Checks if an invigilator is available for a given timeslot.
+        """
+        invigilator = self.invigilators.get(invigilator_id)
+        if not invigilator:
+            logger.warning(f"Invigilator with ID {invigilator_id} not found.")
+            return False
+
+        if not invigilator.can_invigilate:
+            return False
+
+        if not invigilator.availability:
+            return True
+        return True
 
     def is_start_feasible(self, exam_id: UUID, start_slot_id: UUID) -> bool:
         """Checks if an exam can start at a given slot and complete within the same day."""
@@ -1054,7 +1125,6 @@ class ExamSchedulingProblem:
                 exam_obj = self.exams[exam_id]
                 students_in_data = exam_data.get("students", {})
                 if students_in_data:
-                    # Convert student_id keys to UUID
                     students_with_uuid_keys = {
                         self._ensure_uuid(sid): reg_type
                         for sid, reg_type in students_in_data.items()
@@ -1156,7 +1226,6 @@ class ExamSchedulingProblem:
             self.locks = []
             return
 
-        # 1. Create a lookup for period start times from the raw dataset
         period_id_to_start_time = {}
         for day_data in dataset.days:
             for period in day_data.get("time_periods", []):
@@ -1164,13 +1233,11 @@ class ExamSchedulingProblem:
                     period["start_time"]
                 )
 
-        # 2. Create a lookup for the generated timeslot IDs based on date and start time
         date_time_to_slot_id = {}
         for day in self.days.values():
             for slot in day.timeslots:
                 date_time_to_slot_id[(day.date, slot.start_time)] = slot.id
 
-        # 3. Process the raw locks
         processed_locks = []
         for raw_lock in dataset.locks:
             try:
@@ -1190,7 +1257,6 @@ class ExamSchedulingProblem:
                     )
                     continue
 
-                # Find the specific timeslot ID for the lock
                 target_slot_id = date_time_to_slot_id.get((lock_date, start_time))
 
                 if not target_slot_id:
@@ -1199,7 +1265,6 @@ class ExamSchedulingProblem:
                     )
                     continue
 
-                # Create the new lock structure that the constraint manager can use
                 processed_lock = {
                     "exam_id": self._ensure_uuid(raw_lock["exam_id"]),
                     "time_slot_id": target_slot_id,

@@ -17,7 +17,6 @@ from .app import (
     data_validation,
     data_retrieval,
     data_management,
-    DatabaseSeeder,
 )
 
 from .app.database import (
@@ -58,7 +57,6 @@ __all__ = [
     "data_validation",
     "data_retrieval",
     "data_management",
-    "DatabaseSeeder",
     # Database
     "Base",
     "DatabaseManager",

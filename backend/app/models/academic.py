@@ -22,6 +22,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+
 from .base import Base, TimestampMixin
 
 from datetime import date, datetime
@@ -41,11 +42,13 @@ if TYPE_CHECKING:
         Staff,
         ExamDepartment,
         TimeSlotTemplate,
+        ConflictReport,  # Added for relationship
     )
     from .jobs import TimetableJob
     from .file_uploads import FileUploadSession
     from .versioning import SessionTemplate
     from .users import User
+    from .file_uploads import DataSeedingSession
 
 
 # NEW ENUM to match the database schema
@@ -56,42 +59,27 @@ class SlotGenerationModeEnum(str, enum.Enum):
 
 class AcademicSession(Base, TimestampMixin):
     __tablename__ = "academic_sessions"
-    __table_args__ = {"schema": "exam_system"}
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
-
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     semester_system: Mapped[str] = mapped_column(String, nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
-    is_active: Mapped[Optional[bool]] = mapped_column(
-        Boolean, default=False, nullable=True
-    )
+    is_active: Mapped[bool | None] = mapped_column(Boolean, default=False)
 
-    # --- FIX for Circular Dependency ---
-    # Add a name and use_alter=True to break the dependency cycle with session_templates.
+    # Foreign Key for Relationship 1
     template_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey(
-            "exam_system.session_templates.id",
-            name="fk_academic_sessions_template_id",
-            use_alter=True,
-        ),
-        nullable=True,
+        ForeignKey("exam_system.session_templates.id", use_alter=True),
     )
-    archived_at: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)
-    session_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime)
+    session_config: Mapped[dict | None] = mapped_column(JSONB)
     timeslot_template_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("exam_system.timeslot_templates.id"),
-        nullable=True,
+        PG_UUID(as_uuid=True), ForeignKey("timeslot_templates.id")
     )
-
-    # --- FIX for DatatypeMismatchError ---
-    # Make the SAEnum schema-aware by adding schema='exam_system'
     slot_generation_mode: Mapped[SlotGenerationModeEnum] = mapped_column(
         SAEnum(
             SlotGenerationModeEnum,
@@ -100,49 +88,48 @@ class AcademicSession(Base, TimestampMixin):
             schema="exam_system",
         ),
         nullable=False,
-        default=SlotGenerationModeEnum.fixed,
     )
 
-    # Use string references to avoid circular imports
-    exams: Mapped[List["Exam"]] = relationship("Exam", back_populates="session")
-    registrations: Mapped[List["CourseRegistration"]] = relationship(
-        "CourseRegistration", back_populates="session"
+    # Relationships
+    exams: Mapped[List["Exam"]] = relationship(back_populates="session")
+    course_registrations: Mapped[List["CourseRegistration"]] = relationship(
+        back_populates="session"
     )
     staff_unavailability: Mapped[List["StaffUnavailability"]] = relationship(
-        "StaffUnavailability", back_populates="session"
+        back_populates="session"
     )
-    jobs: Mapped[List["TimetableJob"]] = relationship(
-        "TimetableJob", back_populates="session"
+    timetable_jobs: Mapped[List["TimetableJob"]] = relationship(
+        back_populates="session"
     )
-    file_uploads: Mapped[List["FileUploadSession"]] = relationship(
-        "FileUploadSession", back_populates="session"
+    file_upload_sessions: Mapped[List["FileUploadSession"]] = relationship(
+        back_populates="session"
     )
     student_enrollments: Mapped[List["StudentEnrollment"]] = relationship(
-        "StudentEnrollment", back_populates="session"
+        back_populates="session"
+    )
+    data_seeding_sessions: Mapped[List["DataSeedingSession"]] = relationship(
+        back_populates="academic_session"
+    )
+    timeslot_template: Mapped[Optional["TimeSlotTemplate"]] = relationship(
+        back_populates="academic_sessions"
     )
 
-    # RELATIONSHIPS
-    template: Mapped["SessionTemplate"] = relationship(
-        "SessionTemplate",
+    # Relationship 1: This session uses a template
+    template: Mapped[Optional["SessionTemplate"]] = relationship(
         foreign_keys=[template_id],
-        back_populates="sessions",
-        post_update=True,  # Helps resolve cycle during object flushing
+        back_populates="template_for_sessions",
     )
-    session_templates: Mapped[List["SessionTemplate"]] = relationship(
-        "SessionTemplate",
+
+    # Relationship 2: This session is the source for multiple templates
+    templates_from_this_session: Mapped[List["SessionTemplate"]] = relationship(
         foreign_keys="SessionTemplate.source_session_id",
         back_populates="source_session",
     )
-    timeslot_template: Mapped[Optional["TimeSlotTemplate"]] = relationship(
-        "TimeSlotTemplate", back_populates="academic_sessions"
-    )
 
-    # Add indexes for performance
     __table_args__ = (
         Index("idx_academic_sessions_template_id", "template_id"),
         Index("idx_academic_sessions_active", "is_active"),
         Index("idx_academic_sessions_archived_at", "archived_at"),
-        {"schema": "exam_system"},  # Ensure table is created in the correct schema
     )
 
 
@@ -213,7 +200,7 @@ class Faculty(Base, TimestampMixin):
     )
 
 
-class Programme(Base):
+class Programme(Base, TimestampMixin):
     __tablename__ = "programmes"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -318,6 +305,9 @@ class Student(Base, TimestampMixin):
     enrollments: Mapped[List["StudentEnrollment"]] = relationship(
         "StudentEnrollment", back_populates="student"
     )
+    conflict_reports: Mapped[List["ConflictReport"]] = relationship(
+        back_populates="student"
+    )
 
 
 # NEW: StudentEnrollment model for session-specific data
@@ -374,5 +364,11 @@ class CourseRegistration(Base):
     student: Mapped["Student"] = relationship("Student", back_populates="registrations")
     course: Mapped["Course"] = relationship("Course", back_populates="registrations")
     session: Mapped["AcademicSession"] = relationship(
-        "AcademicSession", back_populates="registrations"
+        "AcademicSession", back_populates="course_registrations"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "student_id", "course_id", "session_id", name="course_registrations_unique"
+        ),
     )

@@ -36,6 +36,40 @@ class SystemConfigRead(SystemConfigBase):
     updated_at: datetime
 
 
+# --- FIX START ---
+# Added a more specific schema for the constraint configuration details endpoint.
+# This model accurately reflects the data returned by the current database function,
+# which includes a 'rules' field (not 'constraints') and lacks the audit timestamps.
+class Rule(BaseModel):
+    """Defines the structure of a single rule within a constraint configuration."""
+
+    code: str
+    name: str
+    type: str
+    weight: float
+    rule_id: UUID
+    category: str
+    is_enabled: bool
+    parameters: Dict[str, Any]
+    description: str
+
+
+class ConstraintConfigDetailRead(BaseModel):
+    """
+    Detailed schema for a single constraint configuration profile, matching the
+    data structure returned from `get_constraint_configuration_details`.
+    """
+
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    is_default: bool
+    rules: List[Rule]
+
+
+# --- FIX END ---
+
+
 class ReportGenerateRequest(BaseModel):
     report_type: str
     options: Dict[str, Any]

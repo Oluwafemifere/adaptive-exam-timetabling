@@ -14,7 +14,13 @@ import {
   MapPin,
   Plus,
   Trash2,
-  Loader2
+  Loader2,
+  Building,
+  GraduationCap,
+  Library,
+  ClipboardList,
+  UserCheck, // FIX: Replaced ClipboardUser with UserCheck
+  CalendarX,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -68,7 +74,17 @@ export function SessionSetup() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentUploadKey, setCurrentUploadKey] = useState('');
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, { name: string; size: number } | null>>({
-    courses: null, students: null, enrollments: null, rooms: null, invigilators: null,
+    faculties: null,
+    departments: null,
+    programmes: null,
+    buildings: null,
+    rooms: null,
+    courses: null,
+    staff: null,
+    students: null,
+    course_registrations: null,
+    course_instructors: null,
+    staff_unavailability: null,
   });
 
   // Form State
@@ -106,11 +122,17 @@ export function SessionSetup() {
   ];
 
   const requiredFiles = [
-    { key: 'courses', name: 'Courses', description: 'Course codes, names, departments', icon: FileText, required: true },
+    { key: 'faculties', name: 'Faculties', description: 'Faculty names and codes', icon: Library, required: true },
+    { key: 'departments', name: 'Departments', description: 'Department details and faculty relations', icon: Building, required: true },
+    { key: 'programmes', name: 'Programmes', description: 'Academic programmes and departments', icon: GraduationCap, required: true },
+    { key: 'buildings', name: 'Buildings', description: 'Building names and locations', icon: Building, required: true },
+    { key: 'rooms', name: 'Rooms', description: 'Room capacities and building relations', icon: MapPin, required: true },
+    { key: 'courses', name: 'Courses', description: 'Course codes, names, and departments', icon: FileText, required: true },
+    { key: 'staff', name: 'Staff', description: 'Staff/Invigilator details', icon: Users, required: true },
     { key: 'students', name: 'Students', description: 'Student IDs, names, and programs', icon: Users, required: true },
-    { key: 'student_enrollments', name: 'Student Enrollments', description: 'Student course registrations', icon: FileText, required: true },
-    { key: 'rooms', name: 'Rooms', description: 'Room capacities and locations', icon: MapPin, required: true },
-    { key: 'staff', name: 'Invigilators', description: 'Staff availability (Optional)', icon: Users, required: false },
+    { key: 'course_registrations', name: 'Course Registrations', description: 'Student course enrollment data', icon: ClipboardList, required: true },
+    { key: 'course_instructors', name: 'Course Instructors', description: 'Staff teaching assignments for courses', icon: UserCheck, required: true }, // FIX: Changed icon
+    { key: 'staff_unavailability', name: 'Staff Unavailability', description: 'Stated unavailable times for staff (Optional)', icon: CalendarX, required: false },
   ];
 
   const isStepValid = (step: number) => {
@@ -208,7 +230,13 @@ export function SessionSetup() {
         <div className="space-y-6">{isLoadingSummary ? (<div className="flex justify-center items-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>) : !summaryData ? (<Card><CardContent className="py-8 text-center text-muted-foreground">Could not load session summary. Please try again.</CardContent></Card>) : (
           <><Card><CardHeader><CardTitle>Session Summary</CardTitle><CardDescription>Review your exam session configuration before creation.</CardDescription></CardHeader><CardContent className="space-y-4 pt-6"><div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div><h4 className="font-medium mb-2">Session Details</h4><div className="space-y-1 text-sm"><div><span className="text-muted-foreground">Name:</span> {summaryData.session_details.name}</div><div><span className="text-muted-foreground">Period:</span> {new Date(summaryData.session_details.start_date).toLocaleDateString()} to {new Date(summaryData.session_details.end_date).toLocaleDateString()}</div><div><span className="text-muted-foreground">Daily Slots:</span> {summaryData.session_details.time_slots?.length || 0}</div></div></div>
-            <div><h4 className="font-medium mb-2">Data Summary</h4><div className="space-y-1 text-sm"><div><span className="text-muted-foreground">Courses:</span> {summaryData.data_summary.courses}</div><div><span className="text-muted-foreground">Students:</span> {summaryData.data_summary.students}</div><div><span className="text-muted-foreground">Rooms:</span> {summaryData.data_summary.rooms}</div><div><span className="text-muted-foreground">Enrollments:</span> {summaryData.data_summary.enrollments}</div></div></div>
+            <div><h4 className="font-medium mb-2">Data Summary</h4><div className="space-y-1 text-sm">
+                {Object.entries(summaryData.data_summary).map(([key, value]) => (
+                  <div key={key}>
+                    <span className="text-muted-foreground capitalize">{key.replace(/_/g, ' ')}:</span> {value as any}
+                  </div>
+                ))}
+            </div></div>
           </div></CardContent></Card>
           <Card><CardHeader><CardTitle className="flex items-center">{summaryData.validation_results.errors.length === 0 ? <CheckCircle className="h-5 w-5 mr-2 text-green-500" /> : <AlertTriangle className="h-5 w-5 mr-2 text-red-500" />}Validation Results</CardTitle></CardHeader><CardContent className="space-y-4">
               {summaryData.validation_results.errors.length > 0 && (<Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription><div className="font-medium mb-2">Errors found:</div><ul className="list-disc list-inside space-y-1">{summaryData.validation_results.errors.map((error, index) => (<li key={index}>{error}</li>))}</ul></AlertDescription></Alert>)}

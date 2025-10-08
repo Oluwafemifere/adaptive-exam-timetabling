@@ -1,6 +1,6 @@
-# adaptive-exam-timetabling\backend\app\models\timetable_edits.py
+# app/models/timetable_edits.py
 import uuid
-from sqlalchemy import String, Text, ForeignKey, Index
+from sqlalchemy import String, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from .base import Base, TimestampMixin
@@ -22,9 +22,7 @@ class TimetableEdit(Base, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     edit_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    old_values: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    new_values: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    validation_status: Mapped[str] = mapped_column(
-        String(20), default="pending", nullable=False
-    )
+    old_values: Mapped[dict | None] = mapped_column(JSONB)
+    new_values: Mapped[dict | None] = mapped_column(JSONB)
+    reason: Mapped[str | None] = mapped_column(Text)
+    validation_status: Mapped[str] = mapped_column(String(20), nullable=False)

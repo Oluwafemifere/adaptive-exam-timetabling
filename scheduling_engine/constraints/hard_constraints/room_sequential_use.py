@@ -38,8 +38,12 @@ class RoomSequentialUseConstraint(CPSATBaseConstraint):
 
         # For each specific room at a specific timeslot...
         for room_id in self.problem.rooms:
-            for slot_id in self.problem.timeslots:
+            # In Phase 2, self.y variables only exist for the current slot,
+            # so we determine the relevant slot from the variables themselves.
+            # We can get the single relevant slot_id from any y_var key.
+            relevant_slots = {key[2] for key in self.y.keys()}
 
+            for slot_id in relevant_slots:
                 # ...collect all the y_vars that represent an exam being assigned there.
                 # The y[e,r,s] variable is 1 if exam 'e' is in room 'r' at slot 's'.
                 exams_in_this_room_at_this_time = []
@@ -50,7 +54,8 @@ class RoomSequentialUseConstraint(CPSATBaseConstraint):
 
                 # The sum of these boolean variables represents the number of exams in
                 # the room at this time. This sum cannot be greater than 1.
-                if exams_in_this_room_at_this_time:
+                # FIX: Only add a constraint if there is more than one possibility.
+                if len(exams_in_this_room_at_this_time) > 1:
                     self.model.Add(sum(exams_in_this_room_at_this_time) <= 1)
                     constraints_added += 1
 

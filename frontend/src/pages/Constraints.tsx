@@ -1,6 +1,6 @@
 // frontend/src/pages/Constraints.tsx
-import React, { useState, useMemo } from 'react';
-import { Sliders, Save, RotateCcw, Info, AlertTriangle, Settings2 } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Sliders, Save, RotateCcw, Info, AlertTriangle, Settings2, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
@@ -12,73 +12,156 @@ import { Badge } from '../components/ui/badge';
 import { Separator } from '../components/ui/separator';
 import { Alert, AlertDescription } from '../components/ui/alert';
 import { toast } from 'sonner';
+import { useAppStore } from '../store';
+import { Constraint, ConstraintCategory, ConstraintParameter } from '../store/types';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 
-// Mocked data based on the provided schema
-const mockConstraintCategories = [
-  { id: "ddebed4a-df48-4de1-91ba-7fa1d5259341", name: "Student Constraints" },
-  { id: "8ff61dc2-4df9-4083-a8de-e054c611862b", name: "Spatial Constraints" },
-  { id: "d89afdcf-b144-40f4-a714-b2790ce75242", name: "Resource Constraints" },
-  { id: "f32b7704-139d-44c2-887b-30d9e6284c18", name: "Pedagogical Constraints" },
-  { id: "88e49d5a-f9dc-4e17-a06a-733332167a5a", name: "Fairness Constraints" },
-];
+// Define a local type for the component's state to handle UI-specific properties like 'id'
+interface LocalConstraint extends Omit<Constraint, 'parameters'> {
+  id: string; // Use rule_id for a stable ID
+  parameters: ConstraintParameter[];
+}
 
-const mockConstraintRules = [
-  { id: "fe64ceb0-cb54-4ad4-8279-ba534394465f", name: "Student Time Conflict", description: "A student cannot take two exams at the same time.", type: "hard", definition: { parameters: [] }, categoryId: "ddebed4a-df48-4de1-91ba-7fa1d5259341", defaultWeight: 100, isEnabled: true },
-  { id: "c4791ccc-27a5-45f8-8733-61c6e5654af6", name: "Max Exams Per Student Per Day", description: "A student cannot take more than a specified number of exams in a single day.", type: "hard", definition: { parameters: [{ key: "max_exams_per_day", type: "int", value: 2 }] }, categoryId: "ddebed4a-df48-4de1-91ba-7fa1d5259341", defaultWeight: 100, isEnabled: true },
-  { id: "ee43d90b-9361-4d49-93a8-4b38fee4a080", name: "Minimum Gap Between Exams", description: "Penalizes scheduling a student's exams too close together on the same day.", type: "soft", definition: { parameters: [{ key: "min_gap_slots", type: "int", value: 1 }] }, categoryId: "ddebed4a-df48-4de1-91ba-7fa1d5259341", defaultWeight: 80, isEnabled: true },
-  { id: "ff1bb276-74d2-48b3-bcc7-42b601c8a2aa", name: "Carryover Student Conflict", description: "Allow, but penalize, scheduling conflicts for students with a 'carryover' registration status.", type: "soft", definition: { parameters: [{ key: "max_allowed_conflicts", type: "int", value: 3 }] }, categoryId: "ddebed4a-df48-4de1-91ba-7fa1d5259341", defaultWeight: 50, isEnabled: true },
-  { id: "26224d75-0ae9-4943-aa2c-df57e8d15347", name: "Room Capacity Exceeded", description: "The number of students in a room cannot exceed its exam capacity.", type: "hard", definition: { parameters: [] }, categoryId: "8ff61dc2-4df9-4083-a8de-e054c611862b", defaultWeight: 100, isEnabled: true },
-  { id: "96f93610-d75f-4275-95df-996c11ff283d", name: "Room Overbooking Penalty", description: "Penalize assigning more students to a room than its capacity (for overbookable rooms).", type: "soft", definition: { parameters: [] }, categoryId: "8ff61dc2-4df9-4083-a8de-e054c611862b", defaultWeight: 5, isEnabled: true },
-  { id: "0f5b0da7-dfdd-420d-a4c3-df3ff7273494", name: "Minimum Invigilators", description: "Ensure enough invigilators are assigned per room based on student count.", type: "hard", definition: { parameters: [{ key: "students_per_invigilator", type: "int", value: 50 }] }, categoryId: "d89afdcf-b144-40f4-a714-b2790ce75242", defaultWeight: 100, isEnabled: true },
-  { id: "6e7577db-a0de-4fdb-abc2-c2debebb4d05", name: "Invigilator Availability", description: "Penalize assigning invigilators during their stated unavailable times.", type: "soft", definition: { parameters: [] }, categoryId: "d89afdcf-b144-40f4-a714-b2790ce75242", defaultWeight: 75, isEnabled: false },
-  { id: "b10c9f01-b365-4464-accf-14d9bbc4ea14", name: "Course Slot Preference", description: "Penalize scheduling exams outside of their preferred slots (e.g., 'morning only').", type: "soft", definition: { parameters: [] }, categoryId: "f32b7704-139d-44c2-887b-30d9e6284c18", defaultWeight: 10, isEnabled: true },
-  { id: "5e83ab46-8073-456e-8f3b-f53ebd92d1c6", name: "Instructor Self-Invigilation", description: "An instructor for a course cannot invigilate the exam for that same course.", type: "hard", definition: { parameters: [] }, categoryId: "f32b7704-139d-44c2-887b-30d9e6284c18", defaultWeight: 100, isEnabled: true },
-  { id: "7033d920-b92f-4d48-8719-49cd3de1df4e", name: "Invigilator Workload Balance", description: "Penalize uneven distribution of total invigilation slots among staff.", type: "soft", definition: { parameters: [] }, categoryId: "88e49d5a-f9dc-4e17-a06a-733332167a5a", defaultWeight: 15, isEnabled: true },
-  { id: "21e76918-c11c-4a6b-a908-ce0f0fd48d33", name: "Daily Exam Load Balance", description: "Penalize uneven distribution of the total number of exams scheduled across different days.", type: "soft", definition: { parameters: [] }, categoryId: "88e49d5a-f9dc-4e17-a06a-733332167a5a", defaultWeight: 10, isEnabled: true },
-];
+// Helper to group constraints by category for rendering.
+const groupConstraintsByCategory = (constraints: LocalConstraint[]): ConstraintCategory[] => {
+  const categoriesMap: { [key: string]: { name: string, id: string, constraints: LocalConstraint[] } } = {};
+
+  constraints.forEach(c => {
+    const categoryName = c.category || "Uncategorized"; // Use category name from API
+    if (!categoriesMap[categoryName]) {
+        categoriesMap[categoryName] = { 
+            name: categoryName, 
+            id: categoryName, 
+            constraints: [] 
+        };
+    }
+    categoriesMap[categoryName].constraints.push(c);
+  });
+
+  return Object.values(categoriesMap)
+    .filter(cat => cat.constraints.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name)); // Sort for consistent order
+};
+
+// Helper to transform parameters between API (object) and UI (array) formats
+const transformParameters = {
+  fromApi: (params: Record<string, any>): ConstraintParameter[] => {
+    return Object.entries(params || {}).map(([key, value]) => ({
+      key,
+      value,
+      type: typeof value === 'number' ? 'int' : 'text',
+    }));
+  },
+  toApi: (params: ConstraintParameter[]): Record<string, any> => {
+    return params.reduce((acc, param) => {
+      acc[param.key] = param.value;
+      return acc;
+    }, {} as Record<string, any>);
+  }
+};
 
 export function Constraints() {
-  const [constraints, setConstraints] = useState(mockConstraintRules);
+  const {
+    configurations,
+    activeConfigurationId,
+    activeConfigurationDetails,
+    fetchAndSetActiveConfiguration,
+    updateAndSaveActiveConfiguration,
+  } = useAppStore();
+
+  const [localConstraints, setLocalConstraints] = useState<LocalConstraint[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (activeConfigurationDetails?.rules) {
+      const transformed: LocalConstraint[] = activeConfigurationDetails.rules.map(rule => ({
+        ...rule,
+        id: rule.rule_id, // Map rule_id to id for component key consistency
+        parameters: transformParameters.fromApi(rule.parameters),
+      }));
+      setLocalConstraints(JSON.parse(JSON.stringify(transformed)));
+    }
+  }, [activeConfigurationDetails]);
 
   const groupedConstraints = useMemo(() => {
-    return mockConstraintCategories.map(category => ({
-      ...category,
-      constraints: constraints.filter(c => c.categoryId === category.id)
-    })).filter(group => group.constraints.length > 0);
-  }, [constraints]);
+    if (!localConstraints) return [];
+    return groupConstraintsByCategory(localConstraints);
+  }, [localConstraints]);
 
-  const updateConstraint = (id: string, updates: Partial<typeof constraints[0]>) => {
-    setConstraints(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+  const updateConstraint = (id: string, updates: Partial<LocalConstraint>) => {
+    setLocalConstraints(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
   };
   
   const updateParameter = (constraintId: string, paramKey: string, value: any) => {
-    setConstraints(prev => prev.map(c => {
+    setLocalConstraints(prev => prev.map(c => {
       if (c.id === constraintId) {
         return {
           ...c,
-          definition: {
-            ...c.definition,
-            parameters: c.definition.parameters.map(p => p.key === paramKey ? { ...p, value } : p)
-          }
+          parameters: c.parameters.map((p: ConstraintParameter) => p.key === paramKey ? { ...p, value } : p)
         };
       }
       return c;
     }));
   };
 
-  const saveConstraints = () => toast.success('Constraints saved successfully');
-  const resetToDefaults = () => { setConstraints(mockConstraintRules); toast.info('Constraints reset to default values'); };
+  const handleSave = async () => {
+    setIsSaving(true);
+    const payloadForApi: Constraint[] = localConstraints.map(c => ({
+      ...c,
+      parameters: transformParameters.toApi(c.parameters),
+    }));
+    await updateAndSaveActiveConfiguration({ constraints: payloadForApi });
+    setIsSaving(false);
+  };
 
-  const hardConstraints = constraints.filter(c => c.type === 'hard');
-  const softConstraints = constraints.filter(c => c.type === 'soft');
-  const enabledHard = hardConstraints.filter(c => c.isEnabled).length;
-  const enabledSoft = softConstraints.filter(c => c.isEnabled).length;
+  const handleReset = () => {
+    if (activeConfigurationDetails?.rules) {
+       const transformed: LocalConstraint[] = activeConfigurationDetails.rules.map(rule => ({
+        ...rule,
+        id: rule.rule_id,
+        parameters: transformParameters.fromApi(rule.parameters),
+      }));
+      setLocalConstraints(JSON.parse(JSON.stringify(transformed)));
+      toast.info('Changes have been discarded.');
+    }
+  };
+
+  const hardConstraints = localConstraints.filter(c => c.type === 'hard');
+  const softConstraints = localConstraints.filter(c => c.type === 'soft');
+  const enabledHard = hardConstraints.filter(c => c.is_enabled).length;
+  const enabledSoft = softConstraints.filter(c => c.is_enabled).length;
+
+  if (!activeConfigurationDetails) {
+    return (
+      <div className="flex justify-center items-center h-96">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="ml-4 text-muted-foreground">Loading configuration...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-semibold">Constraint Configuration</h1><p className="text-muted-foreground">Define rules and priorities for the scheduling solver</p></div>
-        <div className="flex items-center space-x-3"><Button variant="outline" onClick={resetToDefaults}><RotateCcw className="h-4 w-4 mr-2" />Reset</Button><Button onClick={saveConstraints}><Save className="h-4 w-4 mr-2" />Save Changes</Button></div>
+        <div>
+          <h1 className="text-2xl font-semibold">Constraint Configuration</h1>
+          <p className="text-muted-foreground">Define rules and priorities for the scheduling solver</p>
+        </div>
+        <div className="flex items-center space-x-3">
+          <Select value={activeConfigurationId ?? ""} onValueChange={fetchAndSetActiveConfiguration}>
+            <SelectTrigger className="w-48"><SelectValue placeholder="Select configuration..." /></SelectTrigger>
+            <SelectContent>
+              {configurations.map(config => (
+                <SelectItem key={config.id} value={config.id}>{config.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" onClick={handleReset} disabled={isSaving}><RotateCcw className="h-4 w-4 mr-2" />Discard Changes</Button>
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+            Save Changes
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -98,20 +181,20 @@ export function Constraints() {
                   <div key={c.id}>
                     <div className="flex items-start justify-between py-3">
                       <div className="flex-1 space-y-1">
-                        <div className="flex items-center space-x-3"><h4 className="font-medium">{c.name}</h4><Badge variant={c.type === 'hard' ? 'destructive' : 'secondary'}>{c.type}</Badge>{!c.isEnabled && <Badge variant="outline">Disabled</Badge>}</div>
+                        <div className="flex items-center space-x-3"><h4 className="font-medium">{c.name}</h4><Badge variant={c.type === 'hard' ? 'destructive' : 'secondary'}>{c.type}</Badge>{!c.is_enabled && <Badge variant="outline">Disabled</Badge>}</div>
                         <p className="text-sm text-muted-foreground">{c.description}</p>
-                        {c.isEnabled && c.definition.parameters.length > 0 && (
+                        {c.is_enabled && c.parameters && c.parameters.length > 0 && (
                           <div className="flex flex-wrap items-center gap-4 mt-2 pt-2">
-                            {c.definition.parameters.map(param => (
+                            {c.parameters.map((param: ConstraintParameter) => (
                               <div key={param.key} className="flex items-center space-x-2">
                                 <Label htmlFor={`param-${c.id}-${param.key}`} className="text-sm capitalize">{param.key.replace(/_/g, ' ')}:</Label>
-                                <Input id={`param-${c.id}-${param.key}`} type={param.type === 'int' ? 'number' : 'text'} value={param.value} onChange={(e) => updateParameter(c.id, param.key, param.type === 'int' ? parseInt(e.target.value) : e.target.value)} className="w-24" />
+                                <Input id={`param-${c.id}-${param.key}`} type={param.type === 'int' ? 'number' : 'text'} value={param.value} onChange={(e) => updateParameter(c.id, param.key, param.type === 'int' ? parseInt(e.target.value) || 0 : e.target.value)} className="w-24" />
                               </div>
                             ))}
                           </div>
                         )}
                       </div>
-                      <Switch checked={c.isEnabled} onCheckedChange={(enabled) => updateConstraint(c.id, { isEnabled: enabled })} />
+                      <Switch checked={c.is_enabled} onCheckedChange={(enabled) => updateConstraint(c.id, { is_enabled: enabled })} />
                     </div>
                     {index < group.constraints.length - 1 && <Separator />}
                   </div>
@@ -124,14 +207,14 @@ export function Constraints() {
           <Alert><Info className="h-4 w-4" /><AlertDescription>Adjust the relative importance of soft constraints. Higher weights mean higher priority.</AlertDescription></Alert>
           <Card>
             <CardHeader><CardTitle>Soft Constraint Priorities</CardTitle><CardDescription>Adjust weights for enabled soft constraints (0-100).</CardDescription></CardHeader>
-            <CardContent className="space-y-6">
-              {softConstraints.filter(c => c.isEnabled).map((c) => (
+            <CardContent className="space-y-6 pt-6">
+              {softConstraints.filter(c => c.is_enabled).map((c) => (
                 <div key={c.id} className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div><h4 className="font-medium">{c.name}</h4><p className="text-sm text-muted-foreground">{c.description}</p></div>
-                    <div className="text-right"><div className="text-sm font-medium">Weight: {c.defaultWeight}</div></div>
+                    <div className="text-right"><div className="text-sm font-medium">Weight: {c.weight}</div></div>
                   </div>
-                  <div className="px-2"><Slider value={[c.defaultWeight]} onValueChange={([value]) => updateConstraint(c.id, { defaultWeight: value })} max={100} step={5} /></div>
+                  <div className="px-2"><Slider value={[c.weight]} onValueChange={([value]) => updateConstraint(c.id, { weight: value })} max={100} step={5} /></div>
                 </div>
               ))}
             </CardContent>

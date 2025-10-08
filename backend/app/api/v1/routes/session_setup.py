@@ -18,7 +18,7 @@ router = APIRouter()
     "/session",
     response_model=GenericResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Step 1 & 3: Define Session and Schedule Structure",
+    summary="Step 1: Define Session and Schedule Structure",
 )
 async def create_exam_session_setup(
     setup_data: SessionSetupCreate,
@@ -26,8 +26,7 @@ async def create_exam_session_setup(
     user: User = Depends(current_user),
 ):
     """
-    Creates a new academic exam session, including its name, date range,
-    and daily time slots. This is the first major action in the setup wizard.
+    Creates a new academic exam session and its corresponding data seeding session.
     """
     service = SessionSetupService(db)
     result = await service.setup_new_exam_session(
@@ -45,10 +44,14 @@ async def create_exam_session_setup(
             detail=result.get("message", "Failed to create the exam session."),
         )
 
+    # The result from the service now contains both IDs
     return GenericResponse(
         success=True,
         message="Exam session created successfully. You can now upload data.",
-        data={"session_id": result.get("session_id")},
+        data={
+            "academic_session_id": result.get("academic_session_id"),
+            "data_seeding_session_id": result.get("data_seeding_session_id"),
+        },
     )
 
 
@@ -76,3 +79,35 @@ async def get_session_summary(
         )
 
     return summary_data
+
+
+@router.post(
+    "/session/{session_id}/process-data",
+    response_model=GenericResponse,
+    summary="Step 5: Process All Uploaded Data",
+)
+async def process_staged_data(
+    session_id: UUID,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Triggers the final, transactional processing of all staged data for the session.
+    This should be the last step after uploading and validating all required files.
+    """
+    service = SessionSetupService(db)
+    result = await service.process_all_staged_data(session_id)
+
+    if not result or not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("message", "Failed to process staged data."),
+        )
+
+    return GenericResponse(
+        success=True,
+        message=result.get(
+            "message", "All staged data has been processed successfully."
+        ),
+        data={"academic_session_id": session_id},
+    )

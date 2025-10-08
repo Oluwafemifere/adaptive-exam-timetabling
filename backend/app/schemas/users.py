@@ -5,8 +5,6 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
 
-# Import the UserRoleEnum from the models to ensure consistency
-from ..models.users import UserRoleEnum
 
 MODEL_CONFIG = ConfigDict(from_attributes=True)
 
@@ -20,7 +18,7 @@ class UserBase(BaseModel):
     phone_number: Optional[str] = None
     is_active: bool = True
     is_superuser: bool = False
-    role: UserRoleEnum
+    role: str
 
 
 class UserCreate(UserBase):
@@ -35,7 +33,7 @@ class UserUpdate(BaseModel):
     last_name: Optional[str] = None
     phone_number: Optional[str] = None
     is_active: Optional[bool] = None
-    role: Optional[UserRoleEnum] = None
+    role: Optional[str] = None
 
 
 class UserRead(UserBase):
