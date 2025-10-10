@@ -9,7 +9,6 @@ import {
   Calendar, 
   PlayCircle, 
   Sliders, 
-  BarChart3,
   Command
 } from 'lucide-react';
 
@@ -27,7 +26,6 @@ export function KeyboardShortcuts({ isOpen, onClose }: KeyboardShortcutsProps) {
         { keys: ['Ctrl', 'Shift', 'T'], description: 'Go to Timetable', icon: Calendar },
         { keys: ['Ctrl', 'Shift', 'S'], description: 'Go to Scheduling', icon: PlayCircle },
         { keys: ['Ctrl', 'Shift', 'C'], description: 'Go to Constraints', icon: Sliders },
-        { keys: ['Ctrl', 'Shift', 'A'], description: 'Go to Analytics', icon: BarChart3 },
       ]
     },
     {

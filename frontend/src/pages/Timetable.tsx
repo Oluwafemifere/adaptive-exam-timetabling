@@ -159,17 +159,21 @@ export function Timetable() {
     if (!originalExam) return;
 
     addHistoryEntry({
-      action: 'Manually moved exam',
+      action: 'Manually move exam',
       entityType: 'exam',
       entityId: originalExam.examId,
-      userId: user?.id || 'system',
-      userName: user?.name || 'System',
+      userName: user?.name || 'Unknown User',
+      timestamp: new Date().toISOString(),
       details: {
         courseCode: originalExam.courseCode,
-        from: `${originalExam.date} @ ${originalExam.startTime}`,
-        to: `${newDate} @ ${newStartTime}`,
+        courseName: originalExam.courseName
+      },
+      changes: {
+        before: { date: originalExam.date, startTime: originalExam.startTime },
+        after: { date: newDate, startTime: newStartTime },
       },
     });
+
 
     toast.info(`${originalExam.courseCode} moved. Note: This is a UI-only change. API for manual edit is needed.`);
   };

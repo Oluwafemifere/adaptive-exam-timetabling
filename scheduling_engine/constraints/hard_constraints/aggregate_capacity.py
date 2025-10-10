@@ -1,5 +1,6 @@
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
 import logging
+from backend.app.utils.celery_task_utils import task_progress_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,12 @@ class AggregateCapacityConstraint(CPSATBaseConstraint):
         """No local variables needed for this constraint."""
         pass
 
+    @task_progress_tracker(
+        start_progress=30,
+        end_progress=31,
+        phase="building_phase_1_model",
+        message="Applying aggregate capacity limits...",
+    )
     def add_constraints(self):
         """
         For each time slot, ensure:

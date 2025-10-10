@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -6,25 +6,27 @@ import { Progress } from '../components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Label } from '../components/ui/label';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '../components/ui/alert-dialog';
-import { Play, Square, AlertTriangle, Settings, Calendar, Users, Loader2, Terminal } from 'lucide-react';
+import { Play, Square, AlertTriangle, Settings, Calendar, Users, Loader2, Terminal, CheckCircle, XCircle, Zap } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useJobStatusSocket } from '../hooks/useApi';
 import { toast } from 'sonner';
 import { api } from '../services/api';
-import { ScrollArea } from '../components/ui/scroll-area'; // Import ScrollArea
+import { ScrollArea } from '../components/ui/scroll-area';
+import { cn } from '../utils/utils';
 
 export function Scheduling() {
-  const { 
-    activeSessionId, 
-    startSchedulingJob, 
+  const {
+    activeSessionId,
+    startSchedulingJob,
     cancelSchedulingJob,
     configurations,
     activeConfigurationId,
     setConfigurations,
-    schedulingStatus, // Get the full status object
+    schedulingStatus,
   } = useAppStore();
-  
+
   const [selectedConfig, setSelectedConfig] = useState<string | undefined>(undefined);
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setSelectedConfig(activeConfigurationId ?? undefined);
@@ -36,7 +38,7 @@ export function Scheduling() {
           const response = await api.getSystemConfigurationList();
           const systemConfigs = response.data || [];
           setConfigurations(systemConfigs);
-          
+
           const defaultConfig = systemConfigs.find(c => c.is_default);
           if (defaultConfig) {
             setSelectedConfig(defaultConfig.id);
@@ -50,9 +52,13 @@ export function Scheduling() {
         }
     };
     fetchSystemConfigs();
-  }, [setConfigurations]); 
+  }, [setConfigurations]);
 
   useJobStatusSocket(schedulingStatus.jobId);
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [schedulingStatus.logs]);
 
   const handleStartJob = () => {
     if (!activeSessionId) {
@@ -63,7 +69,7 @@ export function Scheduling() {
       toast.error("Please select a constraint configuration to run the job.");
       return;
     }
-    startSchedulingJob(selectedConfig); 
+    startSchedulingJob(selectedConfig);
   };
 
   const handleCancelJob = () => {
@@ -71,7 +77,28 @@ export function Scheduling() {
       cancelSchedulingJob(schedulingStatus.jobId);
     }
   };
-  
+
+  const getStatusIndicator = () => {
+    if (schedulingStatus.isRunning) {
+      return <Loader2 className="h-5 w-5 animate-spin text-blue-500" />;
+    }
+    if (schedulingStatus.phase === 'completed') {
+      return <CheckCircle className="h-5 w-5 text-green-500" />;
+    }
+    if (['failed', 'cancelled', 'error'].includes(schedulingStatus.phase)) {
+      return <XCircle className="h-5 w-5 text-red-500" />;
+    }
+    return <Zap className="h-5 w-5 text-gray-400" />;
+  };
+
+  const getLogLineClass = (log: string) => {
+    if (log.startsWith('[ERROR]')) return 'text-destructive';
+    if (log.startsWith('[SUCCESS]')) return 'text-green-600 dark:text-green-400';
+    if (log.startsWith('[INFO]')) return 'text-blue-600 dark:text-blue-400';
+    if (log.startsWith('[WARNING]')) return 'text-yellow-600 dark:text-yellow-400';
+    return 'text-muted-foreground';
+  };
+
   return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -102,7 +129,6 @@ export function Scheduling() {
           <CardContent>
               <div className="space-y-2">
                 <Label htmlFor="config-select">Constraint Configuration</Label>
-                {/* --- FIX: Controlled component --- */}
                 <Select value={selectedConfig ?? ""} onValueChange={setSelectedConfig} disabled={schedulingStatus.isRunning}>
                   <SelectTrigger id="config-select"><SelectValue placeholder="Select a configuration..." /></SelectTrigger>
                   <SelectContent>
@@ -114,33 +140,37 @@ export function Scheduling() {
               </div>
           </CardContent>
         </Card>
-      
-        {/* --- ADDITION: Job Status & Logs --- */}
+
         {(schedulingStatus.isRunning || schedulingStatus.logs.length > 0) && (
-          <Card>
+          <Card className="bg-secondary text-secondary-foreground">
             <CardHeader>
-              <CardTitle>Job Monitor</CardTitle>
-              <CardDescription>Real-time status of the active scheduling job.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center gap-4">
-                <div className="flex-1 space-y-2">
-                    <div className="flex justify-between text-sm font-medium">
-                      <span>Status: <span className="capitalize">{schedulingStatus.phase.replace(/_/g, ' ')}</span></span>
-                      <span>{Math.round(schedulingStatus.progress)}%</span>
-                    </div>
-                    <Progress value={schedulingStatus.progress} />
+              <div className="flex items-center gap-3">
+                {getStatusIndicator()}
+                <div>
+                  <CardTitle className="text-lg">Job Monitor</CardTitle>
+                  <CardDescription className="text-muted-foreground">Real-time status of the active scheduling job.</CardDescription>
                 </div>
-                {schedulingStatus.isRunning && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
               </div>
-              
+            </CardHeader>
+            <CardContent className="space-y-6">
               <div className="space-y-2">
-                <Label className="flex items-center gap-2"><Terminal className="h-4 w-4" /> Live Logs</Label>
-                <ScrollArea className="h-48 w-full rounded-md border bg-muted p-4">
+                  <div className="flex justify-between items-center text-sm font-medium text-secondary-foreground">
+                    <span className="capitalize">Status: {schedulingStatus.phase.replace(/_/g, ' ')}</span>
+                    <span className="font-bold text-lg">{Math.round(schedulingStatus.progress)}%</span>
+                  </div>
+                  <Progress value={schedulingStatus.progress} className="[&>div]:bg-green-500" />
+              </div>
+
+              <div className="space-y-3">
+                <Label className="flex items-center gap-2 text-base"><Terminal className="h-5 w-5" /> Live Logs</Label>
+                <ScrollArea className="h-64 w-full rounded-md bg-background p-4 border">
                   <div className="text-sm font-mono whitespace-pre-wrap break-all">
                     {schedulingStatus.logs.map((log, index) => (
-                      <p key={index} className="leading-relaxed">{log}</p>
+                      <p key={index} className={cn("leading-relaxed", getLogLineClass(log))}>
+                        <span className="mr-2">{`> `}</span>{log}
+                      </p>
                     ))}
+                    <div ref={logsEndRef} />
                   </div>
                 </ScrollArea>
               </div>

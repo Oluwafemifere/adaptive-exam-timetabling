@@ -491,9 +491,12 @@ class ExamSchedulingProblem:
         self.locks: List[Dict[str, Any]] = []
         self.constraint_definitions: List[ConstraintDefinition] = []
 
+        # --- START OF FIX ---
         self.module_map: Dict[str, str] = {
             # --- DYNAMIC HARD (Configurable via DB) ---
             "ROOM_SEQUENTIAL_USE": "scheduling_engine.constraints.hard_constraints.room_sequential_use.RoomSequentialUseConstraint",
+            "ROOM_CAPACITY_HARD": "scheduling_engine.constraints.hard_constraints.room_capacity_hard.RoomCapacityHardConstraint",
+            "UNIFIED_STUDENT_CONFLICT": "scheduling_engine.constraints.hard_constraints.unified_student_conflict.UnifiedStudentConflictConstraint",
             # --- DYNAMIC SOFT (Configurable via DB) ---
             "INSTRUCTOR_CONFLICT": "scheduling_engine.constraints.soft_constraints.instructor_conflict.InstructorConflictConstraint",
             "MINIMUM_GAP": "scheduling_engine.constraints.soft_constraints.minimum_gap.MinimumGapConstraint",
@@ -506,6 +509,7 @@ class ExamSchedulingProblem:
             "ROOM_DURATION_HOMOGENEITY": "scheduling_engine.constraints.soft_constraints.room_duration_homogeneity.RoomDurationHomogeneityConstraint",
             "ROOM_FIT_PENALTY": "scheduling_engine.constraints.soft_constraints.room_fit_penalty.RoomFitPenaltyConstraint",
         }
+        # --- END OF FIX ---
 
         self.constraint_registry = ConstraintRegistry()
         # Scheduling parameters

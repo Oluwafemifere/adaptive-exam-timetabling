@@ -37,6 +37,8 @@ try:
         ConstraintParameter,
         ConstraintRule,
         Course,
+        CourseDepartment,  # Added
+        CourseFaculty,  # Added
         CourseInstructor,
         CourseRegistration,
         DataSeedingSession,
@@ -49,6 +51,7 @@ try:
         FileUploadSession,
         Programme,
         Room,
+        RoomDepartment,  # Added
         RoomType,
         SessionTemplate,
         Staff,
@@ -250,9 +253,9 @@ class ComprehensiveFakeSeeder:
                 await self._clear_all_data()
 
             # The order of these phases is crucial for maintaining data integrity
-            await self._seed_phase_1_core_setup()
-            await self._seed_phase_2_academic_structure()
-            await self._seed_phase_3_people_and_users()
+            await self._seed_phase_1_academic_and_physical_structure()
+            await self._seed_phase_2_templates_and_config()
+            await self._seed_phase_3_courses_people_and_users()
             await self._seed_phase_4_enrollments_and_exams()
             await self._seed_phase_5_timetabling_and_hitl()
             await self._seed_phase_6_system_and_logging()
@@ -300,6 +303,8 @@ class ComprehensiveFakeSeeder:
                 "constraint_configurations",
                 "constraint_rules",
                 "course_instructors",
+                "course_faculties",  # New
+                "course_departments",  # New
                 "course_registrations",
                 "student_enrollments",
                 "staff_unavailability",
@@ -310,6 +315,7 @@ class ComprehensiveFakeSeeder:
                 "programmes",
                 "departments",
                 "faculties",
+                "room_departments",  # New
                 "rooms",
                 "room_types",
                 "buildings",
@@ -331,24 +337,22 @@ class ComprehensiveFakeSeeder:
                     logger.warning(f"  - Could not clear table {table}: {e}")
         logger.info("🧹 Database cleared.")
 
-    # --- Seeding Phases ---
-    async def _seed_phase_1_core_setup(self):
-        logger.info(
-            "Phase 1: Seeding Core Setup (Infrastructure, Templates, Constraints)..."
-        )
+    # --- Seeding Phases (Reordered for new schema) ---
+    async def _seed_phase_1_academic_and_physical_structure(self):
+        logger.info("Phase 1: Seeding Academic and Physical Structure...")
+        await self._seed_faculties_departments_programmes()
         await self._seed_infrastructure()
+
+    async def _seed_phase_2_templates_and_config(self):
+        logger.info("Phase 2: Seeding Templates, Constraints, and Sessions...")
         await self._seed_timeslot_templates()
         await self._seed_session_templates()
         await self._seed_constraints_and_config()
-
-    async def _seed_phase_2_academic_structure(self):
-        logger.info("Phase 2: Seeding Academic Structure (Faculties, Courses)...")
-        await self._seed_faculties_departments_programmes()
         await self._seed_academic_sessions()
-        await self._seed_courses()
 
-    async def _seed_phase_3_people_and_users(self):
-        logger.info("Phase 3: Seeding People and Users...")
+    async def _seed_phase_3_courses_people_and_users(self):
+        logger.info("Phase 3: Seeding Courses, People, and Users...")
+        await self._seed_courses()
         await self._seed_demo_user_accounts()
         await self._seed_students_and_create_users()
         await self._seed_staff_and_create_users()
@@ -387,9 +391,73 @@ class ComprehensiveFakeSeeder:
         self.generated_emails.add(email)
         return email
 
+    async def _seed_faculties_departments_programmes(self):
+        async with db_manager.get_db_transaction() as session:
+            logger.info("  - Seeding academic structure...")
+            faculty_data = {
+                "ENG": "Engineering",
+                "SCI": "Science",
+                "MGT": "Management",
+                "LAW": "Law",
+                "IT": "Computing & IT",
+                "ENV": "Environmental Science",
+                "ART": "Arts & Humanities",
+                "MED": "Medical Sciences",
+                "EDU": "Education",
+                "AGR": "Agriculture",
+            }
+            faculties = [
+                Faculty(code=c, name=f"Faculty of {n}", is_active=True)
+                for c, n in list(faculty_data.items())[: SCALE_LIMITS["faculties"]]
+            ]
+            session.add_all(faculties)
+            await session.flush()
+            self.seeded_data["faculties"] = len(faculties)
+
+            dept_data = {
+                "ENG": ["CPE", "MCE", "CVE"],
+                "SCI": ["CSC", "PHY", "CHM"],
+                "MGT": ["ACC", "BUS", "MKT"],
+                "IT": ["IFT", "CYS", "SWE"],
+                "LAW": ["PUB", "PRV"],
+            }
+            depts, progs = [], []
+            for fac in faculties:
+                for dept_code in dept_data.get(fac.code, []):
+                    if len(depts) >= SCALE_LIMITS["departments"]:
+                        break
+                    dept = Department(
+                        code=dept_code,
+                        name=f"Dept. of {dept_code}",
+                        faculty_id=fac.id,
+                        is_active=True,
+                    )
+                    depts.append(dept)
+                    session.add(dept)
+                    await session.flush()
+                    if len(progs) < SCALE_LIMITS["programmes"]:
+                        progs.append(
+                            Programme(
+                                code=f"B.{dept_code}",
+                                name=f"B.Sc {dept_code}",
+                                department_id=dept.id,
+                                duration_years=4,
+                                degree_type="undergraduate",
+                                is_active=True,
+                            )
+                        )
+            session.add_all(progs)
+            self.seeded_data["departments"] = len(depts)
+            self.seeded_data["programmes"] = len(progs)
+
     async def _seed_infrastructure(self):
         async with db_manager.get_db_transaction() as session:
-            logger.info("  - Seeding infrastructure...")
+            logger.info("  - Seeding infrastructure with associations...")
+
+            # Get faculties and departments created in the previous step
+            faculties = (await session.execute(select(Faculty))).scalars().all()
+            departments = (await session.execute(select(Department))).scalars().all()
+
             building_codes = [
                 "A",
                 "B",
@@ -407,10 +475,25 @@ class ComprehensiveFakeSeeder:
                 "LAW",
                 "MED",
             ]
-            buildings = [
-                Building(code=c, name=f"{c} Block", is_active=True)
-                for c in building_codes[: SCALE_LIMITS["buildings"]]
-            ]
+            buildings = []
+            for code in building_codes[: SCALE_LIMITS["buildings"]]:
+                # Edge Case: ~20% of buildings are multi-purpose/not tied to a faculty
+                faculty_id = None
+                if faculties and random.random() < 0.8:
+                    faculty_id = random.choice(faculties).id
+
+                buildings.append(
+                    Building(
+                        code=code,
+                        name=(
+                            f"{code} Block"
+                            if faculty_id
+                            else f"General Purpose Hall {code}"
+                        ),
+                        is_active=True,
+                        faculty_id=faculty_id,
+                    )
+                )
             session.add_all(buildings)
             await session.flush()
             self.seeded_data["buildings"] = len(buildings)
@@ -445,7 +528,6 @@ class ComprehensiveFakeSeeder:
             for _ in range(SCALE_LIMITS["rooms"]):
                 b = random.choice(buildings)
                 rt = random.choices(room_type_population, weights=weights, k=1)[0]
-
                 capacity_map = {
                     "Auditorium": (200, 500),
                     "Lecture Hall": (80, 200),
@@ -455,7 +537,6 @@ class ComprehensiveFakeSeeder:
                 }
                 cap = random.randint(*capacity_map.get(rt.name, (20, 60)))
                 exam_cap = int(cap * random.uniform(0.4, 0.6))
-
                 while True:
                     code = f"{b.code}{random.randint(101, 599)}"
                     if code not in self.generated_room_codes:
@@ -478,7 +559,24 @@ class ComprehensiveFakeSeeder:
                     )
                 )
             session.add_all(rooms)
+            await session.flush()
             self.seeded_data["rooms"] = len(rooms)
+
+            # Seed room-to-department associations
+            if rooms and departments:
+                room_depts = []
+                for room in rooms:
+                    if random.random() < 0.9:  # 90% of rooms are associated
+                        num_depts = random.choices([1, 2], weights=[0.9, 0.1], k=1)[0]
+                        assigned_depts = random.sample(
+                            departments, min(num_depts, len(departments))
+                        )
+                        for dept in assigned_depts:
+                            room_depts.append(
+                                RoomDepartment(room_id=room.id, department_id=dept.id)
+                            )
+                session.add_all(room_depts)
+                self.seeded_data["room_departments"] = len(room_depts)
 
     async def _seed_timeslot_templates(self):
         async with db_manager.get_db_transaction() as session:
@@ -734,65 +832,6 @@ class ComprehensiveFakeSeeder:
             self.seeded_data["system_configurations"] = len(sys_configs)
             logger.info(f"  - Created {len(sys_configs)} SystemConfiguration records.")
 
-    async def _seed_faculties_departments_programmes(self):
-        async with db_manager.get_db_transaction() as session:
-            logger.info("  - Seeding academic structure...")
-            faculty_data = {
-                "ENG": "Engineering",
-                "SCI": "Science",
-                "MGT": "Management",
-                "LAW": "Law",
-                "IT": "Computing & IT",
-                "ENV": "Environmental Science",
-                "ART": "Arts & Humanities",
-                "MED": "Medical Sciences",
-                "EDU": "Education",
-                "AGR": "Agriculture",
-            }
-            faculties = [
-                Faculty(code=c, name=f"Faculty of {n}", is_active=True)
-                for c, n in list(faculty_data.items())[: SCALE_LIMITS["faculties"]]
-            ]
-            session.add_all(faculties)
-            await session.flush()
-            self.seeded_data["faculties"] = len(faculties)
-
-            dept_data = {
-                "ENG": ["CPE", "MCE", "CVE"],
-                "SCI": ["CSC", "PHY", "CHM"],
-                "MGT": ["ACC", "BUS", "MKT"],
-                "IT": ["IFT", "CYS", "SWE"],
-                "LAW": ["PUB", "PRV"],
-            }
-            depts, progs = [], []
-            for fac in faculties:
-                for dept_code in dept_data.get(fac.code, []):
-                    if len(depts) >= SCALE_LIMITS["departments"]:
-                        break
-                    dept = Department(
-                        code=dept_code,
-                        name=f"Dept. of {dept_code}",
-                        faculty_id=fac.id,
-                        is_active=True,
-                    )
-                    depts.append(dept)
-                    session.add(dept)
-                    await session.flush()
-                    if len(progs) < SCALE_LIMITS["programmes"]:
-                        progs.append(
-                            Programme(
-                                code=f"B.{dept_code}",
-                                name=f"B.Sc {dept_code}",
-                                department_id=dept.id,
-                                duration_years=4,
-                                degree_type="undergraduate",
-                                is_active=True,
-                            )
-                        )
-            session.add_all(progs)
-            self.seeded_data["departments"] = len(depts)
-            self.seeded_data["programmes"] = len(progs)
-
     async def _seed_academic_sessions(self):
         async with db_manager.get_db_transaction() as session:
             logger.info(
@@ -830,10 +869,15 @@ class ComprehensiveFakeSeeder:
 
     async def _seed_courses(self):
         async with db_manager.get_db_transaction() as session:
-            logger.info("  - Seeding courses...")
-            dept_ids = (await session.execute(select(Department.id))).scalars().all()
-            if not dept_ids:
+            logger.info("  - Seeding courses with associations...")
+            departments = (await session.execute(select(Department))).scalars().all()
+            faculties = (await session.execute(select(Faculty))).scalars().all()
+            if not departments or not faculties:
+                logger.warning(
+                    "No departments or faculties found, skipping course seeding."
+                )
                 return
+
             courses = []
             for _ in range(SCALE_LIMITS["courses"]):
                 while True:
@@ -845,7 +889,6 @@ class ComprehensiveFakeSeeder:
                     Course(
                         code=code,
                         title=fake.catch_phrase(),
-                        department_id=random.choice(dept_ids),
                         credit_units=random.randint(1, 4),
                         course_level=random.choice([100, 200, 300, 400]),
                         is_active=True,
@@ -854,7 +897,36 @@ class ComprehensiveFakeSeeder:
                     )
                 )
             session.add_all(courses)
+            await session.flush()
             self.seeded_data["courses"] = len(courses)
+
+            # Seed associations for courses
+            course_depts, course_facs = [], []
+            for course in courses:
+                rand_val = random.random()
+                if rand_val < 0.8:  # 80% standard course, 1 department
+                    dept = random.choice(departments)
+                    course_depts.append(
+                        CourseDepartment(course_id=course.id, department_id=dept.id)
+                    )
+                elif rand_val < 0.9:  # 10% cross-listed, 2-3 departments
+                    num_depts = random.randint(2, 3)
+                    depts = random.sample(departments, min(num_depts, len(departments)))
+                    for dept in depts:
+                        course_depts.append(
+                            CourseDepartment(course_id=course.id, department_id=dept.id)
+                        )
+                elif rand_val < 0.95:  # 5% faculty-wide course
+                    fac = random.choice(faculties)
+                    course_facs.append(
+                        CourseFaculty(course_id=course.id, faculty_id=fac.id)
+                    )
+                # 5% are general/university courses with no association
+
+            session.add_all(course_depts)
+            session.add_all(course_facs)
+            self.seeded_data["course_departments"] = len(course_depts)
+            self.seeded_data["course_faculties"] = len(course_facs)
 
     async def _seed_demo_user_accounts(self):
         async with db_manager.get_db_transaction() as session:
@@ -950,10 +1022,10 @@ class ComprehensiveFakeSeeder:
 
     async def _seed_staff_and_create_users(self):
         async with db_manager.get_db_transaction() as session:
-            logger.info("  - Seeding staff and ensuring user accounts...")
+            logger.info(
+                "  - Seeding staff (academic and admin) and ensuring user accounts..."
+            )
             dept_ids = (await session.execute(select(Department.id))).scalars().all()
-            if not dept_ids:
-                return
 
             staff_to_create = []
             pwd = hash_password("password123")
@@ -970,6 +1042,14 @@ class ComprehensiveFakeSeeder:
                     is_superuser=False,
                     role="staff",
                 )
+
+                # Edge Case: ~10% of staff are administrative
+                is_admin_staff = random.random() < 0.1
+                dept_id = (
+                    random.choice(dept_ids) if dept_ids and not is_admin_staff else None
+                )
+                staff_type = "administrative" if is_admin_staff else "academic"
+
                 staff_num_counter = i
                 while True:
                     staff_num = f"STF{1001+staff_num_counter}"
@@ -982,8 +1062,8 @@ class ComprehensiveFakeSeeder:
                     staff_number=staff_num,
                     first_name=first,
                     last_name=last,
-                    department_id=random.choice(dept_ids),
-                    staff_type="academic",
+                    department_id=dept_id,
+                    staff_type=staff_type,
                     can_invigilate=True,
                     is_active=True,
                     max_daily_sessions=random.choice([1, 2, 2, 3]),
@@ -1063,10 +1143,27 @@ class ComprehensiveFakeSeeder:
                 logger.warning("Missing courses or enrollments, skipping.")
                 return
 
+            # Create mappings for courses based on new schema
+            course_dept_pairs = (
+                await session.execute(
+                    select(CourseDepartment.course_id, CourseDepartment.department_id)
+                )
+            ).all()
+            dept_to_course_ids = defaultdict(list)
+            for c_id, d_id in course_dept_pairs:
+                dept_to_course_ids[d_id].append(c_id)
+
+            course_id_map = {c.id: c for c in all_courses}
+
             # Group courses by department and level for efficient lookup
             courses_by_dept_level = defaultdict(list)
-            for c in all_courses:
-                courses_by_dept_level[(c.department_id, c.course_level)].append(c)
+            for dept_id, course_ids in dept_to_course_ids.items():
+                for course_id in course_ids:
+                    course = course_id_map.get(course_id)
+                    if course:
+                        courses_by_dept_level[(dept_id, course.course_level)].append(
+                            course
+                        )
 
             # Group students by programme and level
             students_by_prog_level = defaultdict(list)
@@ -1085,31 +1182,22 @@ class ComprehensiveFakeSeeder:
                     continue
 
                 dept_id = prog.department_id
-
-                # Define core, elective, and carryover courses for the cohort
                 core_courses = courses_by_dept_level.get((dept_id, level), [])
-                elective_pool = courses_by_dept_level.get(
-                    (dept_id, level + 100), []
-                )  # Electives from a higher level
-                carryover_pool = courses_by_dept_level.get(
-                    (dept_id, level - 100), []
-                )  # Carryovers from a lower level
+                elective_pool = courses_by_dept_level.get((dept_id, level + 100), [])
+                carryover_pool = courses_by_dept_level.get((dept_id, level - 100), [])
 
                 num_core = min(len(core_courses), random.choice([4, 4, 5]))
                 num_electives = min(len(elective_pool), random.choice([1, 2, 2]))
 
-                selected_core = random.sample(core_courses, num_core)
-
-                # --- START OF FIX ---
-                # Electives are now selected ONCE for the entire cohort to reduce variability.
-                selected_electives = []
-                if elective_pool:
-                    selected_electives = random.sample(elective_pool, num_electives)
-                # --- END OF FIX ---
+                selected_core = (
+                    random.sample(core_courses, num_core) if core_courses else []
+                )
+                selected_electives = (
+                    random.sample(elective_pool, num_electives) if elective_pool else []
+                )
 
                 for student_id in student_ids:
-                    # Register for all core courses
-                    for course in selected_core:
+                    for course in selected_core + selected_electives:
                         registrations.append(
                             CourseRegistration(
                                 student_id=student_id,
@@ -1120,21 +1208,6 @@ class ComprehensiveFakeSeeder:
                         )
                         course_student_counts[course.id] += 1
 
-                    # --- START OF FIX ---
-                    # Register students for the pre-selected, SHARED elective courses.
-                    for course in selected_electives:
-                        registrations.append(
-                            CourseRegistration(
-                                student_id=student_id,
-                                course_id=course.id,
-                                session_id=active_session.id,
-                                registration_type="normal",
-                            )
-                        )
-                        course_student_counts[course.id] += 1
-                    # --- END OF FIX ---
-
-                    # Add a chance for a carryover course (this remains individual)
                     if carryover_pool and random.random() < 0.15:
                         course = random.choice(carryover_pool)
                         registrations.append(
@@ -1156,7 +1229,7 @@ class ComprehensiveFakeSeeder:
             # 3. Create exams based on the final registration counts
             exams = []
             for course_id, count in course_student_counts.items():
-                course = next((c for c in all_courses if c.id == course_id), None)
+                course = course_id_map.get(course_id)
                 if course and count > 0:
                     exams.append(
                         Exam(
@@ -1172,28 +1245,72 @@ class ComprehensiveFakeSeeder:
                             is_common=count > 150,
                         )
                     )
-
             session.add_all(exams)
             self.seeded_data["exams"] = len(exams)
             logger.info(f"  - Created {len(exams)} exams based on registration counts.")
 
     async def _seed_exam_details(self):
         async with db_manager.get_db_transaction() as session:
-            logger.info("  - Seeding exam details (departments)...")
-            exams = (
-                (await session.execute(select(Exam).options(selectinload(Exam.course))))
-                .scalars()
-                .all()
+            logger.info(
+                "  - Seeding exam details (departments for cross-listed courses)..."
             )
+            exams = (await session.execute(select(Exam))).scalars().all()
             if not exams:
                 return
 
-            exam_depts = [
-                ExamDepartment(exam_id=e.id, department_id=e.course.department_id)
-                for e in exams
+            # Create a map of course_id -> list of department_ids
+            course_dept_pairs = (
+                await session.execute(
+                    select(CourseDepartment.course_id, CourseDepartment.department_id)
+                )
+            ).all()
+            course_to_depts_map = defaultdict(list)
+            for c_id, d_id in course_dept_pairs:
+                course_to_depts_map[c_id].append(d_id)
+
+            exam_depts = []
+            # Handle exams for courses linked to specific departments
+            for e in exams:
+                associated_dept_ids = course_to_depts_map.get(e.course_id, [])
+                for dept_id in associated_dept_ids:
+                    exam_depts.append(
+                        ExamDepartment(exam_id=e.id, department_id=dept_id)
+                    )
+
+            # Handle exams for faculty-wide courses
+            course_faculty_pairs = (
+                await session.execute(
+                    select(CourseFaculty.course_id, CourseFaculty.faculty_id)
+                )
+            ).all()
+            faculty_to_depts_map = defaultdict(list)
+            all_depts = (await session.execute(select(Department))).scalars().all()
+            for dept in all_depts:
+                faculty_to_depts_map[dept.faculty_id].append(dept.id)
+
+            for e in exams:
+                if not course_to_depts_map.get(
+                    e.course_id
+                ):  # Only if it has no dept links
+                    for c_id, f_id in course_faculty_pairs:
+                        if c_id == e.course_id:
+                            depts_in_faculty = faculty_to_depts_map.get(f_id, [])
+                            for dept_id in depts_in_faculty:
+                                exam_depts.append(
+                                    ExamDepartment(exam_id=e.id, department_id=dept_id)
+                                )
+
+            # Ensure uniqueness and add to session
+            unique_exam_depts_tuples = {
+                (ed.exam_id, ed.department_id) for ed in exam_depts
+            }
+            final_exam_depts = [
+                ExamDepartment(exam_id=eid, department_id=did)
+                for eid, did in unique_exam_depts_tuples
             ]
-            session.add_all(exam_depts)
-            self.seeded_data["exam_departments"] = len(exam_depts)
+
+            session.add_all(final_exam_depts)
+            self.seeded_data["exam_departments"] = len(final_exam_depts)
 
     async def _seed_course_instructors(self):
         async with db_manager.get_db_transaction() as session:

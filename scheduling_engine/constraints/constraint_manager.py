@@ -48,7 +48,7 @@ class CPSATConstraintManager:
         self._constraint_instances: Dict[str, Any] = {}
         logger.info("🎛️  Initialized DYNAMIC CPSATConstraintManager.")
 
-    def build_phase1_model(
+    async def build_phase1_model(
         self, model, shared_variables: SharedVariables
     ) -> Dict[str, Any]:
         """Builds the Phase 1 (Timetabling) model with time-based constraints."""
@@ -64,9 +64,9 @@ class CPSATConstraintManager:
         logger.info(
             f"Phase 1 will use these CORE constraints: {[c.__name__ for c in core_constraints]}"
         )
-        return self._build_model(model, shared_variables, core_constraints)
+        return await self._build_model(model, shared_variables, core_constraints)
 
-    def build_phase2_model(
+    async def build_phase2_model(
         self, model, shared_variables: SharedVariables
     ) -> Dict[str, Any]:
         """Builds the full Phase 2 (Packing) model."""
@@ -83,9 +83,9 @@ class CPSATConstraintManager:
         logger.info(
             f"Phase 2 will use these CORE constraints: {[c.__name__ for c in core_constraints]}"
         )
-        return self._build_model(model, shared_variables, core_constraints)
+        return await self._build_model(model, shared_variables, core_constraints)
 
-    def _build_model(
+    async def _build_model(
         self,
         model,
         shared_variables: SharedVariables,
@@ -113,7 +113,7 @@ class CPSATConstraintManager:
                     constraint_class=cls,
                 )
 
-                instance = self._instantiate_and_apply(
+                instance = await self._instantiate_and_apply(
                     definition, model, shared_variables
                 )
                 if instance:
@@ -136,7 +136,7 @@ class CPSATConstraintManager:
         )
         for definition in dynamic_definitions:
             try:
-                instance = self._instantiate_and_apply(
+                instance = await self._instantiate_and_apply(
                     definition, model, shared_variables
                 )
                 if instance:
@@ -169,7 +169,7 @@ class CPSATConstraintManager:
         logger.info(f"   • Build time: {build_time:.2f}s")
         return self._build_stats
 
-    def _instantiate_and_apply(self, definition, model, shared_variables):
+    async def _instantiate_and_apply(self, definition, model, shared_variables):
         """Instantiates, initializes, and applies a single constraint definition."""
         if not definition.constraint_class:
             logger.warning(
@@ -188,7 +188,15 @@ class CPSATConstraintManager:
         )
         self._constraint_instances[definition.id] = instance
         instance.initialize_variables()
-        instance.add_constraints()
+        # --- START OF FIX ---
+        # Await the add_constraints method if it's a coroutine
+        import inspect
+
+        if inspect.iscoroutinefunction(instance.add_constraints):
+            await instance.add_constraints()
+        else:
+            instance.add_constraints()
+        # --- END OF FIX ---
         stats = instance.get_statistics()
         count = stats.get("constraint_count", 0)
         if count > 0:

@@ -17,6 +17,7 @@ from ....schemas.users import (
     UserRead,
     UserUpdate,
     PaginatedUserResponse,
+    AdminUserCreate,  # Import the new schema
 )
 from ....schemas.system import GenericResponse
 
@@ -63,6 +64,45 @@ async def register_user(
         success=True,
         message="User registered successfully.",
         data={"user_id": result.get("user_id"), "role": result.get("role")},
+    )
+
+
+# NEW: Admin endpoint for creating and registering users
+@router.post(
+    "/admin", response_model=GenericResponse, status_code=status.HTTP_201_CREATED
+)
+async def admin_create_user(
+    user_in: AdminUserCreate,
+    db: AsyncSession = Depends(db_session),
+    admin_user: User = Depends(current_user),
+):
+    """
+    (Admin only) Create a new user (student or admin).
+    If creating a student, this will also enroll them in the specified session.
+    """
+    if not admin_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to perform this action.",
+        )
+
+    service = AuthenticationService(db)
+    user_data = user_in.model_dump()
+
+    result = await service.admin_create_user(
+        admin_user_id=admin_user.id, user_data=user_data
+    )
+
+    if result.get("status") != "success":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("message", "Failed to create user."),
+        )
+
+    return GenericResponse(
+        success=True,
+        message=result.get("message"),
+        data={"user_id": result.get("user_id"), "student_id": result.get("student_id")},
     )
 
 

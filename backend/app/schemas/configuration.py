@@ -17,15 +17,6 @@ class SystemConfigListItem(BaseModel):
     is_default: bool
 
 
-class ConstraintConfigListItem(BaseModel):
-    """Lean schema for listing constraint configuration profiles."""
-
-    id: UUID
-    name: str
-    description: Optional[str] = None
-    is_default: bool
-
-
 # --- Schemas for Detailed View and Saving ---
 
 
@@ -49,10 +40,7 @@ class RuleSettingRead(RuleSetting):
 
 
 class SystemConfigDetails(BaseModel):
-    """
-    Comprehensive schema for viewing and editing a single system configuration.
-    This is the primary model for the configuration management UI.
-    """
+    """Comprehensive schema for viewing and editing a single system configuration."""
 
     id: UUID
     name: str

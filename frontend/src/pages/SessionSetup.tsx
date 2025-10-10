@@ -1,7 +1,6 @@
 // frontend/src/pages/SessionSetup.tsx
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
-  Zap, 
   ChevronRight, 
   ChevronLeft,
   Calendar,
@@ -34,7 +33,7 @@ import { Alert, AlertDescription } from '../components/ui/alert'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { cn } from '../components/ui/utils'
 import { toast } from 'sonner'
-import { useCreateSession, useFileUpload, useSessionSummary, useProcessStagedData } from '../hooks/useApi';
+import { useCreateSession, useFileUpload, useSessionSummary } from '../hooks/useApi';
 import { useAppStore } from '../store';
 import { StagingDataReviewTable } from '../components/StagingDataReviewTable'; 
 
@@ -73,7 +72,6 @@ export function SessionSetup() {
   const { mutateAsync: createSession, isPending: isCreatingSession } = useCreateSession();
   const { mutateAsync: uploadFile, isPending: isUploading } = useFileUpload();
   const { data: summaryData, isLoading: isLoadingSummary, refetch: refetchSummary } = useSessionSummary(sessionId);
-  const { mutateAsync: processData, isPending: isProcessingData } = useProcessStagedData();
 
   // File Upload state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -204,28 +202,13 @@ export function SessionSetup() {
   const updateTimeSlot = (id: string, updates: Partial<{startTime: string, endTime: string}>) => setSessionData(prev => ({ ...prev, timeSlots: prev.timeSlots.map(slot => slot.id === id ? { ...slot, ...updates } : slot) }));
   
   // --- FIX START ---
-  // This function is only triggered on the final button click.
-  // It now correctly redirects to the 'constraints' page after a successful call.
-  const finishSetup = async () => {
-    if (!sessionId) return;
-    try {
-      const result = await processData({ sessionId });
-      if (result.success) {
-        toast.success('Session setup complete!', {
-          description: 'Your data has been processed. You will now be redirected to configure the constraints.'
-        });
-        setCurrentPage('constraints'); // Corrected navigation target
-      } else {
-        // This handles cases where the API returns a success:false response
-        toast.error('Processing Failed', {
-          description: result.message || 'An unknown error occurred on the server.'
-        });
-      }
-    } catch (error) { 
-      // This catch block is for network errors or if the hook re-throws the error.
-      // The useProcessStagedData hook already shows a toast on failure.
-      console.error("Failed to process staged data:", error);
-    }
+  // This function is triggered on the final button click.
+  // It no longer sends an API request and instead directly navigates the user to the constraints page.
+  const finishSetup = () => {
+    toast.success('Session setup complete!', {
+      description: 'You will now be redirected to configure the constraints.'
+    });
+    setCurrentPage('constraints');
   };
   // --- FIX END ---
 
@@ -301,7 +284,7 @@ export function SessionSetup() {
       <div className="min-h-[30rem]">{renderStepContent()}</div>
 
       <div className="flex items-center justify-between">
-        <Button variant="outline" onClick={prevStep} disabled={currentStep === 1 || isCreatingSession || isProcessingData}>
+        <Button variant="outline" onClick={prevStep} disabled={currentStep === 1 || isCreatingSession}>
             <ChevronLeft className="h-4 w-4 mr-2" />Previous
         </Button>
         <div className="flex space-x-3">
@@ -311,8 +294,8 @@ export function SessionSetup() {
               </Button>
           )}
           {currentStep === 5 && (
-              <Button onClick={finishSetup} disabled={!isStepValid(5) || isProcessingData}>
-                  {isProcessingData ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Processing...</> : <><Zap className="h-4 w-4 mr-2" />Process & Finish</>}
+              <Button onClick={finishSetup} disabled={!isStepValid(5)}>
+                  Finish<ChevronRight className="h-4 w-4 ml-2" />
               </Button>
           )}
         </div>

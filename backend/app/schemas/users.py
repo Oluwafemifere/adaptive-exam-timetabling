@@ -25,6 +25,25 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=8)
 
 
+# NEW: Schema for the admin user creation endpoint
+class AdminUserCreate(BaseModel):
+    """Schema for an admin to create any type of user."""
+
+    user_type: str = Field(
+        ..., pattern="^(student|admin)$"
+    )  # Must be 'student' or 'admin'
+    email: EmailStr
+    first_name: str
+    last_name: str
+    password: str = Field(..., min_length=8)
+
+    # Required for students
+    session_id: Optional[UUID] = None
+    matric_number: Optional[str] = None
+    programme_code: Optional[str] = None
+    entry_year: Optional[int] = None
+
+
 class UserUpdate(BaseModel):
     model_config = MODEL_CONFIG
 

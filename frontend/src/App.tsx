@@ -7,8 +7,6 @@ import { Dashboard } from "./pages/Dashboard";
 import { Scheduling } from "./pages/Scheduling";
 import { Timetable } from "./pages/Timetable";
 import { Constraints } from "./pages/Constraints";
-import { Scenarios } from "./pages/Scenarios";
-import { Analytics } from "./pages/Analytics";
 import { SessionSetup } from "./pages/SessionSetup";
 import { UserManagement } from "./pages/UserManagement";
 import { Notifications } from "./pages/Notifications";
@@ -46,8 +44,6 @@ function AppContent() {
         case "scheduling": return <Scheduling />;
         case "timetable": return <Timetable />;
         case "constraints": return <Constraints />;
-        case "scenarios": return <Scenarios />;
-        case "analytics": return <Analytics />;
         case "session-setup": return <SessionSetup />;
         case "user-management": return <UserManagement />;
         case "notifications": return <Notifications />;

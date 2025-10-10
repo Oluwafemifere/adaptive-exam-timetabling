@@ -1,12 +1,12 @@
 // frontend/src/pages/Login.tsx
 import React, { useState } from 'react';
-import { Lock, Mail, UserPlus, Building, GraduationCap, User as UserIcon } from 'lucide-react';
+import { Lock, Mail, UserPlus, GraduationCap, User as UserIcon } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'; // Import Tabs
 import { useAuth } from '../hooks/useAuth';
 import { toast } from 'sonner';
 import { api } from '../services/api';
@@ -17,47 +17,57 @@ export function Login() {
   const { login, isLoggingIn, error } = useAuth();
   const [isCreateAccountOpen, setCreateAccountOpen] = useState(false);
 
-  // --- State for the registration form ---
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
+  // --- State for the registration forms ---
+  const [registrationType, setRegistrationType] = useState<'student' | 'staff'>('student');
   const [email, setEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [role, setRole] = useState('');
-
+  const [matricNumber, setMatricNumber] = useState('');
+  const [staffNumber, setStaffNumber] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await login(username, password);
   };
 
+  const resetForm = () => {
+    setEmail('');
+    setNewPassword('');
+    setMatricNumber('');
+    setStaffNumber('');
+    setRegistrationType('student');
+  };
+
   const handleCreateAccount = async () => {
-    if (!firstName || !lastName || !email || !newPassword || !role) {
-      toast.error('Please fill out all fields.');
-      return;
-    }
-    
+    setIsRegistering(true);
     try {
-      // --- FIX: Call the actual registration API endpoint ---
-      await api.registerUser({
-        first_name: firstName,
-        last_name: lastName,
-        email: email,
-        password: newPassword,
-        role: role,
-        is_active: true, 
-        is_superuser: false,
-      });
-      toast.success('Account created successfully! You can now log in.');
-      setCreateAccountOpen(false);
-      // Reset form
-      setFirstName('');
-      setLastName('');
-      setEmail('');
-      setNewPassword('');
-      setRole('');
+      let response;
+      if (registrationType === 'student') {
+        if (!matricNumber || !email || !newPassword) {
+          toast.error('Please fill out all fields for student registration.');
+          return;
+        }
+        response = await api.selfRegisterStudent({ matric_number: matricNumber, email, password: newPassword });
+      } else {
+        if (!staffNumber || !email || !newPassword) {
+          toast.error('Please fill out all fields for staff registration.');
+          return;
+        }
+        response = await api.selfRegisterStaff({ staff_number: staffNumber, email, password: newPassword });
+      }
+
+      if (response.data.success) {
+        toast.success('Account created successfully! You can now log in.');
+        setCreateAccountOpen(false);
+        resetForm();
+      } else {
+        throw new Error(response.data.message || 'Registration failed.');
+      }
     } catch (err: any) {
-      const errorMessage = err.response?.data?.detail || 'Failed to create account.';
-      toast.error(errorMessage);
+      const errorMessage = err.response?.data?.detail || err.message || 'An unknown error occurred.';
+      toast.error(`Registration Failed: ${errorMessage}`);
+    } finally {
+      setIsRegistering(false);
     }
   };
 
@@ -66,9 +76,7 @@ export function Login() {
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Exam Timetabling System</CardTitle>
-          <CardDescription>
-            Please sign in to access the scheduling dashboard.
-          </CardDescription>
+          <CardDescription>Please sign in to access the scheduling dashboard.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -76,92 +84,78 @@ export function Login() {
               <Label htmlFor="username">Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="username"
-                  type="email"
-                  placeholder="user@example.com"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="pl-10"
-                />
+                <Input id="username" type="email" placeholder="user@example.com" required value={username} onChange={(e) => setUsername(e.target.value)} className="pl-10" />
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="********"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10"
-                />
+                <Input id="password" type="password" placeholder="********" required value={password} onChange={(e) => setPassword(e.target.value)} className="pl-10" />
               </div>
             </div>
-            
-            {error && (
-              <p className="text-sm text-destructive text-center">{error}</p>
-            )}
-            <Button type="submit" className="w-full" disabled={isLoggingIn}>
-              {isLoggingIn ? 'Signing In...' : 'Sign In'}
-            </Button>
+            {error && <p className="text-sm text-destructive text-center">{error}</p>}
+            <Button type="submit" className="w-full" disabled={isLoggingIn}>{isLoggingIn ? 'Signing In...' : 'Sign In'}</Button>
           </form>
 
           <div className="mt-4 text-center">
             <Dialog open={isCreateAccountOpen} onOpenChange={setCreateAccountOpen}>
               <DialogTrigger asChild>
-                <Button variant="link" className="text-sm">
-                  Don't have an account? Create one
-                </Button>
+                <Button variant="link" className="text-sm">Don't have an account? Create one</Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-md">
                 <DialogHeader>
                   <DialogTitle>Create Account</DialogTitle>
                   <DialogDescription>
-                    Create a new staff or student account. Admin accounts must be created by an existing administrator.
+                    If you are a registered student or staff member, create your user account here.
                   </DialogDescription>
                 </DialogHeader>
-                <div className="space-y-4 py-2">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="firstName">First Name</Label>
-                      <Input id="firstName" placeholder="John" value={firstName} onChange={e => setFirstName(e.target.value)} />
+                <Tabs value={registrationType} onValueChange={(value) => setRegistrationType(value as 'student' | 'staff')} className="w-full">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="student"><GraduationCap className="h-4 w-4 mr-2" />Student</TabsTrigger>
+                    <TabsTrigger value="staff"><UserIcon className="h-4 w-4 mr-2" />Staff</TabsTrigger>
+                  </TabsList>
+                  
+                  {/* Student Registration Form */}
+                  <TabsContent value="student">
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="matricNumber">Matriculation Number</Label>
+                        <Input id="matricNumber" placeholder="e.g., BSU/20/CS/1234" value={matricNumber} onChange={e => setMatricNumber(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="student-email">Email</Label>
+                        <Input id="student-email" type="email" placeholder="your.email@university.edu" value={email} onChange={e => setEmail(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="student-password">Password</Label>
+                        <Input id="student-password" type="password" placeholder="Choose a secure password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="lastName">Last Name</Label>
-                      <Input id="lastName" placeholder="Doe" value={lastName} onChange={e => setLastName(e.target.value)} />
+                  </TabsContent>
+                  
+                  {/* Staff Registration Form */}
+                  <TabsContent value="staff">
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="staffNumber">Staff ID Number</Label>
+                        <Input id="staffNumber" placeholder="e.g., 98765" value={staffNumber} onChange={e => setStaffNumber(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="staff-email">Email</Label>
+                        <Input id="staff-email" type="email" placeholder="your.email@university.edu" value={email} onChange={e => setEmail(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="staff-password">Password</Label>
+                        <Input id="staff-password" type="password" placeholder="Choose a secure password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+                      </div>
                     </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="create-email">Email</Label>
-                    <Input id="create-email" type="email" placeholder="john.doe@university.edu" value={email} onChange={e => setEmail(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="create-password">Password</Label>
-                    <Input id="create-password" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="role-select">Role</Label>
-                    <Select onValueChange={setRole} value={role}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select your role..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="staff"><UserIcon className="h-4 w-4 mr-2 inline-block" />Staff</SelectItem>
-                        <SelectItem value="student"><GraduationCap className="h-4 w-4 mr-2 inline-block" />Student</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex justify-end pt-2">
-                    <Button onClick={handleCreateAccount}>
-                      <UserPlus className="h-4 w-4 mr-2" />
-                      Create Account
-                    </Button>
-                  </div>
+                  </TabsContent>
+                </Tabs>
+                <div className="flex justify-end pt-2">
+                  <Button onClick={handleCreateAccount} disabled={isRegistering}>
+                    {isRegistering ? 'Creating...' : <><UserPlus className="h-4 w-4 mr-2" /> Create Account</>}
+                  </Button>
                 </div>
               </DialogContent>
             </Dialog>

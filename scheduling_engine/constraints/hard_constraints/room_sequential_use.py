@@ -3,6 +3,7 @@
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
 import logging
 from collections import defaultdict
+from backend.app.utils.celery_task_utils import task_progress_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +20,17 @@ class RoomSequentialUseConstraint(CPSATBaseConstraint):
         """No local variables needed; intervals will be created during constraint addition."""
         pass
 
+    @task_progress_tracker(
+        start_progress=61,
+        end_progress=63,
+        phase="building_phase_2_model",
+        message="Applying room sequential use (no overlap)...",
+    )
     def add_constraints(self):
         """
         For each room, create a set of optional time intervals corresponding to
         exam start times and add a 'NoOverlap' constraint to prevent collisions.
         """
-        # --- START OF FIX ---
-        # REMOVED the check for `slot_generation_mode`. This constraint is essential
-        # for preventing temporal overlaps regardless of the mode.
-        # --- END OF FIX ---
 
         phase1_results = self.precomputed_data.get("phase1_results")
         if not phase1_results:

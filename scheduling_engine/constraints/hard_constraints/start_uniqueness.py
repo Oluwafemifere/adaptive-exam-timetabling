@@ -8,6 +8,7 @@ Ensures that every exam is scheduled to start exactly one time.
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
 import logging
 from collections import defaultdict
+from backend.app.utils.celery_task_utils import task_progress_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,12 @@ class StartUniquenessConstraint(CPSATBaseConstraint):
         """No local variables needed for this constraint."""
         pass
 
+    @task_progress_tracker(
+        start_progress=26,
+        end_progress=27,
+        phase="building_phase_1_model",
+        message="Applying exam start uniqueness...",
+    )
     def add_constraints(self):
         """Add start uniqueness constraints: each exam starts exactly once."""
         constraints_added = 0

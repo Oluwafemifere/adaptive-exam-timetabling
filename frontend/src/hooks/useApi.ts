@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../services/api';
 import { useAppStore } from '../store';
 import { toast } from 'sonner';
-import { JobStatus, Conflict, StudentExam, StaffAssignment, HistoryEntry } from '../store/types';
+import { JobStatus, Conflict, StudentExam, StaffAssignment, HistoryEntry, PaginatedUserResponse,
+    UserManagementRecord } from '../store/types';
 import { SessionSetupCreate, SessionSetupSummary } from '../pages/SessionSetup';
 import { config } from '../config';
 
@@ -13,7 +14,8 @@ activeSessionId,
 setDashboardKpis,
 setConflictHotspots,
 setTopBottlenecks,
-setRecentActivity
+setRecentActivity,
+setHistory
 } = useAppStore();
 
 const [isLoading, setIsLoading] = useState(true);
@@ -38,7 +40,20 @@ try {
   if (kpisRes.data) setDashboardKpis(kpisRes.data);
   if (hotspotsRes.data) setConflictHotspots(hotspotsRes.data);
   if (bottlenecksRes.data) setTopBottlenecks(bottlenecksRes.data);
-  if (activityRes.data?.logs) setRecentActivity(activityRes.data.logs);
+  if (activityRes.data?.logs) {
+    const mappedLogs: HistoryEntry[] = activityRes.data.logs.map((log: any) => ({
+        id: log.id,
+        action: log.action,
+        entityType: log.entity_type,
+        entityId: log.entity_id,
+        userName: log.user || 'System',
+        timestamp: log.created_at,
+        details: log.new_values || {},
+        changes: (log.old_values || log.new_values) ? { before: log.old_values || {}, after: log.new_values || {} } : undefined,
+    }));
+    setRecentActivity(mappedLogs);
+    setHistory(mappedLogs);
+  }
   
   setError(null);
 } catch (err) {
@@ -49,7 +64,7 @@ try {
   setIsLoading(false);
 }
 
-}, [activeSessionId, setDashboardKpis, setConflictHotspots, setTopBottlenecks, setRecentActivity]);
+}, [activeSessionId, setDashboardKpis, setConflictHotspots, setTopBottlenecks, setRecentActivity, setHistory]);
 
 useEffect(() => {
 fetchData();
@@ -61,6 +76,35 @@ return () => clearInterval(interval);
 return { isLoading, error, refetch: fetchData };
 }
 
+export function useUserManagementData() {
+    const { users, setUsers } = useAppStore(state => ({
+      users: state.users,
+      setUsers: state.setUsers,
+    }));
+    
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<Error | null>(null);
+    const [pagination, setPagination] = useState({ total_items: 0, total_pages: 1, page: 1, page_size: 10 });
+  
+    const fetchData = useCallback(async (filters: { page?: number, page_size?: number, search_term?: string, role_filter?: string, status_filter?: string }) => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const response = await api.getUserManagementData(filters);
+        const { items, ...paginationData } = response.data;
+        setUsers(items);
+        setPagination(paginationData);
+      } catch (err) {
+        const fetchError = err instanceof Error ? err : new Error('Failed to fetch user data');
+        setError(fetchError);
+        toast.error(fetchError.message);
+      } finally {
+        setIsLoading(false);
+      }
+    }, [setUsers]);
+
+    return { users, pagination, isLoading, error, refetch: fetchData };
+}
 export function useJobStatusSocket(jobId: string | null) {
   const { 
     setSchedulingStatus, 
@@ -390,18 +434,17 @@ export function useSessionSummary(sessionId: string | null) {
         setError(null);
         try {
             const response = await api.getSessionSummary(sessionId);
-            // --- FIX START ---
-            // The API response is the summary object itself, which is correct.
-            // However, the `api.getSessionSummary` returns an Axios response object.
-            // The actual data from the API is in the `data` property of the response.
-            // The original code was already correct, but this explicit check ensures robustness.
+            // The API response body is the summary object. This check ensures that
+            // a valid object is received before updating the state, preventing
+            // the display of incorrect or empty data if the server responds
+            // with an empty body while processing files.
             if (response.data) {
               setData(response.data);
             } else {
-              // Handle cases where the response might be unexpectedly empty
+              // If the response is empty, treat it as an error to prevent
+              // the component from showing a broken state.
               throw new Error("Received an empty summary response from the server.");
             }
-            // --- FIX END ---
         } catch (err: any) {
             const detail = err.response?.data?.detail || 'Failed to fetch session summary.';
             toast.error(detail);
@@ -497,8 +540,20 @@ export function useHistoryData(page = 1, pageSize = 25) {
     try {
       const response = await api.getAuditHistory(p, ps);
       
-      if (response.data && response.data.logs) {
-        setHistory(response.data.logs);
+      if (response.data?.logs) {
+        const mappedLogs: HistoryEntry[] = response.data.logs.map((log: any) => ({
+          id: log.id,
+          action: log.action,
+          entityType: log.entity_type,
+          entityId: log.entity_id,
+          userName: log.user || 'System',
+          timestamp: log.created_at,
+          details: log.new_values || {},
+          changes: (log.old_values || log.new_values) ? {
+            before: log.old_values || {}, after: log.new_values || {},
+          } : undefined,
+        }));
+        setHistory(mappedLogs);
         const totalCount = response.data.total_count || 0;
         setPagination({
           total: totalCount,

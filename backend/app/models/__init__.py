@@ -11,6 +11,8 @@ from .academic import (
     StudentEnrollment,
     CourseRegistration,
     CourseInstructor,
+    CourseDepartment,  # Added for export
+    CourseFaculty,  # Added for export
 )
 from .scheduling import (
     Exam,
@@ -24,7 +26,12 @@ from .scheduling import (
     AssignmentChangeRequest,
     ConflictReport,
 )
-from .infrastructure import Building, RoomType, Room
+from .infrastructure import (
+    Building,
+    RoomType,
+    Room,
+    RoomDepartment,  # Added for export
+)
 from .users import (
     User,
     UserNotification,
@@ -40,8 +47,6 @@ from .versioning import (
     SessionTemplate,
     TimetableConflict,
 )
-
-# Correctly import all new constraint models
 from .constraints import (
     ConstraintRule,
     ConstraintParameter,
@@ -72,6 +77,8 @@ __all__ = [
     "StudentEnrollment",
     "CourseRegistration",
     "CourseInstructor",
+    "CourseDepartment",  # Added
+    "CourseFaculty",  # Added
     # Scheduling models
     "Exam",
     "ExamDepartment",
@@ -87,6 +94,7 @@ __all__ = [
     "Building",
     "RoomType",
     "Room",
+    "RoomDepartment",  # Added
     # User and system models
     "User",
     "UserNotification",

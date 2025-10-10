@@ -99,7 +99,11 @@ class CPSATModelBuilder:
 
             logger.info("Step 2: Building constraints for Phase 1...")
             constraint_manager = CPSATConstraintManager(problem=self.problem)
-            constraint_manager.build_phase1_model(self.model, self.shared_variables)
+            # --- START OF FIX ---
+            await constraint_manager.build_phase1_model(
+                self.model, self.shared_variables
+            )
+            # --- END OF FIX ---
             logger.info("Constraint building for Phase 1 complete.")
 
             logger.info("Step 3: Adding objective function...")
@@ -139,7 +143,11 @@ class CPSATModelBuilder:
 
             logger.info("Step 2: Building constraints for Phase 2...")
             constraint_manager = CPSATConstraintManager(problem=self.problem)
-            constraint_manager.build_phase2_model(self.model, self.shared_variables)
+            # --- START OF FIX ---
+            await constraint_manager.build_phase2_model(
+                self.model, self.shared_variables
+            )
+            # --- END OF FIX ---
             logger.info("Constraint building for Phase 2 complete.")
 
             logger.info("Step 3: Adding objective function...")

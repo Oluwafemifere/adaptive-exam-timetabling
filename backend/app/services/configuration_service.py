@@ -35,8 +35,7 @@ class ConfigurationService:
         self, config_id: UUID
     ) -> Optional[Dict[str, Any]]:
         """
-        Retrieves the full details for a single system configuration, including all
-        possible rules and their current settings for that profile.
+        Retrieves the full details for a single system configuration.
         Calls `get_system_configuration_details(:p_config_id)`.
         """
         logger.info(f"Fetching details for system configuration {config_id}.")
@@ -50,9 +49,8 @@ class ConfigurationService:
         self, payload: Dict[str, Any], user_id: UUID
     ) -> Dict[str, Any]:
         """
-        Creates a new configuration or updates an existing one from a full JSON payload.
-        This is a transactional operation.
-        Calls `save_system_configuration(:p_payload, :p_user_id)`.
+        Creates or updates a configuration from a full JSON payload.
+        Calls the atomic `save_system_configuration` PG function.
         """
         config_id = payload.get("id")
         action = "Updating" if config_id else "Creating new"
@@ -77,8 +75,7 @@ class ConfigurationService:
 
     async def delete_system_configuration(self, config_id: UUID) -> Dict[str, Any]:
         """
-        Deletes a system configuration. The associated constraint configuration
-        will also be deleted if it's not shared.
+        Deletes a system configuration.
         Calls `delete_system_configuration(:p_config_id)`.
         """
         logger.info(f"Attempting to delete system configuration {config_id}.")
@@ -96,7 +93,7 @@ class ConfigurationService:
 
     async def set_default_system_configuration(self, config_id: UUID) -> Dict[str, Any]:
         """
-        Sets a specific system configuration as the default for the application.
+        Sets a specific system configuration as the default.
         Calls `set_default_system_configuration(:p_config_id)`.
         """
         logger.info(f"Setting system configuration {config_id} as default.")

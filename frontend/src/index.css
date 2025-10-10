@@ -4258,3 +4258,30 @@ html {
       rotate(var(--tw-exit-rotate, 0));
   }
 }
+
+/* Custom Scrollbar Styling */
+/* For Webkit-based browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--muted);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
+/* For Firefox */
+body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--muted);
+}

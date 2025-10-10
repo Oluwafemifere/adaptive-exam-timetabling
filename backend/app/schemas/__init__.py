@@ -22,7 +22,7 @@ from . import (
 from .session_setup import SessionSetupCreate, SessionSetupSummary, TimeSlot
 
 # Re-export commonly used classes for direct import
-from .auth import TokenData, Token
+from .auth import TokenData, Token, StudentSelfRegister, StaffSelfRegister
 
 from .academic import (
     AcademicSessionRead,
@@ -50,7 +50,6 @@ from .dashboard import (
 # NEW: Import and export configuration schemas
 from .configuration import (
     SystemConfigListItem,
-    ConstraintConfigListItem,
     RuleSetting,
     RuleSettingRead,
     SystemConfigDetails,
@@ -113,6 +112,7 @@ from .users import (
     UserRead,
     UserManagementRecord,
     PaginatedUserResponse,
+    AdminUserCreate,  # EXPORT THE NEW SCHEMA
 )
 
 from .role import (
@@ -162,6 +162,8 @@ __all__ = [
     # auth
     "TokenData",
     "Token",
+    "StudentSelfRegister",
+    "StaffSelfRegister",
     # academic
     "AcademicSessionRead",
     "FacultyRead",
@@ -181,7 +183,6 @@ __all__ = [
     "TopBottleneck",
     # configuration
     "SystemConfigListItem",
-    "ConstraintConfigListItem",
     "RuleSetting",
     "RuleSettingRead",
     "SystemConfigDetails",
@@ -234,6 +235,7 @@ __all__ = [
     "UserRead",
     "UserManagementRecord",
     "PaginatedUserResponse",
+    "AdminUserCreate",  # ADD TO EXPORT LIST
     # role
     "RoleAssignment",
     "UserRolesResponse",

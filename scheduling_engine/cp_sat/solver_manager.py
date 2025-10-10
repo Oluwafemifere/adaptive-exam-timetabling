@@ -6,6 +6,7 @@ This manager first solves the timetabling problem (Phase 1), then solves a
 single, large packing problem for all rooms and invigilators (Phase 2).
 """
 
+import asyncio
 import logging
 from typing import Optional, Dict, Any, Tuple, cast
 from datetime import date, datetime
@@ -34,6 +35,71 @@ from backend.app.utils.celery_task_utils import task_progress_tracker
 logger = logging.getLogger(__name__)
 
 
+class CeleryProgressCallback(cp_model.CpSolverSolutionCallback):
+    """A CP-SAT callback to send solver progress to the Celery task."""
+
+    def __init__(
+        self,
+        task_context: Any,
+        loop: asyncio.AbstractEventLoop,
+        phase_name: str,
+        progress_window: tuple[int, int],
+    ):
+        """
+        Initializes the callback.
+
+        Args:
+            task_context: The Celery task instance (self).
+            loop: The asyncio event loop from the Celery task's thread.
+            phase_name: The name of the current solving phase.
+            progress_window: The (start, end) progress percentage for this phase.
+        """
+        super().__init__()
+        self.task_context = task_context
+        self.loop = loop
+        self.phase_name = phase_name
+        self.start_progress, self.end_progress = progress_window
+        self.solution_count = 0
+        self.last_objective = float("inf")
+        self.start_time = datetime.now()
+        logger.info(
+            f"CeleryProgressCallback initialized for phase '{self.phase_name}'."
+        )
+
+    def OnSolutionCallback(self):
+        """Called by the solver each time a new, better solution is found."""
+        if not self.task_context or not hasattr(self.task_context, "update_progress"):
+            return
+
+        current_objective = self.ObjectiveValue()
+        # Only send updates for improving solutions to avoid spamming the logs
+        if current_objective >= self.last_objective:
+            return
+
+        self.solution_count += 1
+        self.last_objective = current_objective
+        elapsed_time = (datetime.now() - self.start_time).total_seconds()
+
+        message = (
+            f"Solver found solution #{self.solution_count} after {elapsed_time:.1f}s. "
+            f"Objective: {current_objective:,.0f}"
+        )
+        logger.info(f"[{self.phase_name.upper()}] {message}")
+
+        # Keep the progress bar at the start of the phase, but update the message
+        current_progress = self.start_progress
+
+        # Schedule the async update_progress call on the main event loop.
+        # This is the correct way to call async code from a synchronous callback.
+        if self.loop and self.loop.is_running():
+            coro = self.task_context.update_progress(
+                progress=current_progress,
+                phase=self.phase_name,
+                message=message,
+            )
+            asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+
 class CPSATSolverManager:
     """Solver manager that orchestrates the build and solve process for the CP-SAT model."""
 
@@ -42,15 +108,16 @@ class CPSATSolverManager:
         self.model: Optional[cp_model.CpModel] = None
         self.shared_vars = None
         self.solver = cp_model.CpSolver()
-        # --- START OF FIX ---
-        # Add a proper type hint to inform the type checker.
+
         self.task_context: Optional[Any] = None
-        # --- END OF FIX ---
+
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
         logger.info("Initialized CPSATSolverManager for Two-Phase Decomposition.")
 
     @track_data_flow("solve_model_decomposed", include_stats=True)
     async def solve(self) -> Tuple[int, TimetableSolution]:
         """Orchestrates the full two-phase solve process."""
+        self.loop = asyncio.get_running_loop()
         logger.info("=============================================")
         logger.info("===   STARTING TWO-PHASE DECOMPOSED SOLVE   ===")
         logger.info("=============================================")
@@ -81,7 +148,7 @@ class CPSATSolverManager:
             exam_slot_map
         )
 
-        phase2_status = await self._solve_phase2_full(phase2_model)
+        phase2_status = await self._solve_phase2_full(phase2_model, phase2_vars)
 
         # --- FINAL SOLUTION EXTRACTION & ASSEMBLY ---
         logger.info("\n--- ASSEMBLING FINAL SOLUTION ---")
@@ -125,8 +192,17 @@ class CPSATSolverManager:
     ) -> Tuple[int, Dict[UUID, Tuple[UUID, date]]]:
         """Solves the Phase 1 model and extracts the exam-to-slot mapping."""
         logger.info("--- Calling CP-SAT solver for Phase 1 ---")
-        self._configure_solver_parameters(log_progress=True)
-        status = cast(int, self.solver.Solve(model))
+        self._configure_solver_parameters()
+        # --- START OF MODIFICATION ---
+        assert self.loop
+        progress_callback = CeleryProgressCallback(
+            task_context=self.task_context,
+            loop=self.loop,
+            phase_name="solving_phase_1",
+            progress_window=(35, 55),
+        )
+        status = cast(int, self.solver.Solve(model, progress_callback))
+        # --- END OF MODIFICATION ---
         status_name = self.solver.StatusName()
         logger.info(f"Phase 1 solver finished with status: {status_name}")
         logger.info(f"  - Objective value: {self.solver.ObjectiveValue()}")
@@ -146,14 +222,21 @@ class CPSATSolverManager:
         phase="solving_phase_2",
         message="Assigning rooms and invigilators...",
     )
-    async def _solve_phase2_full(self, model) -> int:
+    async def _solve_phase2_full(self, model, shared_vars) -> int:
         """Solves the single, large Phase 2 packing model."""
         logger.info("--- Calling CP-SAT solver for Full Phase 2 ---")
         time_limit = getattr(self.problem, "solver_time_limit_seconds", 300.0)
-        self._configure_solver_parameters(
-            time_limit_override=time_limit, log_progress=True
+        self._configure_solver_parameters(time_limit_override=time_limit)
+        # --- START OF MODIFICATION ---
+        assert self.loop
+        progress_callback = CeleryProgressCallback(
+            task_context=self.task_context,
+            loop=self.loop,
+            phase_name="solving_phase_2",
+            progress_window=(65, 80),
         )
-        status = cast(int, self.solver.Solve(model))
+        status = cast(int, self.solver.Solve(model, progress_callback))
+        # --- END OF MODIFICATION ---
         status_name = self.solver.StatusName()
         logger.info(f"Full Phase 2 solver finished with status: {status_name}")
         logger.info(f"  - Objective value: {self.solver.ObjectiveValue()}")

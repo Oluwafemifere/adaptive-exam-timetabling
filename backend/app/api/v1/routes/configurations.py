@@ -31,8 +31,7 @@ async def list_system_configurations(
     user: User = Depends(current_user),
 ):
     """
-    Retrieve a list of all available system configurations. These are the top-level
-    profiles used to start a scheduling job (e.g., 'Standard University Policy Profile').
+    Retrieve a list of all available system configurations.
     """
     service = ConfigurationService(db)
     configs = await service.get_system_configuration_list()
@@ -50,8 +49,7 @@ async def get_system_configuration_details(
     user: User = Depends(current_user),
 ):
     """
-    Get the detailed settings for a single system configuration, including all its
-    rules, parameters, weights, and enabled/disabled status.
+    Get the detailed settings for a single system configuration.
     """
     service = ConfigurationService(db)
     config_details = await service.get_system_configuration_details(config_id)
@@ -95,7 +93,7 @@ async def update_system_configuration(
     """
     Update an existing system configuration profile from a full JSON payload.
     """
-    # Ensure the ID in the path matches the ID in the payload
+    # Ensure the ID in the path matches the ID in the payload for consistency
     config_in.id = config_id
     service = ConfigurationService(db)
     result = await service.save_system_configuration(config_in.model_dump(), user.id)
@@ -114,6 +112,9 @@ async def set_default_system_configuration(
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
+    """
+    Set a specific system configuration as the default for scheduling jobs.
+    """
     service = ConfigurationService(db)
     await service.set_default_system_configuration(config_id=config_id)
     return GenericResponse(
@@ -131,10 +132,12 @@ async def delete_system_configuration(
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
+    """
+    Delete a system configuration. Cannot delete the default profile.
+    """
     service = ConfigurationService(db)
     try:
         await service.delete_system_configuration(config_id=config_id)
     except Exception as e:
-        # Catch exceptions raised from the service (e.g., trying to delete the default)
         raise HTTPException(status_code=400, detail=str(e))
     return None

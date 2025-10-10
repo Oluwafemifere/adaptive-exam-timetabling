@@ -136,6 +136,54 @@ studentId?: string;
 staffId?: string;
 }
 
+export interface UserManagementRecord {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  role: UserRole;
+  last_login?: string;
+}
+
+export interface PaginatedUserResponse {
+  total_items: number;
+  total_pages: number;
+  page: number;
+  page_size: number;
+  items: UserManagementRecord[];
+}
+export interface StudentSelfRegisterPayload {
+  matric_number: string;
+  email: string;
+  password: string;
+}
+
+export interface StaffSelfRegisterPayload {
+  staff_number: string;
+  email: string;
+  password: string;
+}
+export interface AdminUserCreatePayload {
+    user_type: 'student' | 'admin';
+    email: string;
+    first_name: string;
+    last_name: string;
+    password: string;
+    session_id?: string;
+    matric_number?: string;
+    programme_code?: string;
+    entry_year?: number;
+}
+
+export interface UserUpdatePayload {
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  is_active?: boolean;
+  role?: UserRole;
+}
 export interface StudentExam {
 id: string;
 courseCode: string;
@@ -202,14 +250,17 @@ actionRequired?: boolean;
 }
 
 export interface HistoryEntry {
-id: string;
-action: string;
-entity_type: string;
-entity_id?: string;
-user_email: string;
-created_at: string;
-new_values: Record<string, any>;
-old_values: Record<string, any>;
+  id: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  userName: string;
+  timestamp: string;
+  details: Record<string, any>;
+  changes?: {
+    before: Record<string, any>;
+    after: Record<string, any>;
+  };
 }
 
 export interface AcademicSession {
@@ -421,9 +472,11 @@ export interface AppState {
 currentPage: string;
 isAuthenticated: boolean;
 user: User | null;
+users: UserManagementRecord[];
 exams: RenderableExam[];
 conflicts: Conflict[];
 activeSessionId: string | null;
+activeSessionName: string | null;
 currentJobId: string | null;
 studentExams: StudentExam[];
 instructorSchedule: StaffAssignment[];
@@ -452,6 +505,11 @@ sessionJobs: JobSummary[];
   activeConfigurationId: string | null;
   activeConfigurationDetails: SystemConfigurationDetails | null;
 
+
+setUsers: (users: UserManagementRecord[]) => void;
+addUser: (user: UserManagementRecord) => void;
+updateUserInList: (user: UserManagementRecord) => void;
+removeUserFromList: (userId: string) => void;  
 setCurrentPage: (page: string) => void;
 setAuthenticated: (isAuth: boolean, user?: User | null) => void;
 setTimetable: (timetableData: TimetableResponseData) => void;

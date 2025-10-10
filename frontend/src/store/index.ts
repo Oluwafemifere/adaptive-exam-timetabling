@@ -23,6 +23,7 @@ import {
   SystemConfigSavePayload,
   RuleSettingRead,
   RuleSetting,
+  UserManagementRecord,
 } from './types';
 import { api } from '../services/api';
 import { toast } from 'sonner';
@@ -35,6 +36,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   exams: [],
   conflicts: [],
   activeSessionId: null,
+  activeSessionName: null,
   currentJobId: null,
   studentExams: [],
   instructorSchedule: [],
@@ -59,6 +61,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
     metrics: {},
     logs: [],
   },
+  users: [],
+
   uploadStatus: {
     isUploading: false,
     progress: 0,
@@ -83,6 +87,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
   activeConfigurationDetails: null,
 
   // Actions
+  setUsers: (users) => set({ users }),
+  addUser: (user) => set((state) => ({ users: [user, ...state.users] })),
+  updateUserInList: (updatedUser) => set((state) => ({
+    users: state.users.map(u => u.id === updatedUser.id ? updatedUser : u)
+  })),
+  removeUserFromList: (userId) => set((state) => ({
+    users: state.users.filter(u => u.id !== userId)
+  })),
   setCurrentPage: (page: string) => set({ currentPage: page }),
   setAuthenticated: (isAuth: boolean, user: any = null) => set({ isAuthenticated: isAuth, user }),
 
@@ -115,6 +127,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
     }
     
     try {
+      // **TARGETED CHANGE**: This payload transformation is crucial. It maps the
+      // detailed `RuleSettingRead` objects to the leaner `RuleSetting` format
+      // expected by the backend for saving.
       const payload: SystemConfigSavePayload = {
         id: updatedConfig.id,
         name: updatedConfig.name,
@@ -132,26 +147,26 @@ export const useAppStore = create<AppState>()((set, get) => ({
       await api.saveSystemConfiguration(payload);
       toast.success(`Configuration "${payload.name}" saved successfully!`);
 
-      await get().fetchAndSetActiveConfiguration(activeId);
-      
+      // Refresh state from the server to ensure UI is in sync with the database
+      await get().fetchAndSetActiveConfiguration(activeId); 
       const listResponse = await api.getSystemConfigurationList();
       set({ configurations: listResponse.data || [] });
 
     } catch (error) {
       toast.error("Failed to save configuration.");
       console.error(error);
+      // On failure, refresh the data to discard the user's failed changes
       await get().fetchAndSetActiveConfiguration(activeId); 
     }
   },
 
-  addHistoryEntry: (entry: Omit<HistoryEntry, 'id' | 'created_at'>) => {
+  addHistoryEntry: (entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => {
     const newEntry: HistoryEntry = {
       ...entry,
       id: `hist-${Date.now()}`,
-      created_at: new Date().toISOString(),
-      user_email: get().user?.email || 'unknown',
-      new_values: entry.new_values || {},
-      old_values: entry.old_values || {},
+      timestamp: new Date().toISOString(),
+      // Use the provided userName, but fall back to the current user's name or a default
+      userName: entry.userName || get().user?.name || 'System',
     };
     set((state) => ({ history: [newEntry, ...state.history] }));
   },
@@ -331,7 +346,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
       }
 
       const response = await api.startScheduling({
-        session_id: activeSessionId,
         configuration_id,
       });
 
@@ -382,7 +396,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
       const sessionResponse = await api.getActiveSession();
       if (sessionResponse.data) {
         const sessionId = sessionResponse.data.id;
-        set({ activeSessionId: sessionId });
+        const sessionName = sessionResponse.data.name;
+        set({ activeSessionId: sessionId, activeSessionName: sessionName });
 
         if (user && (user.role === 'admin' || user.role === 'superuser')) {
           const configsResponse = await api.getSystemConfigurationList();
@@ -417,7 +432,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         }
       } else {
         toast.warning('No active academic session found. Please set one up.');
-        set({ activeSessionId: null });
+        set({ activeSessionId: null, activeSessionName: null });
       }
     } catch (error: any) {
       const errorMessage = error.response?.data?.detail || (error instanceof Error ? error.message : 'An unknown error occurred.');

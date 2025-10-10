@@ -10,6 +10,7 @@ from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
 from scheduling_engine.core.constraint_types import ConstraintDefinition
 import logging
 import math
+from backend.app.utils.celery_task_utils import task_progress_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,12 @@ class InvigilatorRequirementConstraint(CPSATBaseConstraint):
         """Initialize surplus variables for the penalty component."""
         self.surplus_invigilator_vars = []
 
+    @task_progress_tracker(
+        start_progress=58,
+        end_progress=60,
+        phase="building_phase_2_model",
+        message="Applying invigilator requirements...",
+    )
     def add_constraints(self):
         """Links room assignments (y) to invigilator requirements (w)."""
         constraints_added = 0

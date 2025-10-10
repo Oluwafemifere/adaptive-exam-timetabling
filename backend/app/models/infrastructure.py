@@ -2,13 +2,30 @@
 
 import uuid
 from typing import List, Optional, TYPE_CHECKING
-from sqlalchemy import String, Boolean, Integer, ForeignKey, ARRAY, Text
+from sqlalchemy import String, Boolean, Integer, ForeignKey, ARRAY, Text, Table, Column
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy.ext.associationproxy import association_proxy, AssociationProxy
 from .base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from .scheduling import TimetableAssignment
+    from .academic import Faculty, Department
+
+
+# New association table for Room <-> Department
+class RoomDepartment(Base):
+    __tablename__ = "room_departments"
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("rooms.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    department_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("departments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
 
 
 class Building(Base, TimestampMixin):
@@ -20,7 +37,17 @@ class Building(Base, TimestampMixin):
     code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    # New nullable foreign key to Faculty
+    faculty_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("faculties.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Relationships
     rooms: Mapped[List["Room"]] = relationship(back_populates="building")
+    faculty: Mapped[Optional["Faculty"]] = relationship(back_populates="buildings")
 
 
 class RoomType(Base):
@@ -59,7 +86,6 @@ class Room(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
     overbookable: Mapped[bool] = mapped_column(Boolean, nullable=False)
     max_inv_per_room: Mapped[int] = mapped_column(Integer, nullable=False)
-    # FIX: Changed name from adjacency_pairs to adjacency_pairs and type to dict for JSONB
     adjacency_pairs: Mapped[dict | None] = mapped_column(JSONB)
     notes: Mapped[str | None] = mapped_column(Text)
 
@@ -67,4 +93,10 @@ class Room(Base, TimestampMixin):
     room_type: Mapped["RoomType"] = relationship(back_populates="rooms")
     timetable_assignments: Mapped[List["TimetableAssignment"]] = relationship(
         back_populates="room"
+    )
+
+    # New many-to-many relationship with Department
+    department_associations: Mapped[List["RoomDepartment"]] = relationship()
+    departments: AssociationProxy[List["Department"]] = association_proxy(
+        "department_associations", "department"
     )

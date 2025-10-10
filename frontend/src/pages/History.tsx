@@ -23,7 +23,132 @@ import {
   Eye
 } from 'lucide-react';
 import { useAppStore } from '../store';
+import { DateRange } from 'react-day-picker';
 // Note: Using native Date formatting instead of date-fns for simplicity
+
+const getEntityIcon = (entityType: string) => {
+    switch (entityType) {
+      // FIX: Use CalendarIcon for the icon, not the full Calendar component which caused the UI bug.
+      case 'exam': return <CalendarIcon className="h-4 w-4 text-blue-500" />;
+      case 'constraint': return <Settings className="h-4 w-4 text-purple-500" />;
+      case 'user': return <User className="h-4 w-4 text-green-500" />;
+      case 'session': return <Database className="h-4 w-4 text-orange-500" />;
+      case 'schedule': return <Activity className="h-4 w-4 text-red-500" />;
+      case 'system': return <Settings className="h-4 w-4 text-gray-500" />;
+      default: return <FileText className="h-4 w-4 text-gray-500" />;
+    }
+};
+
+const getActionColor = (action: string) => {
+    if (action.toLowerCase().includes('create')) return 'bg-green-100 text-green-800';
+    if (action.toLowerCase().includes('update') || action.toLowerCase().includes('edit')) return 'bg-blue-100 text-blue-800';
+    if (action.toLowerCase().includes('delete') || action.toLowerCase().includes('remove')) return 'bg-red-100 text-red-800';
+    if (action.toLowerCase().includes('approve')) return 'bg-green-100 text-green-800';
+    if (action.toLowerCase().includes('deny') || action.toLowerCase().includes('reject')) return 'bg-red-100 text-red-800';
+    return 'bg-gray-100 text-gray-800';
+};
+
+const formatTimestamp = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+    
+    if (diffInMinutes < 1) return 'Just now';
+    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
+    if (diffInMinutes < 10080) return `${Math.floor(diffInMinutes / 1440)}d ago`;
+    
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+// PERFORMANCE FIX: Memoize the list item component to prevent re-rendering every
+// item when the parent component updates (e.g., when typing in the search filter).
+const HistoryItem = React.memo(({ entry }: { entry: any }) => {
+  return (
+    <div className="flex items-start gap-4 pb-4 border-b last:border-b-0">
+      <div className="mt-1 flex-shrink-0">
+        {getEntityIcon(entry.entityType)}
+      </div>
+      
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge 
+                variant="outline" 
+                className={`text-xs ${getActionColor(entry.action)}`}
+              >
+                {entry.action}
+              </Badge>
+              <Badge variant="secondary" className="text-xs">
+                {entry.entityType}
+              </Badge>
+            </div>
+            
+            <p className="text-sm mt-1">
+              <span className="font-medium">{entry.userName}</span>
+              {' '}performed: {entry.action}
+              {entry.entityId && (
+                <span className="text-muted-foreground">
+                  {' '}(ID: {entry.entityId})
+                </span>
+              )}
+            </p>
+            
+            {Object.keys(entry.details).length > 0 && (
+              <details className="mt-2">
+                <summary className="text-sm text-muted-foreground cursor-pointer hover:text-foreground">
+                  View details
+                </summary>
+                <div className="mt-2 p-3 bg-muted rounded-md text-sm">
+                  <pre className="whitespace-pre-wrap font-mono text-xs">
+                    {JSON.stringify(entry.details, null, 2)}
+                  </pre>
+                </div>
+              </details>
+            )}
+            
+            {entry.changes && (
+              <details className="mt-2">
+                <summary className="text-sm text-muted-foreground cursor-pointer hover:text-foreground">
+                  View changes
+                </summary>
+                <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <h5 className="text-sm font-medium text-red-600 mb-1">Before</h5>
+                    <div className="p-3 bg-red-50 rounded-md text-sm">
+                      <pre className="whitespace-pre-wrap font-mono text-xs">
+                        {JSON.stringify(entry.changes.before, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-medium text-green-600 mb-1">After</h5>
+                    <div className="p-3 bg-green-50 rounded-md text-sm">
+                      <pre className="whitespace-pre-wrap font-mono text-xs">
+                        {JSON.stringify(entry.changes.after, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            )}
+          </div>
+          
+          <div className="text-right flex-shrink-0">
+            <span className="text-sm text-muted-foreground">
+              {formatTimestamp(entry.timestamp)}
+            </span>
+            <p className="text-xs text-muted-foreground mt-1">
+              {new Date(entry.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'})}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 
 export function History() {
   const { history } = useAppStore();
@@ -31,7 +156,7 @@ export function History() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedEntityType, setSelectedEntityType] = useState<string>('all');
   const [selectedUser, setSelectedUser] = useState<string>('all');
-  const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
   const [showFilters, setShowFilters] = useState(false);
 
   // Get unique values for filters
@@ -71,49 +196,20 @@ export function History() {
       }
 
       // Date range filter
-      if (dateRange.from || dateRange.to) {
+      if (dateRange?.from) {
         const entryDate = new Date(entry.timestamp);
         if (dateRange.from && entryDate < dateRange.from) return false;
-        if (dateRange.to && entryDate > dateRange.to) return false;
+        
+        if (dateRange.to) {
+          const toDate = new Date(dateRange.to);
+          toDate.setHours(23, 59, 59, 999); // Set to the end of the day to make it inclusive
+          if (entryDate > toDate) return false;
+        }
       }
 
       return true;
     });
   }, [history, searchTerm, selectedEntityType, selectedUser, dateRange]);
-
-  const getEntityIcon = (entityType: string) => {
-    switch (entityType) {
-      case 'exam': return <Calendar className="h-4 w-4 text-blue-500" />;
-      case 'constraint': return <Settings className="h-4 w-4 text-purple-500" />;
-      case 'user': return <User className="h-4 w-4 text-green-500" />;
-      case 'session': return <Database className="h-4 w-4 text-orange-500" />;
-      case 'schedule': return <Activity className="h-4 w-4 text-red-500" />;
-      case 'system': return <Settings className="h-4 w-4 text-gray-500" />;
-      default: return <FileText className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getActionColor = (action: string) => {
-    if (action.toLowerCase().includes('create')) return 'bg-green-100 text-green-800';
-    if (action.toLowerCase().includes('update') || action.toLowerCase().includes('edit')) return 'bg-blue-100 text-blue-800';
-    if (action.toLowerCase().includes('delete') || action.toLowerCase().includes('remove')) return 'bg-red-100 text-red-800';
-    if (action.toLowerCase().includes('approve')) return 'bg-green-100 text-green-800';
-    if (action.toLowerCase().includes('deny') || action.toLowerCase().includes('reject')) return 'bg-red-100 text-red-800';
-    return 'bg-gray-100 text-gray-800';
-  };
-
-  const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
-    
-    if (diffInMinutes < 1) return 'Just now';
-    if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
-    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
-    if (diffInMinutes < 10080) return `${Math.floor(diffInMinutes / 1440)}d ago`;
-    
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
 
   const exportHistory = () => {
     const csvContent = [
@@ -281,7 +377,7 @@ export function History() {
                   <PopoverTrigger asChild>
                     <Button variant="outline" className="w-full justify-start text-left">
                       <CalendarIcon className="h-4 w-4 mr-2" />
-                      {dateRange.from ? (
+                      {dateRange?.from ? (
                         dateRange.to ? (
                           `${dateRange.from.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${dateRange.to.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
                         ) : (
@@ -292,13 +388,13 @@ export function History() {
                       )}
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
+                  <PopoverContent className="w-auto p-0 z-50" align="start">
                     <Calendar
                       initialFocus
                       mode="range"
-                      defaultMonth={dateRange.from}
+                      defaultMonth={dateRange?.from}
                       selected={dateRange}
-                      onSelect={setDateRange as any}
+                      onSelect={setDateRange}
                       numberOfMonths={2}
                     />
                   </PopoverContent>
@@ -312,7 +408,7 @@ export function History() {
                   setSearchTerm('');
                   setSelectedEntityType('all');
                   setSelectedUser('all');
-                  setDateRange({});
+                  setDateRange(undefined);
                 }}
                 variant="outline"
                 size="sm"
@@ -347,87 +443,7 @@ export function History() {
           ) : (
             <div className="space-y-4">
               {filteredHistory.map((entry) => (
-                <div key={entry.id} className="flex items-start gap-4 pb-4 border-b last:border-b-0">
-                  <div className="mt-1 flex-shrink-0">
-                    {getEntityIcon(entry.entityType)}
-                  </div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge 
-                            variant="outline" 
-                            className={`text-xs ${getActionColor(entry.action)}`}
-                          >
-                            {entry.action}
-                          </Badge>
-                          <Badge variant="secondary" className="text-xs">
-                            {entry.entityType}
-                          </Badge>
-                        </div>
-                        
-                        <p className="text-sm mt-1">
-                          <span className="font-medium">{entry.userName}</span>
-                          {' '}performed: {entry.action}
-                          {entry.entityId && (
-                            <span className="text-muted-foreground">
-                              {' '}(ID: {entry.entityId})
-                            </span>
-                          )}
-                        </p>
-                        
-                        {Object.keys(entry.details).length > 0 && (
-                          <details className="mt-2">
-                            <summary className="text-sm text-muted-foreground cursor-pointer hover:text-foreground">
-                              View details
-                            </summary>
-                            <div className="mt-2 p-3 bg-muted rounded-md text-sm">
-                              <pre className="whitespace-pre-wrap font-mono text-xs">
-                                {JSON.stringify(entry.details, null, 2)}
-                              </pre>
-                            </div>
-                          </details>
-                        )}
-                        
-                        {entry.changes && (
-                          <details className="mt-2">
-                            <summary className="text-sm text-muted-foreground cursor-pointer hover:text-foreground">
-                              View changes
-                            </summary>
-                            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div>
-                                <h5 className="text-sm font-medium text-red-600 mb-1">Before</h5>
-                                <div className="p-3 bg-red-50 rounded-md text-sm">
-                                  <pre className="whitespace-pre-wrap font-mono text-xs">
-                                    {JSON.stringify(entry.changes.before, null, 2)}
-                                  </pre>
-                                </div>
-                              </div>
-                              <div>
-                                <h5 className="text-sm font-medium text-green-600 mb-1">After</h5>
-                                <div className="p-3 bg-green-50 rounded-md text-sm">
-                                  <pre className="whitespace-pre-wrap font-mono text-xs">
-                                    {JSON.stringify(entry.changes.after, null, 2)}
-                                  </pre>
-                                </div>
-                              </div>
-                            </div>
-                          </details>
-                        )}
-                      </div>
-                      
-                      <div className="text-right flex-shrink-0">
-                        <span className="text-sm text-muted-foreground">
-                          {formatTimestamp(entry.timestamp)}
-                        </span>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {new Date(entry.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'})}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <HistoryItem key={entry.id} entry={entry} />
               ))}
             </div>
           )}

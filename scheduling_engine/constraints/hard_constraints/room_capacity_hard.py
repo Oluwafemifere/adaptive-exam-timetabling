@@ -3,6 +3,7 @@
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
 import logging
 from collections import defaultdict
+from backend.app.utils.celery_task_utils import task_progress_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,12 @@ class RoomCapacityHardConstraint(CPSATBaseConstraint):
         """No local variables needed."""
         pass
 
+    @task_progress_tracker(
+        start_progress=56,
+        end_progress=58,
+        phase="building_phase_2_model",
+        message="Applying room capacity limits...",
+    )
     def add_constraints(self):
         """
         Adds robust, aggregate capacity constraints for the Phase 2 packing model.

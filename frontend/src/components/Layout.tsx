@@ -49,8 +49,6 @@ const navigation = [
   { name: 'Scheduling', href: 'scheduling', icon: PlayCircle, description: 'Start and monitor scheduling jobs' },
   { name: 'Timetable', href: 'timetable', icon: Calendar, description: 'View and edit schedule' },
   { name: 'Constraints', href: 'constraints', icon: Sliders, description: 'Configure rules and weights' },
-  { name: 'Scenarios', href: 'scenarios', icon: GitCompare, description: 'Compare solutions' },
-  { name: 'Analytics', href: 'analytics', icon: BarChart3, description: 'Conflict analysis and visualizations' },
   { name: 'Session Setup', href: 'session-setup', icon: Zap, description: 'Configure academic session' },
   { name: 'User Management', href: 'user-management', icon: User, description: 'Manage users and permissions' },
 ]
@@ -65,7 +63,8 @@ export function Layout({ children }: LayoutProps) {
     notifications,
     user,
     settings,
-    updateSettings
+    updateSettings,
+    activeSessionName
   } = useAppStore()
   
   const { logout } = useAuth()
@@ -109,7 +108,7 @@ export function Layout({ children }: LayoutProps) {
         <div className="w-64 bg-card shadow-sm border-r border-border flex flex-col">
           <div className="p-6 border-b border-border">
             <h1 className="text-xl font-semibold text-foreground">Adaptive Exam Timetabler</h1>
-            <p className="text-sm text-muted-foreground mt-1">Fall 2025</p>
+            <p className="text-sm text-muted-foreground mt-1">{activeSessionName || 'No Active Session'}</p>
           </div>
           <nav className="flex-1 p-4 space-y-2">
             {navigation.map((item) => {

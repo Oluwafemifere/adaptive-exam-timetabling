@@ -1,5 +1,5 @@
 // frontend/src/pages/Dashboard.tsx
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { 
   Calendar, 
   AlertTriangle, 
@@ -7,14 +7,18 @@ import {
   Upload,
   PlayCircle,
   Loader2,
-  TrendingUp,
-  TrendingDown,
+  Users,
+  Library,
+  ClipboardList,
   Activity,
   MapPin,
   UserX,
   History,
   CheckCircle,
-  Settings
+  Settings,
+  Server,
+  Clock,
+  FileWarning
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -31,7 +35,18 @@ const formatTimeAgo = (dateString: string) => {
 
 
 export function Dashboard() {
-  const { setCurrentPage, initializeApp, activeSessionId, dashboardKpis, conflictHotspots, topBottlenecks, recentActivity } = useAppStore()
+  const { 
+    setCurrentPage, 
+    initializeApp, 
+    activeSessionId, 
+    dashboardKpis, 
+    conflictHotspots, 
+    recentActivity,
+    reportSummaryCounts,
+    sessionJobs,
+    allConflictReports,
+    allChangeRequests
+  } = useAppStore()
   const { isLoading, error } = useDashboardData();
   const [isInitializing, setIsInitializing] = useState(true);
 
@@ -44,6 +59,13 @@ export function Dashboard() {
     };
     init();
   }, [initializeApp, activeSessionId]);
+
+  const latestJob = sessionJobs?.[0];
+  const pendingItems = [
+    ...(allConflictReports || []).filter(r => r.status === 'pending').map(r => ({ ...r, type: 'Conflict Report' as const })),
+    ...(allChangeRequests || []).filter(r => r.status === 'pending').map(r => ({ ...r, type: 'Change Request' as const }))
+  ].sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime());
+
 
   const isDataMissing = !isLoading && !isInitializing && !dashboardKpis;
   
@@ -119,7 +141,7 @@ export function Dashboard() {
             <div>
               <p className="text-sm font-medium text-muted-foreground">Total Exams Scheduled</p>
               <p className="text-3xl font-bold text-foreground">{dashboardKpis?.total_exams_scheduled ?? 0}</p>
-              <p className="text-xs text-muted-foreground flex items-center mt-1"><TrendingUp className="h-3 w-3 mr-1 text-green-500" />+12 from last week</p>
+              <p className="text-xs text-muted-foreground mt-1">For the active session</p>
             </div>
             <div className="p-3 bg-blue-100 dark:bg-blue-900/50 rounded-full"><Calendar className="h-6 w-6 text-blue-600 dark:text-blue-300" /></div>
           </div>
@@ -128,35 +150,35 @@ export function Dashboard() {
         <Card className="p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Unresolved Hard Conflicts</p>
-              <p className="text-3xl font-bold text-foreground">{dashboardKpis?.unresolved_hard_conflicts ?? 0}</p>
-              <Badge variant={dashboardKpis?.unresolved_hard_conflicts === 0 ? "default" : "destructive"} className="mt-1">{dashboardKpis?.unresolved_hard_conflicts === 0 ? "All Clear" : "Needs Attention"}</Badge>
+              <p className="text-sm font-medium text-muted-foreground">Unresolved Conflicts</p>
+              <p className="text-3xl font-bold text-foreground">{(dashboardKpis?.unresolved_hard_conflicts ?? 0) + (dashboardKpis?.total_soft_conflicts ?? 0)}</p>
+               <p className="text-xs text-muted-foreground mt-1">{dashboardKpis?.unresolved_hard_conflicts ?? 0} Hard / {dashboardKpis?.total_soft_conflicts ?? 0} Soft</p>
             </div>
-            <div className={cn("p-3 rounded-full", dashboardKpis?.unresolved_hard_conflicts === 0 ? "bg-green-100 dark:bg-green-900/50" : "bg-red-100 dark:bg-red-900/50")}>
-              <AlertTriangle className={cn("h-6 w-6", dashboardKpis?.unresolved_hard_conflicts === 0 ? "text-green-600 dark:text-green-300" : "text-red-600 dark:text-red-300")} />
+            <div className={cn("p-3 rounded-full", (dashboardKpis?.unresolved_hard_conflicts ?? 0) > 0 ? "bg-red-100 dark:bg-red-900/50" : "bg-yellow-100 dark:bg-yellow-900/50")}>
+              <AlertTriangle className={cn("h-6 w-6", (dashboardKpis?.unresolved_hard_conflicts ?? 0) > 0 ? "text-red-600 dark:text-red-300" : "text-yellow-600 dark:text-yellow-300")} />
             </div>
+          </div>
+        </Card>
+        
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Data Health Summary</p>
+              <p className="text-2xl font-bold text-foreground">5,210 <span className="text-sm font-medium text-muted-foreground">Students</span></p>
+              <p className="text-2xl font-bold text-foreground">435 <span className="text-sm font-medium text-muted-foreground">Courses</span></p>
+            </div>
+            <div className="p-3 bg-green-100 dark:bg-green-900/50 rounded-full"><Server className="h-6 w-6 text-green-600 dark:text-green-300" /></div>
           </div>
         </Card>
 
         <Card className="p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Total Soft Conflicts</p>
-              <p className="text-3xl font-bold text-foreground">{dashboardKpis?.total_soft_conflicts ?? 0}</p>
-              <p className="text-xs text-muted-foreground flex items-center mt-1"><TrendingDown className="h-3 w-3 mr-1 text-red-500" />-3 from yesterday</p>
+              <p className="text-sm font-medium text-muted-foreground">Action Required</p>
+              <p className="text-3xl font-bold text-foreground">{reportSummaryCounts?.total ?? 0}</p>
+              <p className="text-xs text-muted-foreground mt-1">Pending reports & requests</p>
             </div>
-            <div className="p-3 bg-yellow-100 dark:bg-yellow-900/50 rounded-full"><AlertTriangle className="h-6 w-6 text-yellow-600 dark:text-yellow-300" /></div>
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Overall Room Utilization</p>
-              <p className="text-3xl font-bold text-foreground">{dashboardKpis?.overall_room_utilization.toFixed(1) ?? 0}%</p>
-              <p className="text-xs text-muted-foreground">Across all venues</p>
-            </div>
-            <div className="p-3 bg-purple-100 dark:bg-purple-900/50 rounded-full"><Building2 className="h-6 w-6 text-purple-600 dark:text-purple-300" /></div>
+            <div className="p-3 bg-purple-100 dark:bg-purple-900/50 rounded-full"><ClipboardList className="h-6 w-6 text-purple-600 dark:text-purple-300" /></div>
           </div>
         </Card>
       </div>
@@ -167,7 +189,7 @@ export function Dashboard() {
           <CardHeader><CardTitle className="flex items-center"><AlertTriangle className="h-5 w-5 mr-2" />Conflict Hotspots</CardTitle><CardDescription>Time slots with the highest conflict density</CardDescription></CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {conflictHotspots.map((hotspot, index) => (
+              {conflictHotspots.slice(0, 5).map((hotspot, index) => (
                 <div key={index} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
                   <div className="flex items-center space-x-3"><div className="text-sm font-medium">{hotspot.timeslot}</div><Badge variant={hotspot.conflict_count > 5 ? 'destructive' : hotspot.conflict_count > 3 ? 'secondary' : 'outline'}>{hotspot.conflict_count} conflicts</Badge></div>
                   <Button variant="ghost" size="sm" onClick={() => setCurrentPage('timetable')}>View</Button>
@@ -178,33 +200,37 @@ export function Dashboard() {
         </Card>
 
         <Card className="lg:col-span-4">
-          <CardHeader><CardTitle className="flex items-center"><UserX className="h-5 w-5 mr-2" />Top Bottlenecks</CardTitle><CardDescription>Items causing the most scheduling issues</CardDescription></CardHeader>
+          <CardHeader><CardTitle className="flex items-center"><Clock className="h-5 w-5 mr-2" />Latest Job Run</CardTitle><CardDescription>Status of the most recent timetable generation</CardDescription></CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {topBottlenecks.map((bottleneck, index) => {
-                  const Icon = bottleneck.type === 'exam' ? Calendar : MapPin;
-                  return (
-                    <div key={index} className="flex items-start space-x-3 p-3 bg-muted/50 rounded-lg">
-                      <div className={cn("p-1 rounded-full mt-0.5", bottleneck.type === 'exam' ? 'bg-blue-100 dark:bg-blue-900/50' : 'bg-green-100 dark:bg-green-900/50')}>
-                        <Icon className={cn("h-3 w-3", bottleneck.type === 'exam' ? 'text-blue-600 dark:text-blue-300' : 'text-green-600 dark:text-green-300')} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{bottleneck.item}</p>
-                        <p className="text-xs text-muted-foreground">{bottleneck.reason}</p>
-                      </div>
-                      <Badge variant="destructive">{bottleneck.issue_count}</Badge>
-                    </div>
-                  )
-              })}
-            </div>
+            {latestJob ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                  <p className="font-semibold">Status</p>
+                  <Badge variant={latestJob.status === 'completed' ? 'default' : 'destructive'}>{latestJob.status}</Badge>
+                </div>
+                 <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                  <p className="font-semibold">Completed</p>
+                  <p className="text-sm text-muted-foreground">{formatTimeAgo(latestJob.created_at)}</p>
+                </div>
+                 <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                  <p className="font-semibold">Room Utilization</p>
+                  <p className="text-sm font-bold">{dashboardKpis?.overall_room_utilization.toFixed(1) ?? 0}%</p>
+                </div>
+                <Button className="w-full" onClick={() => setCurrentPage('scheduler')}>Go to Scheduler</Button>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-muted-foreground">No timetable jobs have been run for this session yet.</p>
+                <Button className="mt-4" onClick={() => setCurrentPage('scheduler')}>Run First Job</Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card className="lg:col-span-4 flex flex-col">
           <CardHeader><CardTitle className="flex items-center"><Activity className="h-5 w-5 mr-2" />Recent Activity</CardTitle><CardDescription>Latest actions and system events</CardDescription></CardHeader>
           <CardContent className="flex-1 overflow-hidden">
-            {/* --- FIX: Added overflow-y-auto and a max-height to make this section scrollable --- */}
-            <div className="space-y-3 h-full overflow-y-auto max-h-[20rem]">
+            <div className="space-y-3 h-full overflow-y-auto max-h-[20rem] pr-2">
               {recentActivity.map((activity) => {
                   const Icon = getActivityIcon(activity.action);
                   return (
@@ -213,11 +239,11 @@ export function Dashboard() {
                         <Icon className="h-3 w-3 text-gray-600 dark:text-gray-300" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm">{activity.action}</p>
+                        <p className="text-sm font-medium truncate">{activity.action}</p>
                         <div className="flex items-center space-x-2 mt-1">
-                          <p className="text-xs text-muted-foreground">{activity.user_email}</p>
+                          <p className="text-xs text-muted-foreground truncate">{activity.userName}</p>
                           <span className="text-xs text-muted-foreground">•</span>
-                          <p className="text-xs text-muted-foreground">{formatTimeAgo(activity.created_at)}</p>
+                          <p className="text-xs text-muted-foreground flex-shrink-0">{formatTimeAgo(activity.timestamp)}</p>
                         </div>
                       </div>
                     </div>
@@ -225,6 +251,50 @@ export function Dashboard() {
                 })}
             </div>
           </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-12">
+            <CardHeader><CardTitle className="flex items-center"><FileWarning className="h-5 w-5 mr-2" />Pending Approvals</CardTitle><CardDescription>Actionable reports and requests awaiting review</CardDescription></CardHeader>
+            <CardContent>
+                {pendingItems.length > 0 ? (
+                    <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                        {pendingItems.map((item, index) => (
+                            <div key={index} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                                <div className="flex items-center space-x-3 min-w-0">
+                                    <Badge variant={item.type === 'Conflict Report' ? 'destructive' : 'secondary'}>{item.type}</Badge>
+                                    <div className="min-w-0 flex-1">
+                                        {item.type === 'Conflict Report' ? (
+                                            <>
+                                                <p className="text-sm font-medium truncate">
+                                                    {`Student: ${item.student.first_name} ${item.student.last_name}`}
+                                                </p>
+                                                <p className="text-xs text-muted-foreground truncate">{item.description}</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p className="text-sm font-medium truncate">
+                                                   {`Staff: ${item.staff.first_name} ${item.staff.last_name}`}
+                                                </p>
+                                                <p className="text-xs text-muted-foreground truncate">{item.reason}</p>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="flex items-center space-x-4">
+                                  <p className="text-xs text-muted-foreground flex-shrink-0">{formatTimeAgo(item.submitted_at)}</p>
+                                  <Button variant="ghost" size="sm" onClick={() => setCurrentPage('requests')}>Review</Button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="text-center py-8">
+                        <CheckCircle className="h-10 w-10 text-green-500 mx-auto mb-2" />
+                        <p className="text-muted-foreground font-semibold">All Clear!</p>
+                        <p className="text-sm text-muted-foreground">There are no pending reports or requests.</p>
+                    </div>
+                )}
+            </CardContent>
         </Card>
       </div>
     </div>

@@ -1,6 +1,6 @@
 // frontend/src/pages/Constraints.tsx
 import React, { useState, useEffect, useMemo } from 'react';
-import { Sliders, Save, RotateCcw, Info, AlertTriangle, Settings2, Loader2, FileJson } from 'lucide-react';
+import { Sliders, Save, RotateCcw, Info, Settings2, Loader2, FileJson, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
@@ -15,7 +15,8 @@ import { toast } from 'sonner';
 import { useAppStore } from '../store';
 import { RuleSettingRead, SystemConfigurationDetails } from '../store/types';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Textarea } from '../components/ui/textarea'; // Import Textarea
+import { Textarea } from '../components/ui/textarea';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../components/ui/alert-dialog';
 
 // Helper to group rules by category
 const groupRulesByCategory = (rules: RuleSettingRead[]) => {
@@ -37,10 +38,12 @@ export function Constraints() {
     activeConfigurationDetails,
     fetchAndSetActiveConfiguration,
     saveActiveConfiguration,
+    setCurrentPage,
   } = useAppStore();
 
   const [localConfig, setLocalConfig] = useState<SystemConfigurationDetails | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [showRunJobDialog, setShowRunJobDialog] = useState(false);
 
   useEffect(() => {
     // Sync local state when the global store's active configuration changes
@@ -87,8 +90,13 @@ export function Constraints() {
   const handleSave = async () => {
     if (!localConfig) return;
     setIsSaving(true);
-    await saveActiveConfiguration(localConfig);
-    setIsSaving(false);
+    try {
+      await saveActiveConfiguration(localConfig);
+      // On successful save, show the dialog to ask about running a job.
+      setShowRunJobDialog(true);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleReset = () => {
@@ -96,6 +104,10 @@ export function Constraints() {
       setLocalConfig(JSON.parse(JSON.stringify(activeConfigurationDetails)));
       toast.info('Changes have been discarded.');
     }
+  };
+
+  const navigateToScheduling = () => {
+    setCurrentPage('scheduling');
   };
 
   if (!localConfig) {
@@ -106,13 +118,7 @@ export function Constraints() {
       </div>
     );
   }
-
-  const { rules } = localConfig;
-  const hardConstraints = rules.filter(c => c.type === 'hard');
-  const softConstraints = rules.filter(c => c.type === 'soft');
-  const enabledHard = hardConstraints.filter(c => c.is_enabled).length;
-  const enabledSoft = softConstraints.filter(c => c.is_enabled).length;
-
+  
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -137,7 +143,6 @@ export function Constraints() {
         </div>
       </div>
       
-      {/* Configuration Details Card */}
       <Card>
           <CardHeader>
               <CardTitle>Configuration Profile</CardTitle>
@@ -158,7 +163,8 @@ export function Constraints() {
                   <Label htmlFor="solver-params" className="flex items-center gap-2"><FileJson className="w-4 h-4" />Solver Parameters (JSON)</Label>
                   <Textarea id="solver-params" value={JSON.stringify(localConfig.solver_parameters, null, 2)} onChange={(e) => {
                       try {
-                          handleFieldChange('solver_parameters', JSON.parse(e.target.value));
+                          const parsedJson = JSON.parse(e.target.value);
+                          handleFieldChange('solver_parameters', parsedJson);
                       } catch {
                           // Ignore invalid JSON while typing
                       }
@@ -206,7 +212,7 @@ export function Constraints() {
           <Card>
             <CardHeader><CardTitle>Soft Constraint Priorities</CardTitle><CardDescription>Adjust weights for enabled soft constraints (e.g., 0-1000).</CardDescription></CardHeader>
             <CardContent className="space-y-6 pt-6">
-              {softConstraints.filter(c => c.is_enabled).map((rule) => (
+              {localConfig.rules.filter(c => c.type === 'soft' && c.is_enabled).map((rule) => (
                 <div key={rule.rule_id} className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div><h4 className="font-medium">{rule.name}</h4><p className="text-sm text-muted-foreground">{rule.description}</p></div>
@@ -219,6 +225,25 @@ export function Constraints() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <AlertDialog open={showRunJobDialog} onOpenChange={setShowRunJobDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Configuration Saved Successfully!</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your changes to the '{localConfig.name}' configuration have been saved.
+              Would you like to run a new scheduling job with this updated configuration now?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Not Now</AlertDialogCancel>
+            <AlertDialogAction onClick={navigateToScheduling}>
+              <Zap className="h-4 w-4 mr-2" />
+              Go to Scheduling
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
