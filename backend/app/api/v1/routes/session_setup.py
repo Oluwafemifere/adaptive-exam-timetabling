@@ -1,13 +1,15 @@
 # backend/app/api/v1/routes/session_setup.py
 """API endpoints for the multi-step exam session setup wizard."""
 
+from typing import Dict, Any
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....api.deps import db_session, current_user
 from ....models.users import User
 from ....services.session_setup_service import SessionSetupService
+from ....services.seeding.data_seeding_service import DataSeedingService
 from ....schemas.session_setup import SessionSetupCreate, SessionSetupSummary
 from ....schemas.system import GenericResponse
 
@@ -111,3 +113,44 @@ async def process_staged_data(
         ),
         data={"academic_session_id": session_id},
     )
+
+
+@router.get(
+    "/staging-data/{session_id}/{entity_type}",
+    response_model=GenericResponse,
+    summary="Get Staged Data for Review",
+)
+async def get_staged_data_for_review(
+    session_id: UUID,
+    entity_type: str,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """Retrieves all data from a specified staging table for a given session."""
+    service = DataSeedingService(db)
+    result = await service.get_staged_data(session_id, entity_type)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return GenericResponse(success=True, data=result.get("data"))
+
+
+@router.put(
+    "/staging-data/{entity_type}/{record_pk}",
+    response_model=GenericResponse,
+    summary="Update a Staged Record",
+)
+async def update_staged_data_record(
+    entity_type: str,
+    record_pk: str,
+    payload: Dict[str, Any] = Body(...),
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """Updates a single record in a staging table before final processing."""
+    service = DataSeedingService(db)
+    result = await service.update_staged_record(entity_type, record_pk, payload)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=result.get("message")
+        )
+    return GenericResponse(success=True, data=result.get("data"))

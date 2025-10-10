@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
 import logging
+from .api.v1.routes import websockets
 
 # Import your components
 from .api.v1.api import api_router
@@ -102,13 +103,7 @@ async def health_check():
     }
 
 
-# This test endpoint is now part of the main API router,
-# you can remove it from here if it's defined in api_router to avoid duplication.
-# If not, it can remain here.
-# @app.get("/api/v1/test")
-# async def test_endpoint():
-#     return {"message": "Backend is running successfully!", "test": "passed"}
-
+app.include_router(websockets.router, prefix="/ws", tags=["WebSockets"])
 
 if __name__ == "__main__":
     uvicorn.run(

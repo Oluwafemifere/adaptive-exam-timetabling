@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { useAuth } from '../hooks/useAuth';
 import { toast } from 'sonner';
+import { api } from '../services/api';
 
 export function Login() {
   const [username, setUsername] = useState('admin@baze.edu');
@@ -16,15 +17,48 @@ export function Login() {
   const { login, isLoggingIn, error } = useAuth();
   const [isCreateAccountOpen, setCreateAccountOpen] = useState(false);
 
+  // --- State for the registration form ---
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [role, setRole] = useState('');
+
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await login(username, password);
   };
 
-  const handleCreateAccount = () => {
-    // In a real app, this would call an API endpoint to register a new user.
-    toast.success('Account creation request sent. Please check your email for confirmation.');
-    setCreateAccountOpen(false);
+  const handleCreateAccount = async () => {
+    if (!firstName || !lastName || !email || !newPassword || !role) {
+      toast.error('Please fill out all fields.');
+      return;
+    }
+    
+    try {
+      // --- FIX: Call the actual registration API endpoint ---
+      await api.registerUser({
+        first_name: firstName,
+        last_name: lastName,
+        email: email,
+        password: newPassword,
+        role: role,
+        is_active: true, 
+        is_superuser: false,
+      });
+      toast.success('Account created successfully! You can now log in.');
+      setCreateAccountOpen(false);
+      // Reset form
+      setFirstName('');
+      setLastName('');
+      setEmail('');
+      setNewPassword('');
+      setRole('');
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.detail || 'Failed to create account.';
+      toast.error(errorMessage);
+    }
   };
 
   return (
@@ -95,24 +129,24 @@ export function Login() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="firstName">First Name</Label>
-                      <Input id="firstName" placeholder="John" />
+                      <Input id="firstName" placeholder="John" value={firstName} onChange={e => setFirstName(e.target.value)} />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="lastName">Last Name</Label>
-                      <Input id="lastName" placeholder="Doe" />
+                      <Input id="lastName" placeholder="Doe" value={lastName} onChange={e => setLastName(e.target.value)} />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="create-email">Email</Label>
-                    <Input id="create-email" type="email" placeholder="john.doe@university.edu" />
+                    <Input id="create-email" type="email" placeholder="john.doe@university.edu" value={email} onChange={e => setEmail(e.target.value)} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="create-password">Password</Label>
-                    <Input id="create-password" type="password" />
+                    <Input id="create-password" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="role-select">Role</Label>
-                    <Select>
+                    <Select onValueChange={setRole} value={role}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select your role..." />
                       </SelectTrigger>

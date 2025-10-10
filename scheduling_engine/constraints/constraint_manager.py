@@ -31,7 +31,7 @@ from scheduling_engine.constraints.hard_constraints import (
     InvigilatorContinuityConstraint,
     RoomCapacityHardConstraint,
     AggregateCapacityConstraint,
-    UnifiedStudentConflictConstraint,  # <-- MOVED TO CORE
+    UnifiedStudentConflictConstraint,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,36 +52,26 @@ class CPSATConstraintManager:
         self, model, shared_variables: SharedVariables
     ) -> Dict[str, Any]:
         """Builds the Phase 1 (Timetabling) model with time-based constraints."""
-        logger.info("🏗️  Starting DYNAMIC Phase 1 model build...")
-
-        # --- CORE CONSTRAINTS (ALWAYS APPLIED) ---
-        # These are foundational for a valid timetabling model.
-        # --- START OF MODIFICATION ---
+        logger.info("🏗️  Building Phase 1 (Timetabling) model constraints...")
+        # Define which constraints are essential and time-related for Phase 1
         core_constraints = {
             StartUniquenessConstraint,
             StartFeasibilityConstraint,
             OccupancyDefinitionConstraint,
-            # AggregateCapacityConstraint,
-            UnifiedStudentConflictConstraint,  # Now a core, non-configurable constraint
+            AggregateCapacityConstraint,
+            UnifiedStudentConflictConstraint,  # Critical for timetabling
         }
-        # --- END OF MODIFICATION ---
-
-        # --- DYNAMIC CONSTRAINTS (APPLIED IF ACTIVE) ---
-        # These represent configurable business rules.
-        active_definitions = self.registry.get_active_constraint_classes()
-
-        return self._build_model_from_definitions(
-            model, shared_variables, active_definitions, core_constraints
+        logger.info(
+            f"Phase 1 will use these CORE constraints: {[c.__name__ for c in core_constraints]}"
         )
+        return self._build_model(model, shared_variables, core_constraints)
 
     def build_phase2_model(
         self, model, shared_variables: SharedVariables
     ) -> Dict[str, Any]:
         """Builds the full Phase 2 (Packing) model."""
-        logger.info("🏗️  Starting DYNAMIC Full Phase 2 model build...")
-
-        # --- CORE CONSTRAINTS (ALWAYS APPLIED) ---
-        # These are foundational for a valid packing and assignment model.
+        logger.info("🏗️  Building Full Phase 2 (Packing) model constraints...")
+        # Define which constraints are essential for packing and resource assignment
         core_constraints = {
             RoomAssignmentConsistencyConstraint,
             RoomCapacityHardConstraint,
@@ -90,46 +80,37 @@ class CPSATConstraintManager:
             InvigilatorSinglePresenceConstraint,
             InvigilatorContinuityConstraint,
         }
-
-        # --- DYNAMIC CONSTRAINTS (APPLIED IF ACTIVE) ---
-        active_definitions = self.registry.get_active_constraint_classes()
-
-        return self._build_model_from_definitions(
-            model, shared_variables, active_definitions, core_constraints
+        logger.info(
+            f"Phase 2 will use these CORE constraints: {[c.__name__ for c in core_constraints]}"
         )
+        return self._build_model(model, shared_variables, core_constraints)
 
-    def _build_model_from_definitions(
+    def _build_model(
         self,
         model,
         shared_variables: SharedVariables,
-        active_definitions: List[ConstraintDefinition],
         core_classes: Set[type],
     ) -> Dict[str, Any]:
-        """Generic model builder that separates core from dynamic constraints."""
+        """Generic model builder that separates core from dynamic constraints for a given phase."""
         build_start_time = time.time()
-        total_constraints_added = 0
-        successful_modules = 0
         self._build_errors = []
         self._constraint_instances = {}
-        processed_classes = set()
+        total_constraints_added = 0
+        successful_modules = 0
 
-        # --- 1. APPLY CORE, NON-CONFIGURABLE CONSTRAINTS ---
-        logger.info(f"Applying {len(core_classes)} CORE constraints...")
+        # --- 1. APPLY CORE, NON-CONFIGURABLE CONSTRAINTS for this phase ---
+        logger.info(f"Applying {len(core_classes)} CORE constraints for this phase...")
         for cls in core_classes:
             try:
-                # Use the definition from the registry if available (e.g., for params),
-                # otherwise create a default one.
-                definition = next(
-                    (d for d in active_definitions if d.constraint_class == cls),
-                    ConstraintDefinition(
-                        id=cls.__name__,
-                        name=cls.__name__,
-                        description="Core foundational constraint.",
-                        constraint_type=ConstraintType.HARD,
-                        category=ConstraintCategory.CORE,
-                        enabled=True,
-                        constraint_class=cls,
-                    ),
+                # Core constraints are not configurable; create a default definition.
+                definition = ConstraintDefinition(
+                    id=cls.__name__,
+                    name=cls.__name__,
+                    description="Core foundational constraint.",
+                    constraint_type=ConstraintType.HARD,
+                    category=ConstraintCategory.CORE,
+                    enabled=True,
+                    constraint_class=cls,
                 )
 
                 instance = self._instantiate_and_apply(
@@ -139,15 +120,16 @@ class CPSATConstraintManager:
                     stats = instance.get_statistics()
                     total_constraints_added += stats.get("constraint_count", 0)
                     successful_modules += 1
-                processed_classes.add(cls)
             except Exception as e:
                 error_msg = f"Failed to build CORE module '{cls.__name__}': {e}"
                 logger.error(f"❌ {error_msg}\n{traceback.format_exc()}")
                 self._build_errors.append(error_msg)
 
-        # --- 2. APPLY DYNAMIC, CONFIGURABLE CONSTRAINTS ---
+        # --- 2. APPLY ALL DYNAMIC, CONFIGURABLE CONSTRAINTS ---
+        # Constraints will self-disable if their required variables (x, y, w) are not present for the current phase.
+        active_definitions = self.registry.get_active_constraint_classes()
         dynamic_definitions = [
-            d for d in active_definitions if d.constraint_class not in processed_classes
+            d for d in active_definitions if d.constraint_class not in core_classes
         ]
         logger.info(
             f"Applying {len(dynamic_definitions)} DYNAMIC (configurable) constraints..."
@@ -169,23 +151,35 @@ class CPSATConstraintManager:
         build_time = time.time() - build_start_time
         self._build_stats = {
             "build_successful": not self._build_errors,
-            "total_modules_processed": len(active_definitions),
+            "total_modules_processed": len(core_classes) + len(dynamic_definitions),
             "successful_modules": successful_modules,
             "total_constraints_added": total_constraints_added,
             "build_time_seconds": build_time,
             "errors": self._build_errors,
         }
-        logger.info("🎉 DYNAMIC CONSTRAINT MODEL BUILD COMPLETE!")
+        logger.info("🎉 DYNAMIC CONSTRAINT MODEL BUILD COMPLETE FOR PHASE!")
         logger.info(f"   • Total constraints added: {total_constraints_added}")
+        logger.info(
+            f"   • Successful modules: {successful_modules}/{self._build_stats['total_modules_processed']}"
+        )
+        if self._build_errors:
+            logger.error(f"   • Errors encountered: {len(self._build_errors)}")
+            for err in self._build_errors:
+                logger.error(f"     - {err}")
         logger.info(f"   • Build time: {build_time:.2f}s")
         return self._build_stats
 
     def _instantiate_and_apply(self, definition, model, shared_variables):
         """Instantiates, initializes, and applies a single constraint definition."""
         if not definition.constraint_class:
-            logger.warning(f"Skipping '{definition.id}', no linked class.")
+            logger.warning(
+                f"Skipping '{definition.id}', no linked implementation class found."
+            )
             return None
 
+        logger.info(
+            f"-> Applying module '{definition.id}' ({definition.constraint_type.value.upper()})..."
+        )
         instance = definition.constraint_class(
             definition=definition,
             problem=self.problem,
@@ -195,9 +189,14 @@ class CPSATConstraintManager:
         self._constraint_instances[definition.id] = instance
         instance.initialize_variables()
         instance.add_constraints()
-        logger.info(
-            f"✅ Module '{definition.id}' ({definition.constraint_type.value}): {instance.get_statistics().get('constraint_count', 0)} constraints added."
-        )
+        stats = instance.get_statistics()
+        count = stats.get("constraint_count", 0)
+        if count > 0:
+            logger.info(f"   ✅ Module '{definition.id}' added {count} constraints.")
+        else:
+            logger.info(
+                f"   - Module '{definition.id}' added 0 constraints (this may be expected if not applicable)."
+            )
         return instance
 
     def get_build_statistics(self) -> Dict[str, Any]:

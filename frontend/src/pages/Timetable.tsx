@@ -5,13 +5,14 @@ import { ConflictPanel } from '../components/ConflictPanel';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-// --- MODIFICATION: Added PlayCircle for the call-to-action button ---
-import { AlertTriangle, Grid, Loader2, Calendar, User, MapPin, Building, Book, PlayCircle } from 'lucide-react';
+import { AlertTriangle, Grid, Loader2, Calendar, User, MapPin, Building, Book, PlayCircle, CheckCircle, ListCollapse } from 'lucide-react';
 import { useAppStore } from '../store';
 import { toast } from 'sonner';
-import { useLatestTimetable } from '../hooks/useApi';
 import { RenderableExam } from '../store/types';
-import { Separator } from '../components/ui/separator';
+import { api } from '../services/api';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { formatDistanceToNow } from 'date-fns';
+import { Badge } from '../components/ui/badge';
 
 // A simple card to display exam details in list views
 const ExamDetailsCard = ({ exam }: { exam: RenderableExam }) => (
@@ -28,9 +29,10 @@ const ExamDetailsCard = ({ exam }: { exam: RenderableExam }) => (
 );
 
 export function Timetable() {
-  // --- MODIFICATION: Added setCurrentPage for navigation ---
-  const { exams, conflicts, user, addHistoryEntry, activeSessionId, setCurrentPage } = useAppStore();
-  const { isLoading, error, fetchTimetable } = useLatestTimetable();
+  const { exams, conflicts, user, addHistoryEntry, activeSessionId, setCurrentPage, currentJobId, sessionJobs, fetchSessionJobs, fetchAndSetJobResult } = useAppStore();
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
   // Component state for filters and view mode
   const [viewMode, setViewMode] = useState<'date' | 'room' | 'invigilator'>('date');
@@ -41,11 +43,32 @@ export function Timetable() {
   const [selectedStaff, setSelectedStaff] = useState<string[]>([]);
   const [selectedBuildings, setSelectedBuildings] = useState<string[]>([]);
 
+  // Data fetching logic
   useEffect(() => {
-    if (activeSessionId) {
-      fetchTimetable();
-    }
-  }, [activeSessionId, fetchTimetable]);
+    const loadInitialData = async () => {
+      if (activeSessionId) {
+        setIsLoading(true);
+        setError(null);
+        try {
+          await fetchSessionJobs(activeSessionId);
+          const jobs = useAppStore.getState().sessionJobs;
+          const publishedJob = jobs.find(j => j.is_published);
+          const jobToLoad = publishedJob || jobs[0];
+
+          if (jobToLoad) {
+            await fetchAndSetJobResult(jobToLoad.id);
+          }
+        } catch (err) {
+          setError(err instanceof Error ? err : new Error('Failed to load initial timetable data'));
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        setIsLoading(false);
+      }
+    };
+    loadInitialData();
+  }, [activeSessionId, fetchSessionJobs, fetchAndSetJobResult]);
 
   // Memoized selectors to get unique values for filters from the exam data
   const { departments, faculties, rooms, staff, buildings } = useMemo(() => {
@@ -151,6 +174,32 @@ export function Timetable() {
     toast.info(`${originalExam.courseCode} moved. Note: This is a UI-only change. API for manual edit is needed.`);
   };
   
+  const handlePublish = async () => {
+    if (!currentJobId) {
+      toast.error("No timetable job is currently loaded to be published.");
+      return;
+    }
+
+    setIsPublishing(true);
+    try {
+      await api.publishVersion(currentJobId);
+      toast.success("Timetable published successfully!", {
+        description: "This timetable is now the official version for the session.",
+      });
+    } catch (error: any) {
+      const detail = error.response?.data?.detail || "An unknown error occurred.";
+      toast.error(`Publishing failed: ${detail}`);
+    } finally {
+      setIsPublishing(false);
+    }
+  };
+
+  const handleJobSelect = async (jobId: string) => {
+    setIsLoading(true);
+    await fetchAndSetJobResult(jobId);
+    setIsLoading(false);
+  };
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] text-center">
@@ -167,12 +216,11 @@ export function Timetable() {
         <AlertTriangle className="h-12 w-12 text-destructive mb-4" />
         <h2 className="text-xl font-semibold text-destructive">Failed to Load Timetable</h2>
         <p className="text-muted-foreground mt-2">{error.message}</p>
-        <Button onClick={fetchTimetable} className="mt-4">Retry</Button>
+        <Button onClick={() => window.location.reload()} className="mt-4">Retry</Button>
       </div>
     )
   }
 
-  // --- MODIFICATION START: Added a comprehensive empty state for the entire page ---
   if (exams.length === 0 && !isLoading) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-200px)]">
@@ -199,7 +247,6 @@ export function Timetable() {
       </div>
     );
   }
-  // --- MODIFICATION END ---
 
   return (
     <div className="space-y-6">
@@ -212,6 +259,32 @@ export function Timetable() {
               <span className="text-destructive ml-2">• {conflicts.length} conflict{conflicts.length !== 1 ? 's' : ''} detected</span>
             )}
           </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select onValueChange={handleJobSelect} value={currentJobId ?? ""}>
+            <SelectTrigger className="w-64">
+              <div className="flex items-center gap-2">
+                <ListCollapse className="h-4 w-4" />
+                <SelectValue placeholder="Select a timetable version..." />
+              </div>
+            </SelectTrigger>
+            <SelectContent>
+              {sessionJobs.map((job, index) => (
+                <SelectItem key={`${job.id}-${index}`} value={job.id}>
+                  <div className="flex justify-between items-center">
+                    <span>{formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}</span>
+                    {job.is_published && <Badge variant="default" className="ml-2">Published</Badge>}
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+            
+          </Select>
+
+          <Button onClick={handlePublish} disabled={!currentJobId || isPublishing}>
+            {isPublishing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle className="h-4 w-4 mr-2" />}
+            Publish Timetable
+          </Button>
         </div>
       </div>
 

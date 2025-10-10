@@ -13,6 +13,7 @@ from ....services.job import JobService
 from ....services.data_retrieval import DataRetrievalService
 from ....schemas.jobs import (
     TimetableJobRead,
+    TimetableJobSummaryRead,
 )
 from ....schemas.system import GenericResponse
 
@@ -118,3 +119,22 @@ async def get_job_result(
             detail="Result not found for this job. It may be pending, failed, or have no result data.",
         )
     return GenericResponse(success=True, data=result_data)
+
+
+@router.get(
+    "/sessions/{session_id}/successful", response_model=List[TimetableJobSummaryRead]
+)
+async def list_successful_jobs_for_session(
+    session_id: UUID,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Retrieve a list of all successfully completed timetable jobs for a specific session.
+    """
+    service = JobService(db, user)
+    jobs = await service.list_successful_jobs_for_session(session_id)
+    if not jobs:
+        # Return an empty list, which is a valid response.
+        return []
+    return jobs

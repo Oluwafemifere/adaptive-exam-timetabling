@@ -19,8 +19,10 @@ import {
   GraduationCap,
   Library,
   ClipboardList,
-  UserCheck, // FIX: Replaced ClipboardUser with UserCheck
+  UserCheck,
   CalendarX,
+  Database,
+  ShieldCheck,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -32,8 +34,9 @@ import { Alert, AlertDescription } from '../components/ui/alert'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { cn } from '../components/ui/utils'
 import { toast } from 'sonner'
-import { useCreateSession, useFileUpload, useSessionSummary } from '../hooks/useApi';
+import { useCreateSession, useFileUpload, useSessionSummary, useProcessStagedData } from '../hooks/useApi';
 import { useAppStore } from '../store';
+import { StagingDataReviewTable } from '../components/StagingDataReviewTable'; 
 
 // --- Type Definitions ---
 interface TimeSlot {
@@ -64,38 +67,33 @@ export function SessionSetup() {
   const { setCurrentPage } = useAppStore();
   const [currentStep, setCurrentStep] = useState(1);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [dataSeedingSessionId, setDataSeedingSessionId] = useState<string | null>(null);
 
   // API Hooks
   const { mutateAsync: createSession, isPending: isCreatingSession } = useCreateSession();
   const { mutateAsync: uploadFile, isPending: isUploading } = useFileUpload();
   const { data: summaryData, isLoading: isLoadingSummary, refetch: refetchSummary } = useSessionSummary(sessionId);
+  const { mutateAsync: processData, isPending: isProcessingData } = useProcessStagedData();
 
   // File Upload state
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentUploadKey, setCurrentUploadKey] = useState('');
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, { name: string; size: number } | null>>({
-    faculties: null,
-    departments: null,
-    programmes: null,
-    buildings: null,
-    rooms: null,
-    courses: null,
-    staff: null,
-    students: null,
-    course_registrations: null,
-    course_instructors: null,
-    staff_unavailability: null,
+    faculties: null, departments: null, programmes: null, buildings: null, rooms: null,
+    courses: null, staff: null, students: null, course_registrations: null,
+    course_instructors: null, staff_unavailability: null,
   });
 
   // Form State
   const [sessionData, setSessionData] = useState({
-    name: 'Fall 2025 Final Exams',
+    name: '25C SEMESTER EXAM',
     startDate: '2025-12-01',
-    endDate: '2025-12-15',
+    endDate: '2025-12-12',
     slotGenerationMode: 'flexible',
     timeSlots: [
       { id: '1', startTime: '09:00', endTime: '12:00' },
-      { id: '2', startTime: '14:00', endTime: '17:00' },
+      { id: '2', startTime: '12:00', endTime: '15:00' },
+      { id: '3', startTime: '15:00', endTime: '18:00' },
     ]
   });
   
@@ -109,7 +107,7 @@ export function SessionSetup() {
   
   // Refetch summary when entering the final step
   useEffect(() => {
-    if (currentStep === 4 && sessionId) {
+    if (currentStep === 5 && sessionId) {
       refetchSummary();
     }
   }, [currentStep, sessionId, refetchSummary]);
@@ -118,7 +116,8 @@ export function SessionSetup() {
     { id: 1, name: 'Define Session', icon: Calendar },
     { id: 2, name: 'Schedule Structure', icon: Clock },
     { id: 3, name: 'Upload Data', icon: Upload },
-    { id: 4, name: 'Review & Confirm', icon: CheckCircle },
+    { id: 4, name: 'Review & Edit Data', icon: Database },
+    { id: 5, name: 'Confirm & Process', icon: ShieldCheck },
   ];
 
   const requiredFiles = [
@@ -131,7 +130,7 @@ export function SessionSetup() {
     { key: 'staff', name: 'Staff', description: 'Staff/Invigilator details', icon: Users, required: true },
     { key: 'students', name: 'Students', description: 'Student IDs, names, and programs', icon: Users, required: true },
     { key: 'course_registrations', name: 'Course Registrations', description: 'Student course enrollment data', icon: ClipboardList, required: true },
-    { key: 'course_instructors', name: 'Course Instructors', description: 'Staff teaching assignments for courses', icon: UserCheck, required: true }, // FIX: Changed icon
+    { key: 'course_instructors', name: 'Course Instructors', description: 'Staff teaching assignments for courses', icon: UserCheck, required: true },
     { key: 'staff_unavailability', name: 'Staff Unavailability', description: 'Stated unavailable times for staff (Optional)', icon: CalendarX, required: false },
   ];
 
@@ -140,7 +139,8 @@ export function SessionSetup() {
       case 1: return sessionData.name && sessionData.startDate && sessionData.endDate && durationInDays > 0;
       case 2: return sessionData.timeSlots.every(ts => ts.startTime && ts.endTime);
       case 3: return requiredFiles.filter(f => f.required).every(f => uploadedFiles[f.key]);
-      case 4: return !!summaryData && summaryData.validation_results.errors.length === 0;
+      case 4: return true; // Review step is always navigable
+      case 5: return !!summaryData && summaryData.validation_results.errors.length === 0;
       default: return false;
     }
   };
@@ -148,7 +148,7 @@ export function SessionSetup() {
   const handleNextStep = async () => {
     if (!isStepValid(currentStep)) return;
 
-    if (currentStep === 2) { // After Schedule Structure, create the session
+    if (currentStep === 2) {
       const payload: SessionSetupCreate = {
         session_name: sessionData.name,
         start_date: sessionData.startDate,
@@ -158,12 +158,20 @@ export function SessionSetup() {
       };
       try {
         const result = await createSession(payload);
-        if (result.success && result.data.session_id) {
-          setSessionId(result.data.session_id);
+        const academicSessionId = result.data?.academic_session_id;
+        const seedingSessionId = result.data?.data_seeding_session_id;
+
+        if (result.success && academicSessionId && seedingSessionId) {
+          setSessionId(academicSessionId);
+          setDataSeedingSessionId(seedingSessionId);
           setCurrentStep(3);
+        } else {
+          toast.error("Failed to retrieve session IDs from the server.", {
+            description: "Please check the backend response and database function.",
+          });
         }
-      } catch (error) { /* Error toast is handled by the hook */ }
-    } else if (currentStep < 4) {
+      } catch (error) { /* Error is handled by useCreateSession hook */ }
+    } else if (currentStep < 5) {
       setCurrentStep(currentStep + 1);
     }
   };
@@ -180,9 +188,8 @@ export function SessionSetup() {
     try {
       await uploadFile({ formData, entityType: currentUploadKey, academicSessionId: sessionId });
       setUploadedFiles(prev => ({ ...prev, [currentUploadKey]: { name: file.name, size: file.size } }));
-    } catch (error) { /* Error handled by hook */ }
+    } catch (error) { /* Error is handled by useFileUpload hook */ }
 
-    // Reset file input for next upload
     if (fileInputRef.current) fileInputRef.current.value = "";
     setCurrentUploadKey('');
   };
@@ -196,10 +203,31 @@ export function SessionSetup() {
   const removeTimeSlot = (id: string) => setSessionData(prev => ({ ...prev, timeSlots: prev.timeSlots.filter(slot => slot.id !== id) }));
   const updateTimeSlot = (id: string, updates: Partial<{startTime: string, endTime: string}>) => setSessionData(prev => ({ ...prev, timeSlots: prev.timeSlots.map(slot => slot.id === id ? { ...slot, ...updates } : slot) }));
   
-  const finishSetup = () => {
-    toast.success('Session setup complete! You can now proceed to scheduling.');
-    setCurrentPage('scheduling');
+  // --- FIX START ---
+  // This function is only triggered on the final button click.
+  // It now correctly redirects to the 'constraints' page after a successful call.
+  const finishSetup = async () => {
+    if (!sessionId) return;
+    try {
+      const result = await processData({ sessionId });
+      if (result.success) {
+        toast.success('Session setup complete!', {
+          description: 'Your data has been processed. You will now be redirected to configure the constraints.'
+        });
+        setCurrentPage('constraints'); // Corrected navigation target
+      } else {
+        // This handles cases where the API returns a success:false response
+        toast.error('Processing Failed', {
+          description: result.message || 'An unknown error occurred on the server.'
+        });
+      }
+    } catch (error) { 
+      // This catch block is for network errors or if the hook re-throws the error.
+      // The useProcessStagedData hook already shows a toast on failure.
+      console.error("Failed to process staged data:", error);
+    }
   };
+  // --- FIX END ---
 
   const renderStepContent = () => {
     switch (currentStep) {
@@ -222,13 +250,24 @@ export function SessionSetup() {
             <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".csv" className="hidden" />
             {requiredFiles.map((file) => {
               const Icon = file.icon; const isUploaded = !!uploadedFiles[file.key];
-              return (<div key={file.key} className="flex items-center justify-between p-4 border rounded-lg"><div className="flex items-center space-x-3"><div className={cn("p-2 rounded-full", isUploaded ? "bg-green-100 dark:bg-green-900/50" : "bg-gray-100 dark:bg-gray-900/50")}><Icon className={cn("h-4 w-4", isUploaded ? "text-green-600 dark:text-green-300" : "text-gray-600 dark:text-gray-300")} /></div><div><div className="flex items-center space-x-2"><h4 className="font-medium">{file.name}</h4>{file.required && <Badge variant="destructive">Required</Badge>}{isUploaded && <CheckCircle className="h-4 w-4 text-green-500" />}</div><p className="text-sm text-muted-foreground">{file.description}</p></div></div><Button variant={isUploaded ? "outline" : "default"} onClick={() => triggerFileUpload(file.key)} disabled={isUploading || isUploaded}>{isUploaded ? 'Uploaded' : isUploading && currentUploadKey === file.key ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Upload'}</Button></div>);
+              return (<div key={file.key} className="flex items-center justify-between p-4 border rounded-lg"><div className="flex items-center space-x-3"><div className={cn("p-2 rounded-full", isUploaded ? "bg-green-100 dark:bg-green-900/50" : "bg-gray-100 dark:bg-gray-900/50")}><Icon className={cn("h-4 w-4", isUploaded ? "text-green-600 dark:text-green-300" : "text-gray-600 dark:text-gray-300")} /></div><div><div className="flex items-center space-x-2"><h4 className="font-medium">{file.name}</h4>{file.required && <Badge variant="destructive">Required</Badge>}{isUploaded && <CheckCircle className="h-4 w-4 text-green-500" />}</div><p className="text-sm text-muted-foreground">{file.description}</p></div></div><Button variant={isUploaded ? "outline" : "default"} onClick={() => triggerFileUpload(file.key)} disabled={isUploading}>{isUploaded ? 'Re-upload' : isUploading && currentUploadKey === file.key ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Upload'}</Button></div>);
             })}
         </CardContent></Card>
       );
       case 4: return (
+        <Card>
+          <CardHeader>
+            <CardTitle>Review & Edit Staged Data</CardTitle>
+            <CardDescription>Review the data uploaded from your CSV files. Note: Editing is not yet supported; re-upload a file to correct any issues.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <StagingDataReviewTable sessionId={sessionId} uploadedFiles={uploadedFiles} />
+          </CardContent>
+        </Card>
+      );
+      case 5: return (
         <div className="space-y-6">{isLoadingSummary ? (<div className="flex justify-center items-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>) : !summaryData ? (<Card><CardContent className="py-8 text-center text-muted-foreground">Could not load session summary. Please try again.</CardContent></Card>) : (
-          <><Card><CardHeader><CardTitle>Session Summary</CardTitle><CardDescription>Review your exam session configuration before creation.</CardDescription></CardHeader><CardContent className="space-y-4 pt-6"><div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <><Card><CardHeader><CardTitle>Final Summary</CardTitle><CardDescription>Review your exam session configuration before final processing.</CardDescription></CardHeader><CardContent className="space-y-4 pt-6"><div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div><h4 className="font-medium mb-2">Session Details</h4><div className="space-y-1 text-sm"><div><span className="text-muted-foreground">Name:</span> {summaryData.session_details.name}</div><div><span className="text-muted-foreground">Period:</span> {new Date(summaryData.session_details.start_date).toLocaleDateString()} to {new Date(summaryData.session_details.end_date).toLocaleDateString()}</div><div><span className="text-muted-foreground">Daily Slots:</span> {summaryData.session_details.time_slots?.length || 0}</div></div></div>
             <div><h4 className="font-medium mb-2">Data Summary</h4><div className="space-y-1 text-sm">
                 {Object.entries(summaryData.data_summary).map(([key, value]) => (
@@ -241,7 +280,7 @@ export function SessionSetup() {
           <Card><CardHeader><CardTitle className="flex items-center">{summaryData.validation_results.errors.length === 0 ? <CheckCircle className="h-5 w-5 mr-2 text-green-500" /> : <AlertTriangle className="h-5 w-5 mr-2 text-red-500" />}Validation Results</CardTitle></CardHeader><CardContent className="space-y-4">
               {summaryData.validation_results.errors.length > 0 && (<Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription><div className="font-medium mb-2">Errors found:</div><ul className="list-disc list-inside space-y-1">{summaryData.validation_results.errors.map((error, index) => (<li key={index}>{error}</li>))}</ul></AlertDescription></Alert>)}
               {summaryData.validation_results.warnings.length > 0 && (<Alert><AlertTriangle className="h-4 w-4" /><AlertDescription><div className="font-medium mb-2">Warnings:</div><ul className="list-disc list-inside space-y-1">{summaryData.validation_results.warnings.map((warning, index) => (<li key={index}>{warning}</li>))}</ul></AlertDescription></Alert>)}
-              {summaryData.validation_results.errors.length === 0 && (<Alert><CheckCircle className="h-4 w-4" /><AlertDescription>All validation checks passed. Your session is ready.</AlertDescription></Alert>)}
+              {summaryData.validation_results.errors.length === 0 && (<Alert><CheckCircle className="h-4 w-4" /><AlertDescription>All validation checks passed. Your session is ready for final processing.</AlertDescription></Alert>)}
           </CardContent></Card></>
         )}</div>
       );
@@ -254,14 +293,30 @@ export function SessionSetup() {
       <div className="flex items-center justify-between"><div><h1 className="text-2xl font-semibold">Exam Session Setup Wizard</h1><p className="text-muted-foreground">Configure a new academic exam session</p></div><div className="flex items-center space-x-2"><span className="text-sm text-muted-foreground">Step {currentStep} of {steps.length}</span><Progress value={(currentStep / steps.length) * 100} className="w-24" /></div></div>
       <Card><CardContent className="p-6">
         <div className="flex items-center justify-between">{steps.map((step, index) => {
-          const Icon = step.icon; const isActive = currentStep === step.id; const isCompleted = sessionId ? step.id < 3 : currentStep > step.id;
+          const Icon = step.icon; const isActive = currentStep === step.id; const isCompleted = currentStep > step.id;
           return (<React.Fragment key={step.id}><div className="flex flex-col items-center space-y-2 text-center"><div className={cn("w-10 h-10 rounded-full flex items-center justify-center border-2", isActive && "border-primary text-primary", isCompleted && "bg-primary border-primary text-primary-foreground", !isActive && !isCompleted && "border-muted-foreground text-muted-foreground")}><Icon className="h-5 w-5" /></div><div><div className={cn("text-sm font-medium", isActive && "text-primary")}>{step.name}</div></div></div>{index < steps.length - 1 && <div className={cn("flex-1 h-0.5 mx-4", isCompleted ? "bg-primary" : "bg-muted")} />}</React.Fragment>);
         })}</div>
       </CardContent></Card>
       
       <div className="min-h-[30rem]">{renderStepContent()}</div>
 
-      <div className="flex items-center justify-between"><Button variant="outline" onClick={prevStep} disabled={currentStep === 1 || isCreatingSession}><ChevronLeft className="h-4 w-4 mr-2" />Previous</Button><div className="flex space-x-3">{currentStep < 4 && (<Button onClick={handleNextStep} disabled={!isStepValid(currentStep) || isCreatingSession}>{isCreatingSession ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Creating...</> : <>Next<ChevronRight className="h-4 w-4 ml-2" /></>}</Button>)}{currentStep === 4 && (<Button onClick={finishSetup} disabled={!isStepValid(4)}><Zap className="h-4 w-4 mr-2" />Finish Setup</Button>)}</div></div>
+      <div className="flex items-center justify-between">
+        <Button variant="outline" onClick={prevStep} disabled={currentStep === 1 || isCreatingSession || isProcessingData}>
+            <ChevronLeft className="h-4 w-4 mr-2" />Previous
+        </Button>
+        <div className="flex space-x-3">
+          {currentStep < 5 && (
+              <Button onClick={handleNextStep} disabled={!isStepValid(currentStep) || isCreatingSession}>
+                  {isCreatingSession ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Creating...</> : <>Next<ChevronRight className="h-4 w-4 ml-2" /></>}
+              </Button>
+          )}
+          {currentStep === 5 && (
+              <Button onClick={finishSetup} disabled={!isStepValid(5) || isProcessingData}>
+                  {isProcessingData ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Processing...</> : <><Zap className="h-4 w-4 mr-2" />Process & Finish</>}
+              </Button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

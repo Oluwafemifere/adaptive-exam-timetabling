@@ -63,8 +63,7 @@ class DailyWorkloadBalanceConstraint(CPSATBaseConstraint):
             )
             return
 
-        total_days = len(day_slot_groupings)
-
+        # Link daily_exam_count_vars to the sum of exams scheduled on each day
         for day_key, slot_ids in day_slot_groupings.items():
             if day_key in self.daily_exam_count_vars:
                 daily_exam_terms = [
@@ -78,14 +77,6 @@ class DailyWorkloadBalanceConstraint(CPSATBaseConstraint):
                         self.daily_exam_count_vars[day_key] == sum(daily_exam_terms)
                     )
                     constraints_added += 1
-
-        if self.avg_exams_per_day_var is not None and total_days > 0:
-            daily_counts = list(self.daily_exam_count_vars.values())
-            if daily_counts:
-                self.model.Add(
-                    self.avg_exams_per_day_var * total_days == sum(daily_counts)
-                )
-                constraints_added += 1
 
         if self.avg_exams_per_day_var is not None:
             for day_key in day_slot_groupings:
@@ -109,5 +100,5 @@ class DailyWorkloadBalanceConstraint(CPSATBaseConstraint):
         )
         self.constraint_count = constraints_added
         logger.info(
-            f"{self.constraint_id}: Added {constraints_added} daily workload balance constraints"
+            f"{self.constraint_id}: Added {constraints_added} daily workload balance constraints."
         )

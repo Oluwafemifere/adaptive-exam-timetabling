@@ -1,4 +1,4 @@
-# app/api/v1/routes/websockets.py
+# backend/app/api/v1/routes/websockets.py
 from fastapi import APIRouter, WebSocket, Depends, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
@@ -7,7 +7,8 @@ from ....api.deps import db_session, get_current_user_for_websocket
 from ....models.users import User
 from ....services.notification import (
     subscribe_job,
-)  # async generator that yields job updates
+    connection_manager,  # --- FIX: Import the connection_manager ---
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -20,32 +21,25 @@ async def websocket_job_updates(
     db: AsyncSession = Depends(db_session),
     # user: User = Depends(get_current_user_for_websocket), # <-- REMOVED AUTH DEPENDENCY
 ):
-    # The user check is no longer needed as the dependency is removed.
-    # if user is None:
-    #     ...
-
-    # --- DEVELOPMENT ONLY: Define a placeholder user ID ---
-    # This is needed because subscribe_job expects a user ID.
     placeholder_user_id = "00000000-0000-0000-0000-000000000000"
     logger.warning(
         f"WebSocket for job {job_id} connected WITHOUT AUTHENTICATION. "
         f"Using placeholder user: {placeholder_user_id}"
     )
 
-    await websocket.accept()
+    # --- FIX: Register the connection using the manager ---
+    await connection_manager.connect_job_updates(websocket, job_id, placeholder_user_id)
+
     try:
-        # Use the placeholder ID for the subscription
+        # The user check is no longer needed as the dependency is removed.
         async for update in subscribe_job(job_id, placeholder_user_id, db):
             await websocket.send_json(update)
     except WebSocketDisconnect:
         # client disconnected normally
         logger.info(f"Client for job {job_id} disconnected.")
-        return
     finally:
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        # --- FIX: Use the manager to disconnect and clean up ---
+        await connection_manager.disconnect(websocket)
 
 
 @router.websocket("/jobs/{job_id}/debug")
@@ -59,7 +53,11 @@ async def websocket_job_updates_debug(
     This has NO user authentication.
     """
     logger.info(f"DEBUG: Attempting to connect to UNSECURED endpoint for job {job_id}")
-    await websocket.accept()
+
+    placeholder_user_id = "00000000-0000-0000-0000-000000000000"
+
+    # --- FIX: Register the connection with the ConnectionManager ---
+    await connection_manager.connect_job_updates(websocket, job_id, placeholder_user_id)
     logger.info(f"DEBUG: UNSECURED WebSocket connection ACCEPTED for job {job_id}")
 
     try:
@@ -71,9 +69,6 @@ async def websocket_job_updates_debug(
             }
         )
 
-        # Now, we use the subscription logic with a placeholder user.
-        # Ensure your 'user_can_access_job' function is still modified to always return True.
-        placeholder_user_id = "00000000-0000-0000-0000-000000000000"
         logger.warning(
             f"DEBUG: Starting job subscription for {job_id} with placeholder user."
         )
@@ -91,4 +86,5 @@ async def websocket_job_updates_debug(
         )
     finally:
         logger.info(f"DEBUG: Closing unsecured connection for job {job_id}")
-        await websocket.close()
+        # --- FIX: Use the manager to disconnect and clean up ---
+        await connection_manager.disconnect(websocket)

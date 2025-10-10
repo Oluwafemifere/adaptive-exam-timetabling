@@ -292,7 +292,6 @@ async def subscribe_job(
                             f"Job {job_id} reached terminal state '{status.get('status')}' via polling. "
                             f"Closing WebSocket subscription."
                         )
-                        break
 
     except Exception as e:
         logger.error(f"Error in job subscription for {job_id}: {e}")

@@ -191,7 +191,7 @@ async def main():
     parser.add_argument(
         "--magnitude",
         type=int,
-        choices=[1, 2, 3, 4, 5],
+        choices=[0, 1, 2, 3, 4, 5],
         default=3,
         help="Set problem size magnitude level (1=Basic/100 students, 2=Small/500, 3=Medium/2000, 4=Large/5000, 5=Enterprise/10000)",
     )

@@ -44,3 +44,15 @@ class TimetableJobRead(TimetableJobBase):
     soft_constraints_violations: Optional[float] = None
     room_utilization_percentage: Optional[float] = None
     version_ids: List[UUID] = Field(default_factory=list)
+
+
+class TimetableJobSummaryRead(BaseModel):
+    """Lean schema for listing successful jobs for a session."""
+
+    model_config = MODEL_CONFIG
+
+    id: UUID
+    created_at: datetime
+    status: str
+    version_id: Optional[UUID] = None
+    is_published: Optional[bool] = False

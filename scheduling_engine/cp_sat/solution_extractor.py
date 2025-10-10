@@ -14,6 +14,12 @@ from scheduling_engine.core.solution import (
 )
 from datetime import date, datetime
 
+# --- START OF MODIFICATION ---
+from backend.app.utils.celery_task_utils import task_progress_tracker
+
+# --- END OF MODIFICATION ---
+
+
 if TYPE_CHECKING:
     from scheduling_engine.core.problem_model import ExamSchedulingProblem, Exam
 
@@ -32,6 +38,9 @@ class SolutionExtractor:
         self.y_vars = shared_vars.y_vars
         self.z_vars = shared_vars.z_vars
         self.w_vars = shared_vars.w_vars
+        # --- START OF MODIFICATION ---
+        self.task_context: Optional[Any] = None
+        # --- END OF MODIFICATION ---
 
     def extract_phase1_solution(self) -> Dict[UUID, Tuple[UUID, date]]:
         """
@@ -51,7 +60,13 @@ class SolutionExtractor:
                     logger.error(f"Could not find day for slot {slot_id}!")
         return exam_slot_map
 
-    def extract_full_solution(
+    @task_progress_tracker(
+        start_progress=80,
+        end_progress=85,
+        phase="extracting_solution",
+        message="Extracting final assignments...",
+    )
+    async def extract_full_solution(
         self, final_solution: TimetableSolution, phase1_results: Dict
     ):
         """

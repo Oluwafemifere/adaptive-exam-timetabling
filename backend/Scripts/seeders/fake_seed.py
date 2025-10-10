@@ -122,6 +122,17 @@ class ComprehensiveFakeSeeder:
 
     def _set_magnitude_level(self, level: int):
         MAGNITUDE_LEVELS = {
+            0: {
+                "faculties": 1,
+                "departments": 1,
+                "programmes": 1,
+                "courses": 2,
+                "students": 50,
+                "staff": 3,
+                "buildings": 1,
+                "rooms": 2,
+                "academic_sessions": 1,
+            },
             1: {
                 "faculties": 3,
                 "departments": 8,
@@ -660,16 +671,16 @@ class ComprehensiveFakeSeeder:
             std_config, strict_config, flex_config = configs[0], configs[1], configs[2]
 
             realistic_weights = {
-                "CARRYOVER_STUDENT_CONFLICT": 1000.0,
-                "ROOM_FIT_PENALTY": 1000.0,
-                "ROOM_DURATION_HOMOGENEITY": 1000.0,
-                "MINIMUM_GAP": 100.0,
-                "INSTRUCTOR_CONFLICT": 90.0,
-                "PREFERENCE_SLOTS": 80.0,
+                "CARRYOVER_STUDENT_CONFLICT": 950.0,
+                "MAX_EXAMS_PER_STUDENT_PER_DAY": 800.0,
+                "MINIMUM_GAP": 250.0,
+                "INSTRUCTOR_CONFLICT": 150.0,
+                "PREFERENCE_SLOTS": 40.0,
                 "INVIGILATOR_LOAD_BALANCE": 70.0,
                 "DAILY_WORKLOAD_BALANCE": 60.0,
-                "OVERBOOKING_PENALTY": 50.0,
-                "MAX_EXAMS_PER_STUDENT_PER_DAY": 1000,
+                "OVERBOOKING_PENALTY": 20.0,
+                "ROOM_DURATION_HOMOGENEITY": 10.0,
+                "ROOM_FIT_PENALTY": 1.0,
             }
 
             all_settings = []
@@ -782,10 +793,11 @@ class ComprehensiveFakeSeeder:
             self.seeded_data["departments"] = len(depts)
             self.seeded_data["programmes"] = len(progs)
 
-    # --- START OF FIX 1: Make Problem Feasible ---
     async def _seed_academic_sessions(self):
         async with db_manager.get_db_transaction() as session:
-            logger.info("  - Seeding academic sessions (3-week duration)...")
+            logger.info(
+                "  - Seeding academic sessions with extended 3-week duration..."
+            )
             template_ids = (
                 (await session.execute(select(TimeSlotTemplate.id))).scalars().all()
             )
@@ -815,8 +827,6 @@ class ComprehensiveFakeSeeder:
                 )
             session.add_all(sessions)
             self.seeded_data["academic_sessions"] = len(sessions)
-
-    # --- END OF FIX 1 ---
 
     async def _seed_courses(self):
         async with db_manager.get_db_transaction() as session:
@@ -1022,23 +1032,17 @@ class ComprehensiveFakeSeeder:
             self.seeded_data["student_enrollments"] = len(enrollments)
 
     async def _seed_course_registrations_and_exams(self):
-        """
-        FIXED: Seeds course registrations with a reduced, more realistic course load per student
-        to prevent generating mathematically infeasible problems. Also creates corresponding exams.
-        """
         async with db_manager.get_db_transaction() as session:
-            logger.info(
-                "  - Seeding course registrations (normal & carryover) and exams..."
-            )
+            logger.info("  - Seeding REALISTIC course registrations and exams...")
             active_session = await session.scalar(
                 select(AcademicSession).where(AcademicSession.is_active == True)
             )
             if not active_session:
-                logger.warning(
-                    "No active academic session found. Skipping course registrations and exams."
-                )
+                logger.warning("No active session, skipping registrations.")
                 return
 
+            # 1. Pre-fetch and group all necessary data
+            all_courses = (await session.execute(select(Course))).scalars().all()
             enrollments = (
                 (
                     await session.execute(
@@ -1054,66 +1058,124 @@ class ComprehensiveFakeSeeder:
                 .scalars()
                 .all()
             )
-            courses = (await session.execute(select(Course))).scalars().all()
-            if not enrollments or not courses:
-                logger.warning(
-                    "No enrollments or courses found. Skipping course registrations and exams."
-                )
+
+            if not all_courses or not enrollments:
+                logger.warning("Missing courses or enrollments, skipping.")
                 return
 
-            registrations, course_student_counts = [], defaultdict(int)
-            for enr in enrollments:
-                eligible_courses = [
-                    c
-                    for c in courses
-                    if c.department_id == enr.student.programme.department_id
-                    and c.course_level <= enr.level
-                ]
+            # Group courses by department and level for efficient lookup
+            courses_by_dept_level = defaultdict(list)
+            for c in all_courses:
+                courses_by_dept_level[(c.department_id, c.course_level)].append(c)
 
-                # --- START OF FIX: Reduce Course Load ---
-                # Reduced the number of courses from a range of 5-10 to 4-7. This is the
-                # primary fix to reduce student conflict density and make the problem feasible.
-                num_courses_to_register = random.randint(4, 7)
+            # Group students by programme and level
+            students_by_prog_level = defaultdict(list)
+            for enr in enrollments:
+                students_by_prog_level[(enr.student.programme_id, enr.level)].append(
+                    enr.student_id
+                )
+
+            registrations = []
+            course_student_counts = defaultdict(int)
+
+            # 2. Iterate through student groups (cohorts) to create structured registrations
+            for (prog_id, level), student_ids in students_by_prog_level.items():
+                prog = await session.get(Programme, prog_id)
+                if not prog:
+                    continue
+
+                dept_id = prog.department_id
+
+                # Define core, elective, and carryover courses for the cohort
+                core_courses = courses_by_dept_level.get((dept_id, level), [])
+                elective_pool = courses_by_dept_level.get(
+                    (dept_id, level + 100), []
+                )  # Electives from a higher level
+                carryover_pool = courses_by_dept_level.get(
+                    (dept_id, level - 100), []
+                )  # Carryovers from a lower level
+
+                num_core = min(len(core_courses), random.choice([4, 4, 5]))
+                num_electives = min(len(elective_pool), random.choice([1, 2, 2]))
+
+                selected_core = random.sample(core_courses, num_core)
+
+                # --- START OF FIX ---
+                # Electives are now selected ONCE for the entire cohort to reduce variability.
+                selected_electives = []
+                if elective_pool:
+                    selected_electives = random.sample(elective_pool, num_electives)
                 # --- END OF FIX ---
 
-                for course in random.sample(
-                    eligible_courses,
-                    min(num_courses_to_register, len(eligible_courses)),
-                ):
-                    reg_type = "carryover" if random.random() < 0.1 else "normal"
-                    registrations.append(
-                        CourseRegistration(
-                            student_id=enr.student_id,
-                            course_id=course.id,
-                            session_id=active_session.id,
-                            registration_type=reg_type,
+                for student_id in student_ids:
+                    # Register for all core courses
+                    for course in selected_core:
+                        registrations.append(
+                            CourseRegistration(
+                                student_id=student_id,
+                                course_id=course.id,
+                                session_id=active_session.id,
+                                registration_type="normal",
+                            )
                         )
-                    )
-                    course_student_counts[course.id] += 1
+                        course_student_counts[course.id] += 1
+
+                    # --- START OF FIX ---
+                    # Register students for the pre-selected, SHARED elective courses.
+                    for course in selected_electives:
+                        registrations.append(
+                            CourseRegistration(
+                                student_id=student_id,
+                                course_id=course.id,
+                                session_id=active_session.id,
+                                registration_type="normal",
+                            )
+                        )
+                        course_student_counts[course.id] += 1
+                    # --- END OF FIX ---
+
+                    # Add a chance for a carryover course (this remains individual)
+                    if carryover_pool and random.random() < 0.15:
+                        course = random.choice(carryover_pool)
+                        registrations.append(
+                            CourseRegistration(
+                                student_id=student_id,
+                                course_id=course.id,
+                                session_id=active_session.id,
+                                registration_type="carryover",
+                            )
+                        )
+                        course_student_counts[course.id] += 1
 
             session.add_all(registrations)
             self.seeded_data["course_registrations"] = len(registrations)
+            logger.info(
+                f"  - Created {len(registrations)} structured course registrations."
+            )
 
-            exams = [
-                Exam(
-                    course_id=c.id,
-                    session_id=active_session.id,
-                    duration_minutes=c.exam_duration_minutes,
-                    expected_students=count,
-                    status="pending",
-                    is_practical=c.is_practical,
-                    morning_only=False,
-                    requires_projector=random.random() < 0.2,
-                    requires_special_arrangements=False,
-                    is_common=count > 150,
-                )
-                for c_id, count in course_student_counts.items()
-                if count > 0
-                for c in courses
-                if c.id == c_id
-            ]
+            # 3. Create exams based on the final registration counts
+            exams = []
+            for course_id, count in course_student_counts.items():
+                course = next((c for c in all_courses if c.id == course_id), None)
+                if course and count > 0:
+                    exams.append(
+                        Exam(
+                            course_id=course.id,
+                            session_id=active_session.id,
+                            duration_minutes=course.exam_duration_minutes or 120,
+                            expected_students=count,
+                            status="pending",
+                            is_practical=course.is_practical or False,
+                            morning_only=course.morning_only or False,
+                            requires_projector=random.random() < 0.2,
+                            requires_special_arrangements=False,
+                            is_common=count > 150,
+                        )
+                    )
+
             session.add_all(exams)
             self.seeded_data["exams"] = len(exams)
+            logger.info(f"  - Created {len(exams)} exams based on registration counts.")
 
     async def _seed_exam_details(self):
         async with db_manager.get_db_transaction() as session:
@@ -1306,7 +1368,6 @@ class ComprehensiveFakeSeeder:
             session.add_all(dependencies)
             self.seeded_data["version_dependencies"] = len(dependencies)
 
-    # --- START OF FIX 3: Correct Session Handling for Seeding Assignments ---
     async def _seed_timetable_assignments_and_invigilators(self):
         async with db_manager.get_db_transaction() as session:
             logger.info(
@@ -1481,8 +1542,6 @@ class ComprehensiveFakeSeeder:
             self.seeded_data["timetable_assignments"] = len(total_assignments_created)
             self.seeded_data["exam_invigilators"] = len(total_invigilators_created)
 
-    # --- END OF FIX 3 ---
-
     async def _seed_timetable_support_entities(self):
         async with db_manager.get_db_transaction() as session:
             logger.info(
@@ -1531,19 +1590,6 @@ class ComprehensiveFakeSeeder:
                 ]
                 session.add_all(edits)
                 self.seeded_data["timetable_edits"] = len(edits)
-
-            if scenario_ids and exam_ids and user_ids:
-                locks = [
-                    TimetableLock(
-                        scenario_id=random.choice(scenario_ids),
-                        exam_id=random.choice(exam_ids),
-                        locked_by=random.choice(user_ids),
-                        is_active=True,
-                    )
-                    for _ in range(SCALE_LIMITS["timetable_locks"])
-                ]
-                session.add_all(locks)
-                self.seeded_data["timetable_locks"] = len(locks)
 
             if assignments:
                 job_exam_days_set = {

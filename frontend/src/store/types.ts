@@ -106,6 +106,7 @@ canPause: boolean;
 canResume: boolean;
 canCancel: boolean;
 metrics: Partial<JobStatus>;
+logs: string[];
 }
 
 export interface UploadStatus {
@@ -319,24 +320,20 @@ assignment_change_requests: AdminChangeRequest[];
 }
 export interface ConstraintParameter {
   key: string;
-  // FIX: The type is not always available from the backend response, 
-  // making it optional or ensuring it's always present is better. Let's make it optional for safety.
   type?: string; 
   value: any;
 }
 
 export interface Constraint {
-  // FIX: Changed 'id' to 'rule_id' to match the API response key
   rule_id: string; 
-  code: string; // Add the 'code' field which is present in the response
+  code: string;
   name: string;
   description: string;
   type: 'hard' | 'soft';
-  // FIX: Changed 'category_id' to 'category'
   category: string; 
   is_enabled: boolean;
   weight: number;
-  parameters: Record<string, any>; // The API sends a simple object, not an array of Parameter objects
+  parameters: Record<string, any>;
 }
 
 export interface ConstraintCategory {
@@ -345,17 +342,79 @@ name: string;
 constraints: Constraint[];
 }
 
-export interface SystemConfiguration {
-id: string;
-name: string;
-description: string | null;
-is_default: boolean;
+// --- REVISED AND NEW CONFIGURATION TYPES ---
+
+/**
+ * Represents a single configurable rule as received from the API for display.
+ * Corresponds to the `RuleSettingRead` Pydantic model.
+ */
+export interface RuleSettingRead {
+  rule_id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  type: 'hard' | 'soft';
+  category: string;
+  is_enabled: boolean;
+  weight: number;
+  parameters: Record<string, any>;
 }
 
-export interface SystemConfigurationDetails extends SystemConfiguration {
+/**
+ * Represents the detailed structure of a system configuration, including all its rules.
+ * Corresponds to the `SystemConfigDetails` Pydantic model.
+ */
+export interface SystemConfigurationDetails {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
   solver_parameters: Record<string, any>;
-  // FIX: Renamed from 'constraints' to 'rules' to match the JSON response from the API
-  rules: Constraint[]; 
+  constraint_config_id: string;
+  rules: RuleSettingRead[];
+}
+
+/**
+ * Represents the lean structure of a system configuration for listing.
+ * Corresponds to the `SystemConfigListItem` Pydantic model.
+ */
+export interface SystemConfiguration {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
+
+/**
+ * Represents the payload for saving a rule's settings.
+ * Corresponds to the `RuleSetting` Pydantic model.
+ */
+export interface RuleSetting {
+  rule_id: string;
+  is_enabled: boolean;
+  weight: number;
+  parameters: Record<string, any>;
+}
+
+/**
+ * Represents the complete payload for creating or updating a system configuration.
+ * Corresponds to the `SystemConfigSave` Pydantic model.
+ */
+export interface SystemConfigSavePayload {
+  id?: string;
+  name: string;
+  description?: string | null;
+  is_default: boolean;
+  solver_parameters: Record<string, any>;
+  rules: RuleSetting[];
+}
+
+export interface JobSummary {
+  id: string;
+  created_at: string;
+  status: string;
+  version_id: string | null;
+  is_published: boolean;
 }
 
 export interface AppState {
@@ -387,9 +446,11 @@ dashboardKpis: DashboardKpis | null;
 conflictHotspots: ConflictHotspot[];
 topBottlenecks: TopBottleneck[];
 recentActivity: HistoryEntry[];
-configurations: SystemConfiguration[];
-activeConfigurationId: string | null;
-activeConfigurationDetails: SystemConfigurationDetails | null;
+sessionJobs: JobSummary[];
+// Configuration State
+  configurations: SystemConfiguration[]; // For the dropdown list
+  activeConfigurationId: string | null;
+  activeConfigurationDetails: SystemConfigurationDetails | null;
 
 setCurrentPage: (page: string) => void;
 setAuthenticated: (isAuth: boolean, user?: User | null) => void;
@@ -397,6 +458,8 @@ setTimetable: (timetableData: TimetableResponseData) => void;
 setConflicts: (conflicts: Conflict[]) => void;
 setSystemStatus: (status: Partial<SystemStatus>) => void;
 setSchedulingStatus: (status: Partial<SchedulingStatus>) => void;
+addSchedulingLog: (log: string) => void;
+clearSchedulingLogs: () => void;
 setUploadStatus: (status: Partial<UploadStatus>) => void;
 updateSettings: (settings: Partial<AppSettings>) => void;
 setStudentExams: (exams: StudentExam[]) => void;
@@ -412,16 +475,17 @@ clearNotifications: () => void;
 addHistoryEntry: (entry: Omit<HistoryEntry, 'id' | 'created_at'>) => void;
 setHistory: (history: HistoryEntry[]) => void;
 startSchedulingJob: (configuration_id: string) => Promise<void>;
+fetchAndSetJobResult: (jobId: string) => Promise<void>;
+fetchSessionJobs: (sessionId: string) => Promise<void>;
 cancelSchedulingJob: (jobId: string) => Promise<void>;
-pollJobStatus: (jobId: string) => void;
 initializeApp: () => Promise<void>;
 setAllReports: (data: AllReportsResponse) => void;
 setConfigurations: (configs: SystemConfiguration[]) => void;
-fetchAndSetActiveConfiguration: (configId: string) => Promise<void>;
-updateAndSaveActiveConfiguration: (payload: { rules: Constraint[] }) => Promise<void>;
+  fetchAndSetActiveConfiguration: (configId: string) => Promise<void>;
+  saveActiveConfiguration: (updatedConfig: SystemConfigurationDetails) => Promise<void>;
 // NEW DASHBOARD ACTIONS
 setDashboardKpis: (kpis: DashboardKpis) => void;
 setConflictHotspots: (hotspots: ConflictHotspot[]) => void;
 setTopBottlenecks: (bottlenecks: TopBottleneck[]) => void;
-setRecentActivity: (activity: HistoryEntry[]) => void;
+setRecentActivity: (activity: HistoryEntry[]) => void;  
 }

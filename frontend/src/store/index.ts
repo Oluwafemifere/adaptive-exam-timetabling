@@ -17,11 +17,14 @@ import {
   ConflictHotspot,
   TopBottleneck,
   SystemConfiguration,
-  Constraint,
   JobStatus,
   SystemConfigurationDetails,
+  JobSummary,
+  SystemConfigSavePayload,
+  RuleSettingRead,
+  RuleSetting,
 } from './types';
-import { api, SystemConfigRulesUpdate } from '../services/api';
+import { api } from '../services/api';
 import { toast } from 'sonner';
 
 export const useAppStore = create<AppState>()((set, get) => ({
@@ -54,6 +57,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     canResume: false,
     canCancel: false,
     metrics: {},
+    logs: [],
   },
   uploadStatus: {
     isUploading: false,
@@ -72,6 +76,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   dashboardKpis: null,
   conflictHotspots: [],
   topBottlenecks: [],
+  sessionJobs: [],
   recentActivity: [],
   configurations: [],
   activeConfigurationId: null,
@@ -87,48 +92,54 @@ export const useAppStore = create<AppState>()((set, get) => ({
   fetchAndSetActiveConfiguration: async (configId: string) => {
     try {
       set({ activeConfigurationId: configId, activeConfigurationDetails: null });
-      const response = await api.getConfigurationDetails(configId);
-      const details = response.data as any; // Treat as any to inspect it first
+      const response = await api.getSystemConfigurationDetails(configId);
+      const details = response.data;
 
-      // --- START OF FIX ---
-      // The API is inconsistent, sometimes sending 'constraints', but the app uses 'rules'.
-      // This normalizes the data structure before setting it in the store.
-      if (details && details.constraints && !details.rules) {
-        details.rules = details.constraints;
-        delete details.constraints;
+      if (!details || !details.rules) {
+        throw new Error("Invalid configuration data received from server.");
       }
-      // --- END OF FIX ---
-      set({ activeConfigurationDetails: details as SystemConfigurationDetails });
+      
+      set({ activeConfigurationDetails: details });
     } catch (error) {
       toast.error('Failed to load configuration details.');
+      console.error(error);
       set({ activeConfigurationDetails: null });
     }
   },
-
-  updateAndSaveActiveConfiguration: async (payload: { constraints: Constraint[] }) => {
+  
+  saveActiveConfiguration: async (updatedConfig: SystemConfigurationDetails) => {
     const activeId = get().activeConfigurationId;
-    if (!activeId) {
-      toast.error("No active configuration selected.");
+    if (!activeId || !updatedConfig) {
+      toast.error("No active configuration selected or data is missing.");
       return;
     }
+    
     try {
-      // Transform the frontend state shape back to the payload the API expects for an update
-      const apiPayload: SystemConfigRulesUpdate = {
-        constraints: payload.constraints.map(c => ({
-          rule_id: c.rule_id, 
-          is_enabled: c.is_enabled,
-          weight: c.weight,
-          parameter_overrides: c.parameters || {},
+      const payload: SystemConfigSavePayload = {
+        id: updatedConfig.id,
+        name: updatedConfig.name,
+        description: updatedConfig.description,
+        is_default: updatedConfig.is_default,
+        solver_parameters: updatedConfig.solver_parameters,
+        rules: updatedConfig.rules.map((rule: RuleSettingRead): RuleSetting => ({
+          rule_id: rule.rule_id,
+          is_enabled: rule.is_enabled,
+          weight: rule.weight,
+          parameters: rule.parameters,
         })),
       };
 
-      await api.updateConfigurationRules(activeId, apiPayload);
-      toast.success("Configuration saved successfully!");
-      // Refetch to get the source of truth from the server
-      await get().fetchAndSetActiveConfiguration(activeId); 
+      await api.saveSystemConfiguration(payload);
+      toast.success(`Configuration "${payload.name}" saved successfully!`);
+
+      await get().fetchAndSetActiveConfiguration(activeId);
+      
+      const listResponse = await api.getSystemConfigurationList();
+      set({ configurations: listResponse.data || [] });
+
     } catch (error) {
       toast.error("Failed to save configuration.");
-      // On failure, it's good practice to refetch to discard user's broken changes
+      console.error(error);
       await get().fetchAndSetActiveConfiguration(activeId); 
     }
   },
@@ -138,6 +149,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
       ...entry,
       id: `hist-${Date.now()}`,
       created_at: new Date().toISOString(),
+      user_email: get().user?.email || 'unknown',
+      new_values: entry.new_values || {},
+      old_values: entry.old_values || {},
     };
     set((state) => ({ history: [newEntry, ...state.history] }));
   },
@@ -192,6 +206,27 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set({ exams: mappedExams, currentJobId: jobId });
   },
 
+  fetchSessionJobs: async (sessionId) => {
+    try {
+      const response = await api.getSuccessfulJobsForSession(sessionId);
+      set({ sessionJobs: response.data || [] });
+    } catch (error) {
+      console.error("Failed to fetch session jobs:", error);
+      toast.error("Could not load timetable versions for this session.");
+    }
+  },
+
+  fetchAndSetJobResult: async (jobId) => {
+    try {
+      const response = await api.getJobResult(jobId);
+      if (response.data.success) {
+        get().setTimetable({ timetable: response.data.data, job_id: jobId, session_id: get().activeSessionId! });
+      }
+    } catch (error) {
+      toast.error("Failed to load data for the selected timetable version.");
+    }
+  },
+
   setConflicts: (conflicts: Conflict[]) => set({ conflicts }),
   setStudentExams: (exams: StudentExam[]) => set({ studentExams: exams }),
   setConflictReports: (reports: ConflictReport[]) => set({ conflictReports: reports }),
@@ -202,16 +237,33 @@ export const useAppStore = create<AppState>()((set, get) => ({
   }),
 
   setSystemStatus: (status) => set((state) => ({ systemStatus: { ...state.systemStatus, ...status } })),
-  setSchedulingStatus: (status) => set((state) => ({ schedulingStatus: { ...state.schedulingStatus, ...status } })),
+  setSchedulingStatus: (status) => set((state) => ({ 
+    schedulingStatus: { 
+      ...state.schedulingStatus, 
+      ...status,
+      logs: status.logs || state.schedulingStatus.logs,
+    } 
+  })),
+  addSchedulingLog: (log: string) => set((state) => ({
+    schedulingStatus: {
+      ...state.schedulingStatus,
+      logs: [...state.schedulingStatus.logs.slice(-100), log],
+    }
+  })),
+  clearSchedulingLogs: () => set((state) => ({
+    schedulingStatus: {
+      ...state.schedulingStatus,
+      logs: [],
+    }
+  })),
   setUploadStatus: (status) => set((state) => ({ uploadStatus: { ...state.uploadStatus, ...status } })),
   updateSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
 
-  // Conflict reports and change requests
   addConflictReport: (report) => {
     const newReport: ConflictReport = {
       ...report,
       id: `cr-${Date.now()}`,
-      status: 'pending', // Corrected from 'open'
+      status: 'pending',
       submittedAt: new Date().toISOString(),
     };
     set((state) => ({
@@ -268,6 +320,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   // Scheduling controls
   startSchedulingJob: async (configuration_id) => {
+    get().clearSchedulingLogs();
     set((state) => ({
       schedulingStatus: { ...state.schedulingStatus, isRunning: true, phase: 'initiating', progress: 0 }
     }));
@@ -287,7 +340,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
         schedulingStatus: { ...state.schedulingStatus, jobId: job_id, phase: 'queued', isRunning: true }
       }));
       toast.success("Scheduling job has been started.");
-      get().pollJobStatus(job_id);
     } catch (error: any) {
       const errorMessage = error?.response?.data?.detail || error?.message || "Failed to start scheduling job.";
       toast.error(errorMessage);
@@ -298,12 +350,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   cancelSchedulingJob: async (jobId) => {
-    const { pollJobStatus } = get();
-    if (typeof (pollJobStatus as any).stop === 'function') {
-      (pollJobStatus as any).stop(); // Stop polling if the poller supports it
-    }
     try {
-      await api.cancelScheduling(jobId); // Corrected API call
+      await api.cancelScheduling(jobId);
       set((state) => ({
         schedulingStatus: { ...state.schedulingStatus, isRunning: false, phase: 'cancelled', jobId: null }
       }));
@@ -313,69 +361,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
     }
   },
 
-  pollJobStatus: (() => {
-    let intervalId: number | null = null;
-
-    const poller = (jobId: string) => {
-      if (intervalId) clearInterval(intervalId);
-
-      intervalId = window.setInterval(async () => {
-        try {
-          const statusResp = await api.getJobStatus(jobId);
-          const status: JobStatus = statusResp.data;
-
-          set((state) => ({
-            schedulingStatus: {
-              ...state.schedulingStatus,
-              phase: status.solver_phase || status.status,
-              progress: status.progress_percentage || state.schedulingStatus.progress,
-              metrics: { ...status },
-            }
-          }));
-
-          const isFinished = status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled';
-          if (isFinished) {
-            if (intervalId) clearInterval(intervalId);
-            intervalId = null;
-
-            set((state) => ({ schedulingStatus: { ...state.schedulingStatus, isRunning: false, jobId: null, phase: status.status } }));
-
-            if (status.status === 'completed') {
-              toast.success('Scheduling job completed! Reloading timetable...');
-              try {
-                // Fetch the new timetable instead of non-existent job results
-                const timetableResponse = await api.getLatestTimetableForActiveSession();
-                if (timetableResponse.data?.success && timetableResponse.data.data) {
-                  get().setTimetable(timetableResponse.data.data);
-                  const conflicts = timetableResponse.data.data.timetable?.solution?.conflicts || [];
-                  get().setConflicts(conflicts as Conflict[]);
-                  toast.success('Timetable loaded successfully.');
-                }
-              } catch (err) {
-                toast.error('Failed to reload the timetable after job completion.');
-              }
-            } else {
-              toast.error(`Scheduling job ${status.status}: ${status.error_message || 'No details'}`);
-            }
-          }
-        } catch (err) {
-          console.error('Error polling job status', err);
-          // Optional: Stop polling after a few failed attempts
-        }
-      }, 3000);
-    };
-
-    (poller as any).stop = () => {
-        if (intervalId) {
-            clearInterval(intervalId);
-            intervalId = null;
-        }
-    };
-    
-    return poller;
-  })(),
-
-  // Initialization
   initializeApp: async () => {
     const token = localStorage.getItem('authToken');
     if (!token) {
@@ -400,7 +385,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         set({ activeSessionId: sessionId });
 
         if (user && (user.role === 'admin' || user.role === 'superuser')) {
-          const configsResponse = await api.getAllSystemConfigurations();
+          const configsResponse = await api.getSystemConfigurationList();
           const configs = configsResponse.data || [];
           set({ configurations: configs });
 

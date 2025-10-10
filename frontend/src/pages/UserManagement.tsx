@@ -51,7 +51,7 @@ interface UserAccount {
   id: string;
   name: string;
   email: string;
-  role: 'University Admin' | 'Department Admin' | 'Faculty Staff' | 'Viewer';
+  role: 'University Admin' | 'Department Admin' | 'Faculty Staff' | 'Viewer' | 'student' | 'staff' | 'admin';
   department: string;
   status: 'active' | 'inactive' | 'pending';
   lastLogin: string;
@@ -78,34 +78,7 @@ export function UserManagement() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
   // Mock user data
-  const [users, setUsers] = useState<UserAccount[]>([
-    {
-      id: '1',
-      name: 'Dr. Sarah Johnson',
-      email: 'sarah.johnson@university.edu',
-      role: 'University Admin',
-      department: 'Administration',
-      status: 'active',
-      lastLogin: '2 hours ago',
-      createdAt: '2024-01-15',
-      permissions: { canCreateSessions: true, canModifyTimetables: true, canViewReports: true, canManageUsers: true, canConfigureConstraints: true }
-    },
-    {
-      id: '2',
-      name: 'Prof. Michael Chen',
-      email: 'michael.chen@university.edu',
-      role: 'Department Admin',
-      department: 'Computer Science',
-      status: 'active',
-      lastLogin: '1 day ago',
-      createdAt: '2024-02-03',
-      permissions: { canCreateSessions: false, canModifyTimetables: true, canViewReports: true, canManageUsers: false, canConfigureConstraints: true }
-    },
-    { id: '3', name: 'Dr. Emily Rodriguez', email: 'emily.rodriguez@university.edu', role: 'Department Admin', department: 'Mathematics', status: 'active', lastLogin: '3 hours ago', createdAt: '2024-01-28', permissions: { canCreateSessions: false, canModifyTimetables: true, canViewReports: true, canManageUsers: false, canConfigureConstraints: true } },
-    { id: '4', name: 'James Wilson', email: 'james.wilson@university.edu', role: 'Faculty Staff', department: 'Physics', status: 'active', lastLogin: '1 week ago', createdAt: '2024-03-10', permissions: { canCreateSessions: false, canModifyTimetables: false, canViewReports: true, canManageUsers: false, canConfigureConstraints: false } },
-    { id: '5', name: 'Lisa Anderson', email: 'lisa.anderson@university.edu', role: 'Viewer', department: 'Biology', status: 'pending', lastLogin: 'Never', createdAt: '2024-03-15', permissions: { canCreateSessions: false, canModifyTimetables: false, canViewReports: true, canManageUsers: false, canConfigureConstraints: false } },
-    { id: '6', name: 'Robert Kim', email: 'robert.kim@university.edu', role: 'Faculty Staff', department: 'Chemistry', status: 'inactive', lastLogin: '2 months ago', createdAt: '2023-12-05', permissions: { canCreateSessions: false, canModifyTimetables: false, canViewReports: true, canManageUsers: false, canConfigureConstraints: false } }
-  ]);
+  const [users, setUsers] = useState<UserAccount[]>([]);
 
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) || user.email.toLowerCase().includes(searchTerm.toLowerCase()) || user.department.toLowerCase().includes(searchTerm.toLowerCase());

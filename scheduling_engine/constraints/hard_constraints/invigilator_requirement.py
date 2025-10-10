@@ -1,11 +1,13 @@
 # scheduling_engine/constraints/hard_constraints/invigilator_requirement.py
 """
-REWRITTEN Foundational Constraint - InvigilatorRequirementConstraint (Simplified Model)
+REVISED Foundational Constraint - InvigilatorRequirementConstraint
 
-This critical constraint ensures that for each room in a given slot, the number
-of assigned invigilators is sufficient to cover the needs of all exams placed in that room.
+This constraint now serves a dual purpose:
+1. HARD Constraint: Ensures the MINIMUM number of invigilators is met for all exams in a room.
+2. SOFT Penalty: Penalizes assigning MORE invigilators than are required, promoting efficiency.
 """
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
+from scheduling_engine.core.constraint_types import ConstraintDefinition
 import logging
 import math
 
@@ -14,23 +16,23 @@ logger = logging.getLogger(__name__)
 
 class InvigilatorRequirementConstraint(CPSATBaseConstraint):
     """
-    Ensures invigilator requirements for rooms are met.
-
-    Constraint Logic (Simplified Model):
-    For each room `r` and slot `s`:
-    The number of invigilators assigned to that room must be greater than or equal to
-    the total number of invigilators required by all exams assigned to that room.
-    Sum over `i` of w(i,r,s) >= Sum over `e` of (inv_needed(e,r) * y(e,r,s))
+    Ensures invigilator requirements are met and penalizes over-assignment.
     """
 
     dependencies = ["RoomAssignmentConsistencyConstraint"]
 
+    def __init__(self, definition: ConstraintDefinition, problem, shared_vars, model):
+        super().__init__(definition, problem, shared_vars, model)
+        # Define a weight for the soft penalty part of this constraint.
+        # This can be a fixed value or made configurable. A low weight is often sufficient.
+        self.surplus_penalty_weight = 10
+
     def initialize_variables(self):
-        """No local variables needed."""
-        pass
+        """Initialize surplus variables for the penalty component."""
+        self.surplus_invigilator_vars = []
 
     def add_constraints(self):
-        """Links room assignments (y_vars) to invigilator requirements (w_vars)."""
+        """Links room assignments (y) to invigilator requirements (w)."""
         constraints_added = 0
         if not self.y or not self.w:
             logger.info(
@@ -45,43 +47,69 @@ class InvigilatorRequirementConstraint(CPSATBaseConstraint):
                 f"{self.constraint_id}: max_students_per_invigilator is invalid, using default of 50."
             )
 
-        # In the full Phase 2 model, we must iterate through all relevant slots.
-        # Get the set of all unique slots from the y_vars keys.
         all_slots = {key[2] for key in self.y.keys()}
 
         for slot_id in all_slots:
             for room_id, room in self.problem.rooms.items():
-                # Left side of the inequality: Total invigilators assigned to this room in this slot.
-                assigned_invigilators = []
-                for inv_id in self.problem.invigilators:
-                    w_var = self.w.get((inv_id, room_id, slot_id))
-                    if w_var:
-                        assigned_invigilators.append(w_var)
 
-                # Right side of the inequality: Total invigilators required in this room for this slot.
-                required_invigilators_terms = []
-                for exam_id, exam in self.problem.exams.items():
-                    y_var = self.y.get((exam_id, room_id, slot_id))
-                    if y_var:
-                        # The number of invigilators needed for this exam *if* it's placed in this room.
-                        students_in_room = min(
-                            exam.expected_students, room.exam_capacity
-                        )
-                        inv_needed = (
-                            math.ceil(students_in_room / spi)
-                            if students_in_room > 0
-                            else 0
-                        )
-                        required_invigilators_terms.append(inv_needed * y_var)
+                # --- Sum of Assigned Invigilators ---
+                assigned_invigilators_sum = sum(
+                    self.w[w_key]
+                    for inv_id in self.problem.invigilators
+                    if (w_key := (inv_id, room_id, slot_id)) in self.w
+                )
 
-                # If there's a possibility of assigning exams to this room, add the constraint.
-                if required_invigilators_terms:
+                # --- Calculation of Required Invigilators ---
+                total_students_in_room_var = self.model.NewIntVar(
+                    0, room.exam_capacity, f"total_students_{room_id}_{slot_id}"
+                )
+                student_load_terms = [
+                    exam.expected_students * self.y[y_key]
+                    for exam_id, exam in self.problem.exams.items()
+                    if (y_key := (exam_id, room_id, slot_id)) in self.y
+                ]
+                if student_load_terms:
                     self.model.Add(
-                        sum(assigned_invigilators) >= sum(required_invigilators_terms)
+                        total_students_in_room_var == sum(student_load_terms)
                     )
-                    constraints_added += 1
+                else:
+                    self.model.Add(total_students_in_room_var == 0)
+
+                # Integer division equivalent to ceil(total_students / spi)
+                required_invigilators_var = self.model.NewIntVar(
+                    0, len(self.problem.invigilators), f"req_inv_{room_id}_{slot_id}"
+                )
+                self.model.AddDivisionEquality(
+                    required_invigilators_var, total_students_in_room_var + spi - 1, spi
+                )
+
+                # --- HARD CONSTRAINT: Meet the Minimum Requirement ---
+                self.model.Add(assigned_invigilators_sum >= required_invigilators_var)
+                constraints_added += 1
+
+                # --- SOFT CONSTRAINT: Penalize Surplus ---
+                surplus_var = self.model.NewIntVar(
+                    0,
+                    len(self.problem.invigilators),
+                    f"surplus_inv_{room_id}_{slot_id}",
+                )
+
+                # surplus_var >= assigned_invigilators_sum - required_invigilators_var
+                self.model.Add(
+                    surplus_var >= assigned_invigilators_sum - required_invigilators_var
+                )
+
+                self.surplus_invigilator_vars.append(surplus_var)
+                constraints_added += 1
+
+        # Add penalty terms to the main objective function
+        if self.surplus_invigilator_vars:
+            self.penalty_terms.extend(
+                (self.surplus_penalty_weight, var)
+                for var in self.surplus_invigilator_vars
+            )
 
         self.constraint_count = constraints_added
         logger.info(
-            f"{self.constraint_id}: Added {constraints_added} invigilator requirement constraints."
+            f"{self.constraint_id}: Added {constraints_added} constraints for invigilator requirements and surplus penalties."
         )

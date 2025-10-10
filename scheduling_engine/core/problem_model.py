@@ -492,18 +492,6 @@ class ExamSchedulingProblem:
         self.constraint_definitions: List[ConstraintDefinition] = []
 
         self.module_map: Dict[str, str] = {
-            # --- CORE (Internally enforced by ConstraintManager) ---
-            "StartUniquenessConstraint": "scheduling_engine.constraints.hard_constraints.start_uniqueness.StartUniquenessConstraint",
-            "StartFeasibilityConstraint": "scheduling_engine.constraints.hard_constraints.start_feasibility.StartFeasibilityConstraint",
-            "OccupancyDefinitionConstraint": "scheduling_engine.constraints.hard_constraints.occupancy_definition.OccupancyDefinitionConstraint",
-            "RoomContinuityConstraint": "scheduling_engine.constraints.hard_constraints.room_continuity.RoomContinuityConstraint",
-            "RoomAssignmentConsistencyConstraint": "scheduling_engine.constraints.hard_constraints.room_assignment_consistency.RoomAssignmentConsistencyConstraint",
-            "InvigilatorRequirementConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_requirement.InvigilatorRequirementConstraint",
-            "InvigilatorSinglePresenceConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_single_presence.InvigilatorSinglePresenceConstraint",
-            "InvigilatorContinuityConstraint": "scheduling_engine.constraints.hard_constraints.invigilator_continuity.InvigilatorContinuityConstraint",
-            "AggregateCapacityConstraint": "scheduling_engine.constraints.hard_constraints.room_capacity_hard.AggregateCapacityConstraint",
-            "ROOM_CAPACITY_HARD": "scheduling_engine.constraints.hard_constraints.room_capacity_hard.RoomCapacityHardConstraint",
-            "UNIFIED_STUDENT_CONFLICT": "scheduling_engine.constraints.hard_constraints.unified_student_conflict.UnifiedStudentConflictConstraint",
             # --- DYNAMIC HARD (Configurable via DB) ---
             "ROOM_SEQUENTIAL_USE": "scheduling_engine.constraints.hard_constraints.room_sequential_use.RoomSequentialUseConstraint",
             # --- DYNAMIC SOFT (Configurable via DB) ---
@@ -582,7 +570,6 @@ class ExamSchedulingProblem:
         config_id = self._ensure_uuid(constraints_data.get("system_configuration_id"))
 
         known_categories = {
-            "UNIFIED_STUDENT_CONFLICT": ConstraintCategory.STUDENT_CONSTRAINTS,
             "MAX_EXAMS_PER_STUDENT_PER_DAY": ConstraintCategory.STUDENT_CONSTRAINTS,
             "MINIMUM_GAP": ConstraintCategory.STUDENT_CONSTRAINTS,
             "ROOM_CAPACITY_HARD": ConstraintCategory.RESOURCE_CONSTRAINTS,

@@ -173,14 +173,23 @@ class ConstraintEncoder:
         self.initialize_factory()
 
         if self.use_ga_filter:
+            logger.info("Genetic Algorithm pre-filter is enabled. Running GA...")
             self.ga_result = self._run_ga_pre_filter()
             if self.ga_result:
                 self.promising_x_vars = self.ga_result.promising_x_vars
+                logger.info(
+                    f"GA pre-filter completed, found {len(self.promising_x_vars)} promising start variables."
+                )
+            else:
+                logger.warning(
+                    "GA pre-filter failed to produce results. Proceeding without filtering."
+                )
 
         variables = self._create_phase1_variables(use_filter=self.use_ga_filter)
         if self.factory:
             self.factory.log_statistics()
 
+        logger.info("Pre-computing day and slot groupings for constraint efficiency.")
         precomputed_data = {"day_slot_groupings": self.build_day_slot_groupings()}
 
         if not self.factory:
@@ -197,6 +206,9 @@ class ConstraintEncoder:
             precomputed_data=precomputed_data,
         )
         self.encoding_stats["phase1_total_time"] = time.time() - encoding_start_time
+        logger.info(
+            f"Phase 1 encoding complete in {self.encoding_stats['phase1_total_time']:.2f}s."
+        )
         return shared_vars
 
     @track_data_flow("encode_phase2", include_stats=True)
@@ -213,6 +225,7 @@ class ConstraintEncoder:
         if not self.factory:
             raise RuntimeError("VariableFactory not initialized post-encoding.")
 
+        logger.info("Pre-computing data for Phase 2 constraints.")
         precomputed_data = {
             "day_slot_groupings": self.build_day_slot_groupings(),
             "phase1_results": phase1_results,  # Pass results for continuity constraints
@@ -229,6 +242,9 @@ class ConstraintEncoder:
             precomputed_data=precomputed_data,
         )
         self.encoding_stats["phase2_full_time"] = time.time() - encoding_start_time
+        logger.info(
+            f"Full Phase 2 encoding complete in {self.encoding_stats['phase2_full_time']:.2f}s."
+        )
         return shared_vars
 
     def _create_phase1_variables(self, use_filter: bool) -> Dict[str, Dict]:
@@ -238,6 +254,9 @@ class ConstraintEncoder:
 
         variables: Dict[str, Dict] = {"x": {}, "z": {}}
         candidate_starts = self._get_candidate_starts(use_filter)
+        logger.info(
+            f"Creating X and Z variables for {len(candidate_starts)} candidate starts."
+        )
 
         for exam_id, start_slot_id in candidate_starts:
             variables["x"][(exam_id, start_slot_id)] = self.factory.get_x_var(
@@ -251,6 +270,10 @@ class ConstraintEncoder:
                     variables["z"][(exam_id, occ_slot_id)] = self.factory.get_z_var(
                         exam_id, occ_slot_id
                     )
+
+        logger.info(
+            f"Initial creation: {len(variables['x'])} X-vars, {len(variables['z'])} Z-vars."
+        )
 
         logger.info("Applying robust safety net for student conflict Z-variables...")
         student_exams = self._get_student_exam_mappings()
@@ -274,9 +297,12 @@ class ConstraintEncoder:
                         )
                         new_z_vars_added += 1
 
-        logger.info(
-            f"Safety net added {new_z_vars_added} new Z-variables to prevent missed conflicts."
-        )
+        if new_z_vars_added > 0:
+            logger.info(
+                f"Safety net added {new_z_vars_added} new Z-variables to prevent missed conflicts."
+            )
+        else:
+            logger.info("Safety net did not need to add any new Z-variables.")
         return variables
 
     def _create_full_phase2_variables(self, phase1_results: Dict) -> Dict[str, Dict]:
@@ -285,20 +311,32 @@ class ConstraintEncoder:
             raise RuntimeError("Factory not initialized")
 
         variables: Dict[str, Dict] = {"y": {}, "w": {}, "unused_seats": {}}
-        logger.info("Creating variables for the full packing model...")
+        logger.info(
+            "Creating variables for the full packing model based on Phase 1 results..."
+        )
 
         # Group exams by slot based on Phase 1 results to apply heuristics efficiently
         exams_by_slot = defaultdict(list)
         for exam_id, (start_slot_id, _) in phase1_results.items():
             exam = self.problem.exams.get(exam_id)
             if not exam:
+                logger.warning(
+                    f"Exam {exam_id} from phase 1 results not found in problem model."
+                )
                 continue
             occupied_slots = self.problem.get_occupancy_slots(exam_id, start_slot_id)
             for slot_id in occupied_slots:
                 exams_by_slot[slot_id].append(exam)
 
+        logger.info(
+            f"Found exams scheduled in {len(exams_by_slot)} different time slots."
+        )
+
         # Create variables slot by slot, but collect them all into the main dictionary
         for slot_id, exams_in_slot in exams_by_slot.items():
+            logger.info(
+                f"Creating variables for slot {slot_id} which has {len(exams_in_slot)} exams."
+            )
             # Create Y (exam-in-room) variables for all exams occupying this slot
             for exam in exams_in_slot:
                 for room_id in self.problem.rooms:
@@ -314,8 +352,14 @@ class ConstraintEncoder:
                 for inv in self.problem.invigilators.values()
                 if getattr(inv, "department_id", None) in relevant_dept_ids
             ]
+
+            log_msg = f"For slot {slot_id}, found {len(relevant_dept_ids)} relevant departments. "
             if not suitable_invigilators:
                 suitable_invigilators = list(self.problem.invigilators.values())
+                log_msg += f"No department-specific invigilators found; using all {len(suitable_invigilators)} invigilators."
+            else:
+                log_msg += f"Selected {len(suitable_invigilators)} suitable invigilators based on department."
+            logger.info(log_msg)
 
             # Create W-vars and unused_seats for this slot
             for room_id, room in self.problem.rooms.items():
@@ -339,16 +383,20 @@ class ConstraintEncoder:
             )
             return self.promising_x_vars
         else:
-            logger.warning("GA FILTER DISABLED: Planning for all feasible starts.")
-            return {
+            all_starts = {
                 (eid, sid)
                 for eid in self.problem.exams
                 for sid in self.problem.timeslots
                 if self.problem.is_start_feasible(eid, sid)
             }
+            logger.info(
+                f"GA FILTER DISABLED: Planning for all {len(all_starts)} feasible starts."
+            )
+            return all_starts
 
     def _run_ga_pre_filter(self) -> Optional[GAResult]:
         try:
+            logger.info("Constructing GAInput for pre-filtering...")
             ga_input = GAInput(
                 exam_ids=list(self.problem.exams.keys()),
                 timeslot_ids=list(self.problem.timeslots.keys()),
@@ -390,17 +438,22 @@ class ConstraintEncoder:
                 },
             )
             processor = GAProcessor(ga_input)
-            return processor.run()
+            logger.info("Running GAProcessor...")
+            result = processor.run()
+            logger.info("GAProcessor finished.")
+            return result
         except Exception as e:
             logger.error(f"GA pre-filtering process failed: {e}", exc_info=True)
             return None
 
     def _get_student_exam_mappings(self) -> Dict[UUID, List[UUID]]:
+        logger.info("Building student-to-exam mappings...")
         student_map = defaultdict(list)
         for exam_id, exam in self.problem.exams.items():
             if hasattr(exam, "students"):
                 for student_id in exam.students.keys():
                     student_map[student_id].append(exam_id)
+        logger.info(f"Created mappings for {len(student_map)} students.")
         return dict(student_map)
 
     def initialize_factory(self):
@@ -411,8 +464,10 @@ class ConstraintEncoder:
         )
 
     def build_day_slot_groupings(self) -> Dict[str, List[UUID]]:
+        logger.info("Building day-to-slot-ID groupings...")
         day_slot_groupings = {}
         for day_id, day in self.problem.days.items():
             slot_ids = [timeslot.id for timeslot in day.timeslots]
             day_slot_groupings[str(day_id)] = slot_ids
+        logger.info(f"Grouped slots for {len(day_slot_groupings)} days.")
         return day_slot_groupings

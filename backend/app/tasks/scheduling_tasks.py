@@ -235,8 +235,14 @@ async def _async_generate_timetable(
             )
             solver_manager = CPSATSolverManager(problem=problem)
 
-            await task.update_progress(30, "solving", "Running CP-SAT solver...")
-            status, solution = solver_manager.solve()
+            # --- START OF MODIFICATION ---
+            # Pass the task context to the solver manager so decorators can use it.
+            solver_manager.task_context = task
+
+            # The solve method will now trigger its own detailed progress updates via decorators.
+            # We no longer need a manual update to 30% here.
+            status, solution = await solver_manager.solve()
+            # --- END OF MODIFICATION ---
 
             if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
                 raise SchedulingError(

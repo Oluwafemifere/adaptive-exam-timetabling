@@ -24,6 +24,8 @@ class ConflictHotspot(BaseModel):
 class TopBottleneck(BaseModel):
     """Defines the structure for a single bottleneck item."""
 
+    # --- FIX: Added the 'type' field to match frontend expectations ---
+    type: str
     item: str
     reason: str
     issue_count: int

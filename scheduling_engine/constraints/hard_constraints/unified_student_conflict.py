@@ -27,7 +27,10 @@ class UnifiedStudentConflictConstraint(CPSATBaseConstraint):
             self.precomputed_data["student_exams"] = self.student_exams
 
     def add_constraints(self):
-        """FIXED: Add correct student conflict constraints for conflicts involving at least one normal registration."""
+        """
+        MODIFIED: Add hard conflict constraints ONLY for overlaps involving two or more 'normal' registrations.
+        All other conflicts (e.g., normal-vs-carryover) are handled by soft constraints.
+        """
         constraints_added = 0
         if not self.z:
             raise RuntimeError(
@@ -41,7 +44,7 @@ class UnifiedStudentConflictConstraint(CPSATBaseConstraint):
             self.constraint_count = 0
             return
 
-        # --- START OF NEW VALIDATION LOGIC ---
+        # --- VALIDATION LOGIC REMAINS UNCHANGED ---
         total_available_minutes = sum(
             ts.duration_minutes
             for day in self.problem.days.values()
@@ -50,7 +53,6 @@ class UnifiedStudentConflictConstraint(CPSATBaseConstraint):
         logger.info(
             f"VALIDATION: Total available exam minutes in period: {total_available_minutes}"
         )
-
         for student_id, exam_ids in self.student_exams.items():
             total_student_exam_minutes = sum(
                 self.problem.exams[eid].duration_minutes
@@ -68,43 +70,35 @@ class UnifiedStudentConflictConstraint(CPSATBaseConstraint):
                     f"  -> Total available time in whole period: {total_available_minutes} minutes."
                 )
                 logger.critical(f"  -> Exams: {exam_ids}")
-                # You could raise an error here to stop the process immediately
-                # raise ValueError(f"Impossible schedule for student {student_id}")
-        # --- END OF NEW VALIDATION LOGIC ---
+        # --- END OF VALIDATION LOGIC ---
 
         for student_id, exam_ids in self.student_exams.items():
             if len(exam_ids) <= 1:
                 continue
 
             for slot_id in self.problem.timeslots:
-                # --- START OF FIX ---
-                # Step 1: Gather ALL potential exam occupancies for this student in this slot.
-                all_student_exams_in_slot = []
-                has_normal_registration = False
-
+                # --- START OF MODIFICATION ---
+                # Step 1: Gather ONLY the 'normal' exam occupancies for this student in this slot.
+                normal_exams_in_slot = []
                 for exam_id in exam_ids:
                     exam = self.problem.exams.get(exam_id)
                     if not exam:
                         continue
 
-                    # Check the registration type for this specific exam and student
                     if exam.students.get(student_id) == "normal":
-                        has_normal_registration = True
+                        z_key = (exam_id, slot_id)
+                        if z_key in self.z:
+                            normal_exams_in_slot.append(self.z[z_key])
 
-                    z_key = (exam_id, slot_id)
-                    if z_key in self.z:
-                        all_student_exams_in_slot.append(self.z[z_key])
-
-                # Step 2: If there's a potential for an overlap (more than 1 exam) AND at least one of them
-                # is a normal registration, then enforce the hard constraint.
-                if len(all_student_exams_in_slot) > 1 and has_normal_registration:
-                    self.model.Add(sum(all_student_exams_in_slot) <= 1)
+                # Step 2: If there's a potential for an overlap of two or more NORMAL exams, enforce the hard constraint.
+                if len(normal_exams_in_slot) > 1:
+                    self.model.Add(sum(normal_exams_in_slot) <= 1)
                     constraints_added += 1
-                # --- END OF FIX ---
+                # --- END OF MODIFICATION ---
 
         self.constraint_count = constraints_added
         logger.info(
-            f"{self.constraint_id}: Added {constraints_added} 'normal' student conflict constraints."
+            f"{self.constraint_id}: Added {constraints_added} 'normal-vs-normal' student conflict constraints."
         )
 
     def _build_student_exam_mapping(self):

@@ -32,7 +32,8 @@ class InstructorConflictConstraint(CPSATBaseConstraint):
     def add_constraints(self):
         """Add penalties for instructors invigilating their own courses."""
         constraints_added = 0
-        if not self.w or not self.y:
+
+        if not getattr(self, "w", None) or not getattr(self, "y", None):
             logger.info(
                 f"{self.constraint_id}: No invigilator (w) or room (y) assignment variables, skipping."
             )
@@ -48,11 +49,11 @@ class InstructorConflictConstraint(CPSATBaseConstraint):
 
         for exam_id, exam in self.problem.exams.items():
             # Check only exams relevant to this subproblem
-            if not any(key[0] == exam_id for key in self.y.keys()):
+            if not any(k[0] == exam_id for k in self.y.keys()):
                 continue
 
             for instructor_id in exam.instructor_ids:
-                # Check if this instructor is also a potential invigilator
+                # Skip if instructor not a valid invigilator
                 if instructor_id not in self.problem.invigilators:
                     continue
 
@@ -60,26 +61,25 @@ class InstructorConflictConstraint(CPSATBaseConstraint):
                     w_key = (instructor_id, room_id, slot_id)
                     y_key = (exam_id, room_id, slot_id)
 
-                    w_var = self.w.get(w_key)
-                    y_var = self.y.get(y_key)
+                    w_var = self.w.get(w_key, None)
+                    y_var = self.y.get(y_key, None)
 
-                    if w_var and y_var:
-                        # A conflict occurs if the instructor is in this room (w=1) AND
-                        # their exam is also in this room (y=1).
-                        conflict_var = self.model.NewBoolVar(
-                            f"instr_conflict_{instructor_id}_{exam_id}_{room_id}"
-                        )
+                    # Both must exist (not None)
+                    if w_var is None or y_var is None:
+                        continue
 
-                        # conflict_var is true iff both w_var and y_var are true.
-                        self.model.AddBoolAnd([w_var, y_var]).OnlyEnforceIf(
-                            conflict_var
-                        )
-                        self.model.Add(sum([w_var, y_var]) <= 1).OnlyEnforceIf(
-                            conflict_var.Not()
-                        )
+                    conflict_var = self.model.NewBoolVar(
+                        f"instr_conflict_{instructor_id}_{exam_id}_{room_id}"
+                    )
 
-                        self.penalty_terms.append((self.penalty_weight, conflict_var))
-                        constraints_added += 2
+                    # conflict_var true iff both w_var and y_var are true
+                    self.model.AddBoolAnd([w_var, y_var]).OnlyEnforceIf(conflict_var)
+                    self.model.AddBoolOr([w_var.Not(), y_var.Not()]).OnlyEnforceIf(
+                        conflict_var.Not()
+                    )
+
+                    self.penalty_terms.append((self.penalty_weight, conflict_var))
+                    constraints_added += 2
 
         self.constraint_count = constraints_added
         logger.info(

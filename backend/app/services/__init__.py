@@ -1,29 +1,32 @@
 # backend/app/services/__init__.py
-
 """
-Services package for the Adaptive Exam Timetabling System.
-Contains all service modules for scheduling, notification, export, data validation,
-data retrieval, and data management functionality.
+Services package for the application.
+
+This package contains all the business logic services that interact with the
+database layer and provide functionalities to the API endpoints.
 """
 
-# Import sub-packages
-from . import scheduling
-from . import notification
-from . import export
-from . import data_validation
-from . import data_retrieval
-from . import data_management
-from .session_setup_service import SessionSetupService
-
+from .data_retrieval import DataRetrievalService
+from .scheduling import (
+    ExactDataFlowService,
+    ConflictDetectionService,
+    SchedulingService,
+    TimetableManagementService,
+    EnrichmentService,
+)
+from .System.system_service import SystemService
+from .configuration_service import ConfigurationService
 
 __all__ = [
-    # Sub-packages
-    "scheduling",
-    "notification",
-    "export",
-    "data_validation",
-    "data_retrieval",
-    "data_management",
-    # Main classes from data_management
-    "SessionSetupService",
+    # Data Retrieval
+    "DataRetrievalService",
+    # Scheduling Workflow
+    "ExactDataFlowService",
+    "SchedulingService",
+    "ConflictDetectionService",
+    "TimetableManagementService",
+    "EnrichmentService",
+    # System & Admin
+    "SystemService",
+    "ConfigurationService",
 ]

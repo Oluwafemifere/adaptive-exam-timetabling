@@ -32,10 +32,25 @@ class AuthenticationService:
         """
         try:
             logger.info(f"Attempting to register user: {user_data.get('email')}")
+            # Ensure role is either 'student' or 'staff' for this public endpoint
+            role = user_data.get("role")
+            if role not in ["student", "staff"]:
+                raise ValueError(
+                    "Self-registration is only available for students and staff."
+                )
+
             user_data_json = json.dumps(user_data)
             query = text("SELECT exam_system.register_user(p_user_data => :user_data)")
             result = await self.session.execute(query, {"user_data": user_data_json})
             registration_result = result.scalar_one()
+
+            if not registration_result.get("success"):
+                raise Exception(
+                    registration_result.get(
+                        "message", "Registration failed in database."
+                    )
+                )
+
             await self.session.commit()
             return registration_result
         except Exception as e:
@@ -43,7 +58,7 @@ class AuthenticationService:
             logger.error(f"Error during user registration: {e}", exc_info=True)
             return {
                 "success": False,
-                "error": "An internal error occurred during registration.",
+                "message": str(e),
             }
 
     async def login_user(self, email: str, password: str) -> Optional[Dict[str, Any]]:

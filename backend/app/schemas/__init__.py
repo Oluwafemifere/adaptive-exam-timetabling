@@ -1,4 +1,4 @@
-# app/schemas/__init__.py
+# backend/app/schemas/__init__.py
 """Expose schema modules and primary Pydantic models for convenient imports."""
 
 from . import (
@@ -16,7 +16,8 @@ from . import (
     notifications,
     portal,
     reports,
-    dashboard,  # Import the new dashboard schema module
+    dashboard,
+    configuration,  # Import the new configuration schema module
 )
 from .session_setup import SessionSetupCreate, SessionSetupSummary, TimeSlot
 
@@ -40,11 +41,20 @@ from .admin import (
     UploadSessionCreate,
 )
 
-# Import new dashboard schemas
 from .dashboard import (
     DashboardKpis,
     ConflictHotspot,
     TopBottleneck,
+)
+
+# NEW: Import and export configuration schemas
+from .configuration import (
+    SystemConfigListItem,
+    ConstraintConfigListItem,
+    RuleSetting,
+    RuleSettingRead,
+    SystemConfigDetails,
+    SystemConfigSave,
 )
 
 from .jobs import TimetableJobBase, TimetableJobCreate, TimetableJobRead
@@ -67,16 +77,11 @@ from .scheduling import (
 )
 
 from .system import (
-    SystemConfigBase,
-    SystemConfigCreate,
-    SystemConfigUpdate,
-    SystemConfigRead,
     GenericResponse,
     AuditLogRead,
     PaginatedAuditLogResponse,
     ReportGenerateRequest,
 )
-
 
 from .uploads import (
     UploadedFileBase,
@@ -153,6 +158,7 @@ __all__ = [
     "portal",
     "reports",
     "dashboard",
+    "configuration",
     # auth
     "TokenData",
     "Token",
@@ -173,6 +179,13 @@ __all__ = [
     "DashboardKpis",
     "ConflictHotspot",
     "TopBottleneck",
+    # configuration
+    "SystemConfigListItem",
+    "ConstraintConfigListItem",
+    "RuleSetting",
+    "RuleSettingRead",
+    "SystemConfigDetails",
+    "SystemConfigSave",
     # jobs
     "TimetableJobBase",
     "TimetableJobCreate",
@@ -193,10 +206,6 @@ __all__ = [
     "ManualTimetableEditCreate",
     "TimetableValidationRequest",
     # system
-    "SystemConfigBase",
-    "SystemConfigCreate",
-    "SystemConfigUpdate",
-    "SystemConfigRead",
     "GenericResponse",
     "AuditLogRead",
     "PaginatedAuditLogResponse",

@@ -13,11 +13,7 @@ from .users import router as users_router
 from .academic_sessions import router as sessions_router
 from .session_setup import router as session_setup_router
 from .seeding import router as seeding_router
-
-# FIX: Correctly import the 'router' object from the 'versions' module
 from .versions import router as versions_router
-
-# Import the new routers
 from .system import router as system_router
 from .admin import router as admin_router
 from .roles import router as roles_router
@@ -27,6 +23,9 @@ from .portal import router as portal_router
 from .dashboard import router as dashboard_router
 from .notifications import router as notifications_router
 from .profile import router as profile_router
+
+# Import the new configurations router
+from .configurations import router as configurations_router
 
 # Create a main router that includes all sub-routers
 router = APIRouter()
@@ -55,9 +54,16 @@ router.include_router(schedules_router, prefix="/schedules", tags=["Schedules"])
 router.include_router(sessions_router, prefix="/sessions", tags=["Academic Sessions"])
 
 # System & Administration
-# FIX: Correctly include the router object
 router.include_router(versions_router, prefix="/versions", tags=["Versions"])
-router.include_router(system_router, prefix="/system", tags=["System Configuration"])
+# NEW: Include the dedicated configurations router
+router.include_router(
+    configurations_router,
+    prefix="/configurations",
+    tags=["System & Constraint Configurations"],
+)
+router.include_router(
+    system_router, prefix="/system", tags=["System Administration"]
+)  # Renamed tag for clarity
 router.include_router(admin_router, prefix="/admin", tags=["Administration"])
 router.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])
 router.include_router(

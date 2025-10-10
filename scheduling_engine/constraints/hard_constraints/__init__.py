@@ -11,7 +11,8 @@ from .room_assignment_consistency import RoomAssignmentConsistencyConstraint
 from .unified_student_conflict import UnifiedStudentConflictConstraint
 
 
-from .room_capacity_hard import RoomCapacityHardConstraint, AggregateCapacityConstraint
+from .room_capacity_hard import RoomCapacityHardConstraint
+from .aggregate_capacity import AggregateCapacityConstraint
 from .room_continuity import RoomContinuityConstraint
 from .start_feasibility import StartFeasibilityConstraint
 

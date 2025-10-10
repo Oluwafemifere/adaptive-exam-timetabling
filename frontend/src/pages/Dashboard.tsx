@@ -45,7 +45,7 @@ export function Dashboard() {
     init();
   }, [initializeApp, activeSessionId]);
 
-  const isDataMissing = !isLoading && !isInitializing && (!dashboardKpis || dashboardKpis.total_exams_scheduled === 0);
+  const isDataMissing = !isLoading && !isInitializing && !dashboardKpis;
   
   const getActivityIcon = (activityAction: string) => {
     const action = activityAction.toLowerCase();
@@ -200,10 +200,11 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-4">
+        <Card className="lg:col-span-4 flex flex-col">
           <CardHeader><CardTitle className="flex items-center"><Activity className="h-5 w-5 mr-2" />Recent Activity</CardTitle><CardDescription>Latest actions and system events</CardDescription></CardHeader>
-          <CardContent>
-            <div className="space-y-3">
+          <CardContent className="flex-1 overflow-hidden">
+            {/* --- FIX: Added overflow-y-auto and a max-height to make this section scrollable --- */}
+            <div className="space-y-3 h-full overflow-y-auto max-h-[20rem]">
               {recentActivity.map((activity) => {
                   const Icon = getActivityIcon(activity.action);
                   return (

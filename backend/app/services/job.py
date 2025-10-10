@@ -9,8 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text, func
 
 from ..models.jobs import TimetableJob
+from ..models.versioning import TimetableVersion
 from ..models.users import User
-from ..schemas.jobs import TimetableJobCreate as JobCreate
+from ..schemas.jobs import TimetableJobCreate as JobCreate, TimetableJobSummaryRead
 from ..core.exceptions import JobNotFoundError, JobAccessDeniedError
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,40 @@ class JobService:
             return jobs
         except Exception as e:
             logger.error(f"Failed to list jobs: {e}", exc_info=True)
+            raise
+
+    async def list_successful_jobs_for_session(
+        self, session_id: UUID
+    ) -> List[TimetableJobSummaryRead]:
+        """List all successfully completed jobs for a given session."""
+        try:
+            # We need to join TimetableJob with TimetableVersion to get the is_published flag.
+            # A job might not have a version yet if it's just completed.
+            query = (
+                select(
+                    TimetableJob.id,
+                    TimetableJob.created_at,
+                    TimetableJob.status,
+                    TimetableVersion.id.label("version_id"),
+                    TimetableVersion.is_published,
+                )
+                .outerjoin(TimetableVersion, TimetableJob.id == TimetableVersion.job_id)
+                .where(TimetableJob.session_id == session_id)
+                .where(TimetableJob.status == "completed")
+                .order_by(TimetableJob.created_at.desc())
+            )
+
+            result = await self.db.execute(query)
+            job_rows = result.mappings().all()
+
+            # Map the raw result to our Pydantic schema
+            return [TimetableJobSummaryRead.model_validate(row) for row in job_rows]
+
+        except Exception as e:
+            logger.error(
+                f"Failed to list successful jobs for session {session_id}: {e}",
+                exc_info=True,
+            )
             raise
 
     async def get_job_status(self, job_id: UUID) -> Dict[str, Any]:

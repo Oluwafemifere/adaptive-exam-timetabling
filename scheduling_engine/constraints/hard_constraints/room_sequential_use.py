@@ -1,97 +1,119 @@
 # scheduling_engine/constraints/hard_constraints/room_sequential_use.py
-"""
-CORRECTED RoomSequentialUseConstraint - Hard Constraint
-
-This constraint ensures that for any given room and timeslot, at most one
-exam can be occupying it. It prevents overlaps and is essential for the
-'flexible' slot generation mode.
-"""
 
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
 import logging
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 
 class RoomSequentialUseConstraint(CPSATBaseConstraint):
-    """Ensures that at most one exam occupies any room in any single timeslot."""
+    """
+    Ensures that exam schedules do not temporally overlap within the same room.
+    This constraint is now active in all modes during Phase 2.
+    """
 
     dependencies = ["RoomAssignmentConsistencyConstraint"]
 
     def initialize_variables(self):
-        """No local variables needed."""
+        """No local variables needed; intervals will be created during constraint addition."""
         pass
 
     def add_constraints(self):
         """
-        For each room and timeslot, ensure that the total number of exams
-        assigned to it is at most one.
+        For each room, create a set of optional time intervals corresponding to
+        exam start times and add a 'NoOverlap' constraint to prevent collisions.
         """
-        if self.problem.slot_generation_mode != "flexible":
+        # --- START OF FIX ---
+        # REMOVED the check for `slot_generation_mode`. This constraint is essential
+        # for preventing temporal overlaps regardless of the mode.
+        # --- END OF FIX ---
+
+        phase1_results = self.precomputed_data.get("phase1_results")
+        if not phase1_results:
             logger.info(
-                f"{self.constraint_id}: Skipping as slot_generation_mode is not 'flexible'."
+                f"{self.constraint_id}: Skipping as this is a Phase 2 constraint and Phase 1 results are not available."
             )
             self.constraint_count = 0
             return
 
         constraints_added = 0
 
-        # For each specific room at a specific timeslot...
+        # --- Step 1: Group exams by their fixed start slot from Phase 1 ---
+        exams_by_start_slot = defaultdict(list)
+        for exam_id, (start_slot_id, _) in phase1_results.items():
+            exams_by_start_slot[start_slot_id].append(exam_id)
+
+        # --- Step 2: For each start time, find the maximum duration ---
+        # This determines how long a room will be occupied if this group is placed there.
+        max_duration_by_start_slot = {}
+        for start_slot_id, exam_ids in exams_by_start_slot.items():
+            max_duration = 0
+            for exam_id in exam_ids:
+                duration_in_slots = self.problem.get_exam_duration_in_slots(exam_id)
+                if duration_in_slots > max_duration:
+                    max_duration = duration_in_slots
+            max_duration_by_start_slot[start_slot_id] = max_duration
+
+        # --- Step 3: Create NoOverlap constraints for each room ---
         for room_id in self.problem.rooms:
-            # In Phase 2, self.y variables only exist for the current slot,
-            # so we determine the relevant slot from the variables themselves.
-            # We can get the single relevant slot_id from any y_var key.
-            relevant_slots = {key[2] for key in self.y.keys()}
+            intervals_for_this_room = []
 
-            for slot_id in relevant_slots:
-                # ...collect all the y_vars that represent an exam being assigned there.
-                # The y[e,r,s] variable is 1 if exam 'e' is in room 'r' at slot 's'.
-                exams_in_this_room_at_this_time = []
-                for exam_id in self.problem.exams:
-                    y_key = (exam_id, room_id, slot_id)
-                    if y_key in self.y:
-                        exams_in_this_room_at_this_time.append(self.y[y_key])
+            # We must operate on a consistent, ordered list of slots for a day
+            for day in self.problem.days.values():
+                day_slots = sorted(day.timeslots, key=lambda ts: ts.start_time)
+                day_slot_ids_ordered = [ts.id for ts in day_slots]
 
-                # The sum of these boolean variables represents the number of exams in
-                # the room at this time. This sum cannot be greater than 1.
-                # FIX: Only add a constraint if there is more than one possibility.
-                if len(exams_in_this_room_at_this_time) > 1:
-                    self.model.Add(sum(exams_in_this_room_at_this_time) <= 1)
-                    constraints_added += 1
+                # For each potential start time on this day...
+                for i, start_slot_id in enumerate(day_slot_ids_ordered):
+                    if start_slot_id not in exams_by_start_slot:
+                        continue
+
+                    # The boolean variable that determines if this interval "exists".
+                    # It exists if *any* exam from this start-time group is placed in this room.
+                    is_group_in_room_var = self.model.NewBoolVar(
+                        f"group_at_{start_slot_id}_in_room_{room_id}"
+                    )
+
+                    # Collect the y_vars for all exams in this start group for this specific room.
+                    relevant_y_vars = []
+                    for exam_id in exams_by_start_slot[start_slot_id]:
+                        y_key = (exam_id, room_id, start_slot_id)
+                        if y_key in self.y:
+                            relevant_y_vars.append(self.y[y_key])
+
+                    if not relevant_y_vars:
+                        continue  # No possibility of this group being in this room.
+
+                    # Link the boolean to the y_vars: is_group_in_room_var is TRUE if OR(y_vars) is TRUE.
+                    self.model.AddBoolOr(relevant_y_vars).OnlyEnforceIf(
+                        is_group_in_room_var
+                    )
+                    self.model.Add(sum(relevant_y_vars) == 0).OnlyEnforceIf(
+                        is_group_in_room_var.Not()
+                    )
+
+                    # Define the interval's properties.
+                    start_index = i
+                    duration = max_duration_by_start_slot[start_slot_id]
+                    end_index = start_index + duration
+
+                    # Create the optional interval.
+                    interval = self.model.NewOptionalIntervalVar(
+                        start=start_index,
+                        size=duration,
+                        end=end_index,
+                        is_present=is_group_in_room_var,
+                        name=f"interval_room_{room_id}_slot_{start_slot_id}",
+                    )
+                    intervals_for_this_room.append(interval)
+
+            # --- Step 4: Add the NoOverlap constraint for the room ---
+            if len(intervals_for_this_room) > 1:
+                self.model.AddNoOverlap(intervals_for_this_room)
+                constraints_added += 1
 
         self.constraint_count = constraints_added
         logger.info(
-            f"{self.constraint_id}: Added {constraints_added} sequential room use constraints."
+            f"{self.constraint_id}: Added {constraints_added} 'NoOverlap' constraints for room usage."
         )
-
-    def _get_start_covers(self, exam_id, target_slot_id):
-        """
-        Helper to find all start slots on the same day as target_slot_id
-        that would cause the exam to occupy target_slot_id.
-
-        NOTE: This function is no longer used by the corrected add_constraints method
-        but is kept for potential debugging or reference.
-        """
-        exam = self.problem.exams.get(exam_id)
-        if not exam:
-            return []
-
-        duration_slots = self.problem.get_exam_duration_in_slots(exam_id)
-        target_day = self.problem.get_day_for_timeslot(target_slot_id)
-        if not target_day:
-            return []
-
-        try:
-            target_slot_idx = [ts.id for ts in target_day.timeslots].index(
-                target_slot_id
-            )
-        except ValueError:
-            return []
-
-        start_covers = []
-        for start_idx, start_slot in enumerate(target_day.timeslots):
-            if start_idx <= target_slot_idx < start_idx + duration_slots:
-                if start_idx + duration_slots <= len(target_day.timeslots):
-                    start_covers.append((exam_id, start_slot.id))
-
-        return start_covers
