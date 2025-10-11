@@ -87,8 +87,7 @@ export function Notifications() {
   };
 
   return (
-    // --- FIX: The main layout div is now the top-level element ---
-    <div className="space-y-6">
+    <>
       {/* The Dialog component is now separate from the layout flow */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
         <DialogContent className="max-w-xl">
@@ -108,140 +107,146 @@ export function Notifications() {
         </DialogContent>
       </Dialog>
       
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">Reports & Requests</h2>
-          <p className="text-muted-foreground">
-            Manage student conflict reports and staff change requests.
-          </p>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">Reports & Requests</h2>
+            <p className="text-muted-foreground">
+              Manage student conflict reports and staff change requests.
+            </p>
+          </div>
+          <Button onClick={() => refetch()} variant="outline" size="sm" disabled={isLoading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </div>
-        <Button onClick={() => refetch()} variant="outline" size="sm" disabled={isLoading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <Bell className="h-8 w-8 text-blue-600" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Total Items</p>
+                  <p className="text-2xl font-semibold">{reportSummaryCounts?.total ?? '...'}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-8 w-8 text-orange-600" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Pending / Unread</p>
+                  <p className="text-2xl font-semibold">{reportSummaryCounts?.unread ?? '...'}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <FileEdit className="h-8 w-8 text-purple-600" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Urgent Action</p>
+                  <p className="text-2xl font-semibold">{reportSummaryCounts?.urgent_action_required ?? '...'}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Filter Controls */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2"><Filter className="h-5 w-5" />Filter Reports</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col md:flex-row gap-4 items-center">
+            <div className="w-full md:w-64">
+              <Label>Status</Label>
+              <Select value={statuses.join(',')} onValueChange={(value) => setStatuses(value ? value.split(',') : [])}>
+                <SelectTrigger><SelectValue placeholder="Filter by status..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="denied">Denied</SelectItem>
+                  <SelectItem value="resolved">Resolved</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-2 self-end">
+              <Button onClick={handleApplyFilters} disabled={isLoading}>Apply Filters</Button>
+              <Button onClick={handleClearFilters} variant="outline" disabled={isLoading}>Clear</Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {isLoading ? (
+          <div className="flex justify-center items-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+        ) : error ? (
+          <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{error.message}</AlertDescription></Alert>
+        ) : (
+          <Tabs defaultValue="conflicts" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="conflicts">Conflict Reports ({allConflictReports.length})</TabsTrigger>
+              <TabsTrigger value="requests">Change Requests ({allChangeRequests.length})</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="conflicts">
+              <Card>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Student</TableHead><TableHead>Course</TableHead><TableHead>Status</TableHead><TableHead>Submitted</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {allConflictReports.map((report: AdminConflictReport) => (
+                      <TableRow key={report.id}>
+                        <TableCell>
+                          <div className="font-medium">{report.student.first_name} {report.student.last_name}</div>
+                          <div className="text-sm text-muted-foreground">{report.student.matric_number}</div>
+                        </TableCell>
+                        <TableCell>{report.exam_details.course_code}</TableCell>
+                        <TableCell><Badge variant={report.status === 'pending' ? 'destructive' : 'secondary'}>{report.status}</Badge></TableCell>
+                        <TableCell>{formatTimeAgo(report.submitted_at)}</TableCell>
+                        {/* --- FIX: Button now just calls openModal --- */}
+                        <TableCell><Button variant="outline" size="sm" onClick={() => openModal(report)}><Eye className="h-4 w-4 mr-2" />View</Button></TableCell>
+                      </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="requests">
+               <Card>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Staff</TableHead><TableHead>Course</TableHead><TableHead>Reason</TableHead><TableHead>Status</TableHead><TableHead>Submitted</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {allChangeRequests.map((request: AdminChangeRequest) => (
+                      <TableRow key={request.id}>
+                        <TableCell>
+                          <div className="font-medium">{request.staff.first_name} {request.staff.last_name}</div>
+                          <div className="text-sm text-muted-foreground">{request.staff.staff_number}</div>
+                        </TableCell>
+                        <TableCell>{request.assignment_details.course_code}</TableCell>
+                        <TableCell>{request.reason}</TableCell>
+                        <TableCell><Badge variant={request.status === 'pending' ? 'destructive' : request.status === 'approved' ? 'default' : 'secondary'}>{request.status}</Badge></TableCell>
+                        <TableCell>{formatTimeAgo(request.submitted_at)}</TableCell>
+                        {/* --- FIX: Button now just calls openModal --- */}
+                        <TableCell><Button variant="outline" size="sm" onClick={() => openModal(request)}><Eye className="h-4 w-4 mr-2" />View</Button></TableCell>
+                      </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        )}
       </div>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <Bell className="h-8 w-8 text-blue-600" />
-              <div>
-                <p className="text-sm text-muted-foreground">Total Items</p>
-                <p className="text-2xl font-semibold">{reportSummaryCounts?.total ?? '...'}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <AlertTriangle className="h-8 w-8 text-orange-600" />
-              <div>
-                <p className="text-sm text-muted-foreground">Pending / Unread</p>
-                <p className="text-2xl font-semibold">{reportSummaryCounts?.unread ?? '...'}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <FileEdit className="h-8 w-8 text-purple-600" />
-              <div>
-                <p className="text-sm text-muted-foreground">Urgent Action</p>
-                <p className="text-2xl font-semibold">{reportSummaryCounts?.urgent_action_required ?? '...'}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Filter Controls */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2"><Filter className="h-5 w-5" />Filter Reports</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col md:flex-row gap-4 items-center">
-          <div className="w-full md:w-64">
-            <Label>Status</Label>
-            <Select value={statuses.join(',')} onValueChange={(value) => setStatuses(value ? value.split(',') : [])}>
-              <SelectTrigger><SelectValue placeholder="Filter by status..." /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="denied">Denied</SelectItem>
-                <SelectItem value="resolved">Resolved</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex gap-2 self-end">
-            <Button onClick={handleApplyFilters} disabled={isLoading}>Apply Filters</Button>
-            <Button onClick={handleClearFilters} variant="outline" disabled={isLoading}>Clear</Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {isLoading ? (
-        <div className="flex justify-center items-center py-16"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
-      ) : error ? (
-        <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{error.message}</AlertDescription></Alert>
-      ) : (
-        <Tabs defaultValue="conflicts" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="conflicts">Conflict Reports ({allConflictReports.length})</TabsTrigger>
-            <TabsTrigger value="requests">Change Requests ({allChangeRequests.length})</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="conflicts">
-            <Card>
-              <Table>
-                <TableHeader><TableRow><TableHead>Student</TableHead><TableHead>Course</TableHead><TableHead>Status</TableHead><TableHead>Submitted</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
-                <TableBody>
-                  {allConflictReports.map((report: AdminConflictReport) => (
-                    <TableRow key={report.id}>
-                      <TableCell>
-                        <div className="font-medium">{report.student.first_name} {report.student.last_name}</div>
-                        <div className="text-sm text-muted-foreground">{report.student.matric_number}</div>
-                      </TableCell>
-                      <TableCell>{report.exam_details.course_code}</TableCell>
-                      <TableCell><Badge variant={report.status === 'pending' ? 'destructive' : 'secondary'}>{report.status}</Badge></TableCell>
-                      <TableCell>{formatTimeAgo(report.submitted_at)}</TableCell>
-                      {/* --- FIX: Button now just calls openModal --- */}
-                      <TableCell><Button variant="outline" size="sm" onClick={() => openModal(report)}><Eye className="h-4 w-4 mr-2" />View</Button></TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="requests">
-             <Card>
-              <Table>
-                <TableHeader><TableRow><TableHead>Staff</TableHead><TableHead>Course</TableHead><TableHead>Reason</TableHead><TableHead>Status</TableHead><TableHead>Submitted</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
-                <TableBody>
-                  {allChangeRequests.map((request: AdminChangeRequest) => (
-                    <TableRow key={request.id}>
-                      <TableCell>
-                        <div className="font-medium">{request.staff.first_name} {request.staff.last_name}</div>
-                        <div className="text-sm text-muted-foreground">{request.staff.staff_number}</div>
-                      </TableCell>
-                      <TableCell>{request.assignment_details.course_code}</TableCell>
-                      <TableCell>{request.reason}</TableCell>
-                      <TableCell><Badge variant={request.status === 'pending' ? 'destructive' : request.status === 'approved' ? 'default' : 'secondary'}>{request.status}</Badge></TableCell>
-                      <TableCell>{formatTimeAgo(request.submitted_at)}</TableCell>
-                      {/* --- FIX: Button now just calls openModal --- */}
-                      <TableCell><Button variant="outline" size="sm" onClick={() => openModal(request)}><Eye className="h-4 w-4 mr-2" />View</Button></TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      )}
-    </div>
+    </>
   );
 }

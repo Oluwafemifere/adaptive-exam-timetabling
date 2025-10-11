@@ -42,7 +42,7 @@ class RoomDurationHomogeneityConstraint(CPSATBaseConstraint):
                     0, max_penalty, f"duration_homogeneity_penalty_{room_id}_{day_id}"
                 )
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add constraints to penalize duration heterogeneity."""
         if self.problem.slot_generation_mode != "flexible":
             logger.info(

@@ -49,7 +49,7 @@ class DailyWorkloadBalanceConstraint(CPSATBaseConstraint):
                 0, max_exams_per_day, "avgExamsPerDay"
             )
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add daily workload balance penalty constraints"""
         constraints_added = 0
         if not self.x:

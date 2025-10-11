@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../co
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
@@ -183,15 +183,27 @@ export function StaffPortal() {
         </div>
         <div className="flex items-center justify-between pt-3 border-t">
           <div className="flex items-center gap-2"><Building className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">{assignment.building}</span></div>
-          {assignment.status === 'assigned' && (<DialogTrigger asChild><Button variant="outline" size="sm" onClick={() => { setSelectedAssignment(assignment.id); setIsModalOpen(true); }}>Request Change</Button></DialogTrigger>)}
+          {assignment.status === 'assigned' && (<Button variant="outline" size="sm" onClick={() => { setSelectedAssignment(assignment.id); setIsModalOpen(true); }}>Request Change</Button>)}
         </div>
       </CardContent>
     </Card>
   );
 
   return (
-    <div className="min-h-screen bg-background">
+    <>
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="w-full max-w-xl">
+          <DialogHeader><DialogTitle>Request Assignment Change</DialogTitle><DialogDescription>Submit a request to change your exam assignment. Provide a clear reason for the request.</DialogDescription></DialogHeader>
+          <div className="space-y-4 py-2">
+            {selectedAssignment && <div className="p-3 bg-muted rounded-md text-sm"><p className="font-semibold">{allAssignments.find(a => a.id === selectedAssignment)?.courseCode}</p><p className="text-muted-foreground">{allAssignments.find(a => a.id === selectedAssignment)?.courseName}</p></div>}
+            <div><Label htmlFor="reason-select">Reason for Change</Label><Select value={changeReason} onValueChange={setChangeReason}><SelectTrigger><SelectValue placeholder="Select a reason..." /></SelectTrigger><SelectContent><SelectItem value="scheduling-conflict">Scheduling Conflict</SelectItem><SelectItem value="medical-appointment">Medical Appointment</SelectItem><SelectItem value="personal-emergency">Personal Emergency</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select></div>
+            <div><Label htmlFor="description">Additional Details (Optional)</Label><Textarea id="description" placeholder="Provide more details..." value={changeDescription} onChange={(e) => setChangeDescription(e.target.value)} rows={3} /></div>
+            <div className="flex justify-end gap-2 pt-2"><Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button><Button onClick={handleSubmitChangeRequest}>Submit Request</Button></div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      
+      <div className="min-h-screen bg-background">
         <div className="bg-card border-b border-border">
           <div className="max-w-6xl mx-auto px-4 py-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -274,16 +286,7 @@ export function StaffPortal() {
             </TabsContent>
           </Tabs>
         </div>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Request Assignment Change</DialogTitle><DialogDescription>Submit a request to change your exam assignment. Provide a clear reason for the request.</DialogDescription></DialogHeader>
-          <div className="space-y-4 py-2">
-            {selectedAssignment && <div className="p-3 bg-muted rounded-md text-sm"><p className="font-semibold">{allAssignments.find(a => a.id === selectedAssignment)?.courseCode}</p><p className="text-muted-foreground">{allAssignments.find(a => a.id === selectedAssignment)?.courseName}</p></div>}
-            <div><Label htmlFor="reason-select">Reason for Change</Label><Select value={changeReason} onValueChange={setChangeReason}><SelectTrigger><SelectValue placeholder="Select a reason..." /></SelectTrigger><SelectContent><SelectItem value="scheduling-conflict">Scheduling Conflict</SelectItem><SelectItem value="medical-appointment">Medical Appointment</SelectItem><SelectItem value="personal-emergency">Personal Emergency</SelectItem><SelectItem value="other">Other</SelectItem></SelectContent></Select></div>
-            <div><Label htmlFor="description">Additional Details (Optional)</Label><Textarea id="description" placeholder="Provide more details..." value={changeDescription} onChange={(e) => setChangeDescription(e.target.value)} rows={3} /></div>
-            <div className="flex justify-end gap-2 pt-2"><Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button><Button onClick={handleSubmitChangeRequest}>Submit Request</Button></div>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+      </div>
+    </>
   );
 }

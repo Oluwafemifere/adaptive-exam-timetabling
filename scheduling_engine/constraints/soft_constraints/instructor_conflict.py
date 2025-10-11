@@ -29,7 +29,7 @@ class InstructorConflictConstraint(CPSATBaseConstraint):
         """No additional variables needed."""
         pass
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add penalties for instructors invigilating their own courses."""
         constraints_added = 0
 

@@ -26,7 +26,7 @@ class InvigilatorSinglePresenceConstraint(CPSATBaseConstraint):
         """No local variables needed for this constraint."""
         pass
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """
         Prevents an invigilator from being assigned to multiple rooms at the same time.
         """

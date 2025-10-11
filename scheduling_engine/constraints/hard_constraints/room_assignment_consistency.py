@@ -23,7 +23,7 @@ class RoomAssignmentConsistencyConstraint(CPSATBaseConstraint):
         """No local variables needed for this constraint."""
         pass
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """
         Add room assignment consistency constraints.
         Handles both Phase 1 (linking to z_vars) and Phase 2 (ensuring placement).

@@ -72,7 +72,7 @@ class CPSATBaseConstraint(ABC):
         return self.penalty_terms
 
     @abstractmethod
-    def add_constraints(self):
+    async def add_constraints(self):
         """Main method to add the constraint's logic to the CP-SAT model."""
         pass
 

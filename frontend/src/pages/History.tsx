@@ -100,8 +100,8 @@ const HistoryItem = React.memo(({ entry }: { entry: any }) => {
                 <summary className="text-sm text-muted-foreground cursor-pointer hover:text-foreground">
                   View details
                 </summary>
-                <div className="mt-2 p-3 bg-muted rounded-md text-sm">
-                  <pre className="whitespace-pre-wrap font-mono text-xs">
+                <div className="mt-2 p-3 bg-muted rounded-md text-sm overflow-x-auto">
+                  <pre className="whitespace-pre-wrap font-mono text-xs min-w-max">
                     {JSON.stringify(entry.details, null, 2)}
                   </pre>
                 </div>
@@ -116,16 +116,16 @@ const HistoryItem = React.memo(({ entry }: { entry: any }) => {
                 <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <h5 className="text-sm font-medium text-red-600 mb-1">Before</h5>
-                    <div className="p-3 bg-red-50 rounded-md text-sm">
-                      <pre className="whitespace-pre-wrap font-mono text-xs">
+                    <div className="p-3 bg-red-50 rounded-md text-sm overflow-x-auto">
+                      <pre className="whitespace-pre-wrap font-mono text-xs min-w-max">
                         {JSON.stringify(entry.changes.before, null, 2)}
                       </pre>
                     </div>
                   </div>
                   <div>
                     <h5 className="text-sm font-medium text-green-600 mb-1">After</h5>
-                    <div className="p-3 bg-green-50 rounded-md text-sm">
-                      <pre className="whitespace-pre-wrap font-mono text-xs">
+                    <div className="p-3 bg-green-50 rounded-md text-sm overflow-x-auto">
+                      <pre className="whitespace-pre-wrap font-mono text-xs min-w-max">
                         {JSON.stringify(entry.changes.after, null, 2)}
                       </pre>
                     </div>

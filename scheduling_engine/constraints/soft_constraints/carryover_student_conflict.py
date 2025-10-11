@@ -30,7 +30,7 @@ class CarryoverStudentConflictConstraint(CPSATBaseConstraint):
         """Initialize penalty variables for each potential conflict."""
         self.penalty_vars = []
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add penalties for any conflict involving a carryover student."""
         constraints_added = 0
         student_exams = self.precomputed_data.get("student_exams", {})

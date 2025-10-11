@@ -26,7 +26,7 @@ class RoomCapacityHardConstraint(CPSATBaseConstraint):
         phase="building_phase_2_model",
         message="Applying room capacity limits...",
     )
-    def add_constraints(self):
+    async def add_constraints(self):
         """
         Adds robust, aggregate capacity constraints for the Phase 2 packing model.
         """

@@ -1,5 +1,3 @@
-# backend/Scripts/seeders/fake_seed.py
-
 import asyncio
 import argparse
 import logging
@@ -142,7 +140,7 @@ class ComprehensiveFakeSeeder:
                 "programmes": 15,
                 "courses": 80,
                 "students": 100,
-                "staff": 30,
+                "staff": 5,  # MODIFIED: Adjusted for a ~20:1 student-staff ratio
                 "buildings": 4,
                 "rooms": 40,
                 "academic_sessions": 2,
@@ -153,7 +151,7 @@ class ComprehensiveFakeSeeder:
                 "programmes": 30,
                 "courses": 200,
                 "students": 500,
-                "staff": 75,
+                "staff": 25,  # MODIFIED: Adjusted for a ~20:1 student-staff ratio
                 "buildings": 6,
                 "rooms": 80,
                 "academic_sessions": 2,
@@ -164,7 +162,7 @@ class ComprehensiveFakeSeeder:
                 "programmes": 50,
                 "courses": 500,
                 "students": 2000,
-                "staff": 200,
+                "staff": 100,  # MODIFIED: Adjusted for a ~20:1 student-staff ratio
                 "buildings": 10,
                 "rooms": 150,
                 "academic_sessions": 3,
@@ -175,7 +173,7 @@ class ComprehensiveFakeSeeder:
                 "programmes": 80,
                 "courses": 800,
                 "students": 5000,
-                "staff": 400,
+                "staff": 250,  # MODIFIED: Adjusted for a ~20:1 student-staff ratio
                 "buildings": 12,
                 "rooms": 250,
                 "academic_sessions": 3,
@@ -186,7 +184,7 @@ class ComprehensiveFakeSeeder:
                 "programmes": 120,
                 "courses": 1200,
                 "students": 10000,
-                "staff": 600,
+                "staff": 500,  # MODIFIED: Adjusted for a ~20:1 student-staff ratio
                 "buildings": 15,
                 "rooms": 400,
                 "academic_sessions": 4,
@@ -272,11 +270,11 @@ class ComprehensiveFakeSeeder:
     async def _clear_all_data(self):
         logger.warning("🧹 Clearing all existing data from database...")
         async with db_manager.get_db_transaction() as session:
-            # A safe, dependency-aware order for truncation
+            # CORRECTED: A dependency-aware order for truncation.
+            # Children are truncated before parents.
             tables_to_clear = [
                 "audit_logs",
                 "user_notifications",
-                "system_events",
                 "assignment_change_requests",
                 "conflict_reports",
                 "timetable_conflicts",
@@ -290,43 +288,45 @@ class ComprehensiveFakeSeeder:
                 "user_filter_presets",
                 "file_uploads",
                 "timetable_job_exam_days",
-                "timetable_versions",
-                "timetable_jobs",
-                "timetable_scenarios",
-                "file_upload_sessions",
-                "data_seeding_sessions",
-                "exam_prerequisites_association",
-                "exam_departments",
-                "configuration_rule_settings",
-                "constraint_parameters",
-                "system_configurations",
-                "constraint_configurations",
+                "timetable_versions",  # Depends on jobs, scenarios
+                "system_events",  # Depends on users
+                "timetable_jobs",  # Depends on sessions, users, scenarios
+                "timetable_scenarios",  # Depends on users
+                "file_upload_sessions",  # Depends on users, sessions
+                "data_seeding_sessions",  # Depends on users, sessions
+                "exam_prerequisites_association",  # Depends on exams
+                "exam_departments",  # Depends on exams, departments
+                "configuration_rule_settings",  # Depends on configurations, rules
+                "system_configurations",  # Depends on configurations, users
+                "constraint_configurations",  # Depends on users
+                "constraint_parameters",  # Depends on rules
                 "constraint_rules",
-                "course_instructors",
-                "course_faculties",  # New
-                "course_departments",  # New
-                "course_registrations",
-                "student_enrollments",
-                "staff_unavailability",
-                "exams",
+                "course_instructors",  # Depends on courses, staff
+                "course_faculties",  # Depends on courses, faculties
+                "course_departments",  # Depends on courses, departments
+                "course_registrations",  # Depends on students, courses, sessions
+                "student_enrollments",  # Depends on students, sessions
+                "staff_unavailability",  # Depends on staff, sessions
+                "exams",  # Depends on courses, sessions
                 "courses",
-                "staff",
-                "students",
-                "programmes",
-                "departments",
+                "staff",  # Depends on departments, users
+                "students",  # Depends on programmes, users
+                "programmes",  # Depends on departments
+                "room_departments",  # Depends on rooms, departments
+                "departments",  # Depends on faculties
                 "faculties",
-                "room_departments",  # New
-                "rooms",
+                "rooms",  # Depends on buildings, room_types
                 "room_types",
                 "buildings",
-                "timeslot_template_periods",
+                "timeslot_template_periods",  # Depends on timeslot_templates
                 "timeslot_templates",
-                "session_templates",
+                "session_templates",  # Depends on academic_sessions
                 "academic_sessions",
                 "users",
             ]
             for table in tables_to_clear:
                 try:
+                    # This command remains the same
                     await session.execute(
                         text(
                             f'TRUNCATE TABLE exam_system."{table}" RESTART IDENTITY CASCADE'

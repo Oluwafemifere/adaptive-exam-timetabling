@@ -9,5 +9,4 @@ CPSATConstraintManager based on the configuration provided to the ExamScheduling
 
 from .hard_constraints import *
 
-# Soft constraints would be imported here as well, e.g.:
-# from .soft_constraints import *
+from .soft_constraints import *

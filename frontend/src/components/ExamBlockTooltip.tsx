@@ -17,14 +17,20 @@ export function ExamBlockTooltip({ exam }: ExamBlockTooltipProps) {
     return `${percentage}%`;
   };
 
-  // Helper function to determine the color for the utilization text
-  const getUtilizationColor = () => {
-    if (!exam.roomCapacity || exam.roomCapacity === 0) return 'text-gray-400';
+  // --- FIX START ---
+  // The original function was brittle and could cause issues with Tailwind's JIT compiler.
+  // This function now explicitly defines both text and background color classes to ensure they are always applied correctly.
+  const getUtilizationClasses = () => {
+    if (!exam.roomCapacity || exam.roomCapacity === 0) {
+      return { text: 'text-gray-400', bg: 'bg-gray-400' };
+    }
     const percentage = (exam.expectedStudents / exam.roomCapacity) * 100;
-    if (percentage >= 90) return 'text-red-400';
-    if (percentage >= 75) return 'text-yellow-400';
-    return 'text-green-400';
+    if (percentage >= 90) return { text: 'text-red-400', bg: 'bg-red-400' };
+    if (percentage >= 75) return { text: 'text-yellow-400', bg: 'bg-yellow-400' };
+    return { text: 'text-green-400', bg: 'bg-green-400' };
   };
+  const utilizationClasses = getUtilizationClasses();
+  // --- FIX END ---
 
   // Helper function to get a descriptive label for the room capacity
   const getUtilizationLabel = () => {
@@ -75,7 +81,6 @@ export function ExamBlockTooltip({ exam }: ExamBlockTooltipProps) {
   };
 
   return (
-    // FIX: Added `text-card-foreground` to ensure text is visible on the card background in both light and dark modes.
     <div className="space-y-4 max-w-md p-1 text-card-foreground">
       {/* Header: Course Code, Name, and Badges */}
       <div className="border-b border-border pb-3">
@@ -141,7 +146,7 @@ export function ExamBlockTooltip({ exam }: ExamBlockTooltipProps) {
       <div className="bg-muted/30 rounded-md p-3">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-medium">Room Capacity</span>
-          <span className={`font-semibold ${getUtilizationColor()}`}>
+          <span className={`font-semibold ${utilizationClasses.text}`}>
             {getUtilization()}
           </span>
         </div>
@@ -154,7 +159,7 @@ export function ExamBlockTooltip({ exam }: ExamBlockTooltipProps) {
         </div>
         <div className="w-full bg-muted mt-2 rounded-full h-2">
           <div 
-            className={`h-2 rounded-full transition-all ${getUtilizationColor().replace('text-', 'bg-')}`}
+            className={`h-2 rounded-full transition-all ${utilizationClasses.bg}`}
             style={{ width: `${Math.min(100, (exam.expectedStudents && exam.roomCapacity) ? (exam.expectedStudents / exam.roomCapacity) * 100 : 0)}%` }}
           />
         </div>

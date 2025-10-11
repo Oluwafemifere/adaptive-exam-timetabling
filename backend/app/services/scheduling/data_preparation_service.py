@@ -71,6 +71,8 @@ class ExactDataMapper:
             "has_projector": db_room.get("has_projector", False),
             "has_ac": db_room.get("has_ac", False),
             "overbookable": db_room.get("overbookable", False),
+            "building_faculty_id": db_room.get("building_faculty_id"),
+            "departments": db_room.get("departments", []),
             "max_inv_per_room": db_room.get("max_inv_per_room", 2),
             "is_accessible": db_room.get("is_accessible", False),
         }
@@ -94,6 +96,7 @@ class ExactDataMapper:
             "name": full_name or f"Staff {db_staff.get('staff_number', 'Unknown')}",
             "email": db_staff.get("email"),
             "department": db_staff.get("department"),
+            "department_id": db_staff.get("department_id"),
             "can_invigilate": db_staff.get("can_invigilate", True),
             "max_concurrent_exams": db_staff.get("max_concurrent_exams", 1),
             "max_students_per_exam": db_staff.get("max_students_per_exam", 50),

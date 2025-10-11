@@ -22,7 +22,7 @@ class OccupancyDefinitionConstraint(CPSATBaseConstraint):
         """No local variables needed for this constraint."""
         pass
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """FIXED: Add occupancy definition constraints with robust equivalence logic."""
         constraints_added = 0
 

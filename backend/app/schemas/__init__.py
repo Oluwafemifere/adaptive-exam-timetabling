@@ -17,13 +17,14 @@ from . import (
     portal,
     reports,
     dashboard,
-    configuration,  # Import the new configuration schema module
+    configuration,
+    staging,
 )
 from .session_setup import SessionSetupCreate, SessionSetupSummary, TimeSlot
 
 # Re-export commonly used classes for direct import
 from .auth import TokenData, Token, StudentSelfRegister, StaffSelfRegister
-
+from .staging import *
 from .academic import (
     AcademicSessionRead,
     FacultyRead,
@@ -257,4 +258,6 @@ __all__ = [
     "SessionSetupCreate",
     "SessionSetupSummary",
     "TimeSlot",
+    # Staging
+    "staging",
 ]

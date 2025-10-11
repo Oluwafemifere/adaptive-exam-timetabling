@@ -84,16 +84,35 @@ export default function App() {
   return (
     <>
       <AppContent />
+      {/* --- FIX START --- */}
+      {/* Updated toast styles to be more vibrant and integrated with the app theme. */}
+      {/* Uses a colored accent border and matching icon/title colors. */}
       <Toaster
-        position="top-right"
-        toastOptions={{
-          style: {
-            background: "hsl(var(--card))",
-            color: "hsl(var(--card-foreground))",
-            border: "1px solid hsl(var(--border))",
-          },
-        }}
-      />
+      position="top-right"
+      offset={64} // distance from top bar; tweak as needed
+      toastOptions={{
+        style: {
+          zIndex: 99999, // forces it above modals, navbars, etc.
+        },
+        classNames: {
+          toast:
+            "group toast w-full md:max-w-md group-[.toaster]:bg-card group-[.toaster]:text-card-foreground group-[.toaster]:shadow-xl group-[.toaster]:p-4 border-l-4",
+          description: "group-[.toast]:text-muted-foreground",
+          actionButton:
+            "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",
+          cancelButton:
+            "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
+          success:
+            "!border-l-green-600 dark:!border-l-green-500 !text-green-700 dark:!text-green-400",
+          error: "!border-l-destructive !text-destructive",
+          info:
+            "!border-l-blue-600 dark:!border-l-blue-500 !text-blue-700 dark:!text-blue-400",
+          icon:
+            "group-[.toast.success]:text-green-600 group-[.toast.error]:text-destructive group-[.toast.info]:text-blue-600",
+        },
+      }}
+    />
+      {/* --- FIX END --- */}
     </>
   );
 }

@@ -26,7 +26,7 @@ class RoomSequentialUseConstraint(CPSATBaseConstraint):
         phase="building_phase_2_model",
         message="Applying room sequential use (no overlap)...",
     )
-    def add_constraints(self):
+    async def add_constraints(self):
         """
         For each room, create a set of optional time intervals corresponding to
         exam start times and add a 'NoOverlap' constraint to prevent collisions.

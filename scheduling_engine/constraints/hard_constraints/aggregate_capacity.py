@@ -1,3 +1,4 @@
+# scheduling_engine/constraints/hard_constraints/aggregate_capacity.py
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
 import logging
 from backend.app.utils.celery_task_utils import task_progress_tracker
@@ -22,7 +23,7 @@ class AggregateCapacityConstraint(CPSATBaseConstraint):
         phase="building_phase_1_model",
         message="Applying aggregate capacity limits...",
     )
-    def add_constraints(self):
+    async def add_constraints(self):
         """
         For each time slot, ensure:
         1. The total number of exams scheduled does not exceed the total number of available rooms.

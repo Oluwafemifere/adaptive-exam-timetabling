@@ -1,3 +1,4 @@
+// frontend/src/pages/UserManagement.tsx
 import React, { useState, useEffect } from "react";
 import {
   User,
@@ -16,6 +17,7 @@ import {
   CardHeader,
   CardTitle,
   CardDescription,
+  CardFooter,
 } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -42,6 +44,8 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
+  DialogClose,
 } from "../components/ui/dialog";
 import { Label } from "../components/ui/label";
 import {
@@ -185,7 +189,7 @@ const UserFormDialog = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{user?.id ? "Edit User" : "Add New User"}</DialogTitle>
           <DialogDescription>
@@ -309,16 +313,15 @@ const UserFormDialog = ({
               </div>
             </>
           )}
-
-          <div className="flex justify-end space-x-3 pt-4">
-            <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave}>
-              {user?.id ? "Save Changes" : "Create User"}
-            </Button>
-          </div>
         </div>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="outline">Cancel</Button>
+          </DialogClose>
+          <Button type="submit" onClick={handleSave}>
+            {user?.id ? "Save Changes" : "Create User"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -406,9 +409,51 @@ export function UserManagement() {
 
   const userStats = {
     total: pagination.total_items,
-    active: users.filter((u) => u.is_active).length,
-    admins: users.filter((u) => ["admin", "superuser"].includes(u.role)).length,
+    // FIX: Use total counts from the pagination object provided by the API
+    // This assumes the API response is updated to include `total_active` and `total_admins` fields.
+    active: (pagination as any).total_active ?? 0,
+    admins: (pagination as any).total_admins ?? 0,
   };
+
+  const getPaginationRange = (
+    currentPage: number,
+    totalPages: number,
+    maxPagesToShow: number = 9
+  ): number[] => {
+    if (totalPages <= maxPagesToShow) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+
+    const half = Math.floor(maxPagesToShow / 2);
+    let start = Math.max(1, currentPage - half);
+    let end = Math.min(totalPages, currentPage + half);
+
+    if (currentPage - start < half) {
+      end = Math.min(totalPages, end + (half - (currentPage - start)));
+    }
+
+    if (end - currentPage < half) {
+      start = Math.max(1, start - (half - (end - currentPage)));
+    }
+    
+    // Final adjustment to ensure size is correct
+    if (end - start + 1 < maxPagesToShow) {
+        if (start === 1) {
+            end = Math.min(start + maxPagesToShow - 1, totalPages);
+        } else if (end === totalPages) {
+            start = Math.max(end - maxPagesToShow + 1, 1);
+        }
+    }
+
+
+    const range: number[] = [];
+    for (let i = start; i <= end; i++) {
+      range.push(i);
+    }
+    return range;
+  };
+
+  const pageNumbers = getPaginationRange(currentPage, pagination.total_pages);
 
   return (
     <div className="space-y-6">
@@ -548,127 +593,131 @@ export function UserManagement() {
                 </Button>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Last Login</TableHead>
-                    <TableHead className="w-[100px]">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {users.map((user) => {
-                    const RoleIcon = getRoleIcon(user.role);
-                    const fullName = `${user.first_name} ${user.last_name}`;
-                    return (
-                      <TableRow key={user.id}>
-                        <TableCell>
-                          <div className="flex items-center space-x-3">
-                            <Avatar className="h-8 w-8">
-                              <AvatarFallback>
-                                <AvatarInitials name={fullName} />
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <div className="font-medium">{fullName}</div>
-                              <div className="text-sm text-muted-foreground">
-                                {user.email}
+              <div className="overflow-x-auto rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>User</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Last Login</TableHead>
+                      <TableHead className="w-[100px]">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {users.map((user) => {
+                      const RoleIcon = getRoleIcon(user.role);
+                      const fullName = `${user.first_name} ${user.last_name}`;
+                      return (
+                        <TableRow key={user.id}>
+                          <TableCell>
+                            <div className="flex items-center space-x-3">
+                              <Avatar className="h-8 w-8">
+                                <AvatarFallback>
+                                  <AvatarInitials name={fullName} />
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <div className="font-medium truncate">{fullName}</div>
+                                <div className="text-sm text-muted-foreground truncate">
+                                  {user.email}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge>
-                            <RoleIcon className="h-3 w-3 mr-1" />
-                            {user.role}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge className={getStatusColor(user.is_active)}>
-                            {user.is_active ? "Active" : "Inactive"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {user.last_login
-                            ? new Date(user.last_login).toLocaleString()
-                            : "Never"}
-                        </TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="sm">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setSelectedUser(user);
-                                  setIsFormOpen(true);
-                                }}
-                              >
-                                <Edit className="h-4 w-4 mr-2" /> Edit User
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() => handleDeleteUser(user.id)}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" /> Delete User
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                          </TableCell>
+                          <TableCell>
+                            <Badge>
+                              <RoleIcon className="h-3 w-3 mr-1" />
+                              {user.role}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={getStatusColor(user.is_active)}>
+                              {user.is_active ? "Active" : "Inactive"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {user.last_login
+                              ? new Date(user.last_login).toLocaleString()
+                              : "Never"}
+                          </TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setSelectedUser(user);
+                                    setIsFormOpen(true);
+                                  }}
+                                >
+                                  <Edit className="h-4 w-4 mr-2" /> Edit User
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-destructive"
+                                  onClick={() => handleDeleteUser(user.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" /> Delete User
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             )
           )}
         </CardContent>
 
         {pagination.total_pages > 1 && (
-          <Pagination className="p-4">
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setCurrentPage((p) => Math.max(1, p - 1));
-                  }}
-                />
-              </PaginationItem>
-              {Array.from({ length: pagination.total_pages }).map((_, i) => (
-                <PaginationItem key={i}>
-                  <PaginationLink
+          <CardFooter className="pt-4 justify-center">
+            <Pagination>
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
                     href="#"
-                    isActive={currentPage === i + 1}
                     onClick={(e) => {
                       e.preventDefault();
-                      setCurrentPage(i + 1);
+                      setCurrentPage((p) => Math.max(1, p - 1));
                     }}
-                  >
-                    {i + 1}
-                  </PaginationLink>
+                  />
                 </PaginationItem>
-              ))}
-              <PaginationItem>
-                <PaginationNext
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setCurrentPage((p) =>
-                      Math.min(pagination.total_pages, p + 1)
-                    );
-                  }}
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
+                {pageNumbers.map((pageNumber) => (
+                  <PaginationItem key={pageNumber}>
+                    <PaginationLink
+                      href="#"
+                      isActive={currentPage === pageNumber}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCurrentPage(pageNumber);
+                      }}
+                    >
+                      {pageNumber}
+                    </PaginationLink>
+                  </PaginationItem>
+                ))}
+                <PaginationItem>
+                  <PaginationNext
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setCurrentPage((p) =>
+                        Math.min(pagination.total_pages, p + 1)
+                      );
+                    }}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+          </CardFooter>
         )}
       </Card>
 

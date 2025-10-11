@@ -156,7 +156,7 @@ class ConstraintEncoder:
     MODIFIED ConstraintEncoder for two-phase decomposition with heuristics.
     """
 
-    def __init__(self, problem, model, use_ga_filter: bool = False):
+    def __init__(self, problem, model, use_ga_filter: bool = True):
         self.problem = problem
         self.model = model
         self.factory: Optional[VariableFactory] = None
@@ -306,73 +306,56 @@ class ConstraintEncoder:
         return variables
 
     def _create_full_phase2_variables(self, phase1_results: Dict) -> Dict[str, Dict]:
-        """Creates Y and W variables for the entire schedule based on fixed times."""
+        """
+        FIXED: Creates Y and W variables for an entire exam group based on a shared start time.
+        It creates variables for ALL slots the exams in the group will occupy.
+        """
         if not self.factory:
             raise RuntimeError("Factory not initialized")
 
         variables: Dict[str, Dict] = {"y": {}, "w": {}, "unused_seats": {}}
         logger.info(
-            "Creating variables for the full packing model based on Phase 1 results..."
+            "Creating variables for a start-time group based on Phase 1 results..."
         )
 
-        # Group exams by slot based on Phase 1 results to apply heuristics efficiently
-        exams_by_slot = defaultdict(list)
+        # Collect all slots that will be occupied by any exam in this start-time group
+        all_occupied_slots = set()
+        exams_in_group = []
         for exam_id, (start_slot_id, _) in phase1_results.items():
             exam = self.problem.exams.get(exam_id)
             if not exam:
-                logger.warning(
-                    f"Exam {exam_id} from phase 1 results not found in problem model."
-                )
                 continue
+            exams_in_group.append(exam)
             occupied_slots = self.problem.get_occupancy_slots(exam_id, start_slot_id)
-            for slot_id in occupied_slots:
-                exams_by_slot[slot_id].append(exam)
+            all_occupied_slots.update(occupied_slots)
 
         logger.info(
-            f"Found exams scheduled in {len(exams_by_slot)} different time slots."
+            f"Group contains {len(exams_in_group)} exams, occupying a total of {len(all_occupied_slots)} unique slots."
         )
 
-        # Create variables slot by slot, but collect them all into the main dictionary
-        for slot_id, exams_in_slot in exams_by_slot.items():
-            logger.info(
-                f"Creating variables for slot {slot_id} which has {len(exams_in_slot)} exams."
-            )
-            # Create Y (exam-in-room) variables for all exams occupying this slot
-            for exam in exams_in_slot:
+        # Create Y-variables for each exam in the group for each of its occupied slots
+        for exam in exams_in_group:
+            start_slot_id = phase1_results[exam.id][0]
+            occupied_slots = self.problem.get_occupancy_slots(exam.id, start_slot_id)
+            for slot_id in occupied_slots:
                 for room_id in self.problem.rooms:
                     y_key = (exam.id, room_id, slot_id)
                     variables["y"][y_key] = self.factory.get_y_var(*y_key)
 
-            # --- Apply Departmental Locality Heuristic for W-variables ---
-            relevant_dept_ids = {
-                did for exam in exams_in_slot for did in exam.department_ids
-            }
-            suitable_invigilators = [
-                inv
-                for inv in self.problem.invigilators.values()
-                if getattr(inv, "department_id", None) in relevant_dept_ids
-            ]
-
-            log_msg = f"For slot {slot_id}, found {len(relevant_dept_ids)} relevant departments. "
-            if not suitable_invigilators:
-                suitable_invigilators = list(self.problem.invigilators.values())
-                log_msg += f"No department-specific invigilators found; using all {len(suitable_invigilators)} invigilators."
-            else:
-                log_msg += f"Selected {len(suitable_invigilators)} suitable invigilators based on department."
-            logger.info(log_msg)
-
-            # Create W-vars and unused_seats for this slot
+        # Create W-variables and auxiliary variables for every occupied slot in the group
+        for slot_id in all_occupied_slots:
             for room_id, room in self.problem.rooms.items():
+                # Unused seats variable for room fit penalties
                 variables["unused_seats"][(room_id, slot_id)] = (
                     self.factory.get_unused_seats_var(
                         room_id, slot_id, room.exam_capacity
                     )
                 )
-                for inv in suitable_invigilators:
-                    if self.problem.is_invigilator_available(inv.id, slot_id):
-                        w_key = (inv.id, room_id, slot_id)
+                # Invigilator assignment variables
+                for inv_id in self.problem.invigilators:
+                    if self.problem.is_invigilator_available(inv_id, slot_id):
+                        w_key = (inv_id, room_id, slot_id)
                         variables["w"][w_key] = self.factory.get_w_var(*w_key)
-
         return variables
 
     def _get_candidate_starts(self, use_filter: bool) -> Set[Tuple[UUID, UUID]]:

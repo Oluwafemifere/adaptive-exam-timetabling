@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '../components/ui/dialog';
+import { DialogFooter, DialogClose } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
@@ -196,14 +197,14 @@ export function StudentPortal() {
                     Report a Conflict
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent className="sm:max-w-xl">
                   <DialogHeader>
                     <DialogTitle>Report Exam Conflict</DialogTitle>
                     <DialogDescription>
                       Report a scheduling conflict or issue with one of your exams. Provide as much detail as possible.
                     </DialogDescription>
                   </DialogHeader>
-                  <div className="space-y-4 py-2">
+                  <div className="grid gap-4 py-4">
                     <div>
                       <Label htmlFor="exam-select">Select Exam</Label>
                       <Select value={selectedExam} onValueChange={setSelectedExam}>
@@ -229,15 +230,13 @@ export function StudentPortal() {
                         rows={4}
                       />
                     </div>
-                    <div className="flex justify-end gap-2 pt-2">
-                      <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
-                        Cancel
-                      </Button>
-                      <Button onClick={handleSubmitConflict}>
-                        Submit Report
-                      </Button>
-                    </div>
                   </div>
+                  <DialogFooter>
+                    <DialogClose asChild>
+                      <Button type="button" variant="outline">Cancel</Button>
+                    </DialogClose>
+                    <Button type="submit" onClick={handleSubmitConflict}>Submit Report</Button>
+                  </DialogFooter>
                 </DialogContent>
               </Dialog>
               <Button variant="ghost" size="sm" onClick={logout}>

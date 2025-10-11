@@ -40,7 +40,7 @@ class OverbookingPenaltyConstraint(CPSATBaseConstraint):
                         0, max_overbook, f"overbookExtra_{room_id}_{slot_id}"
                     )
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add overbooking penalty constraints."""
         constraints_added = 0
 

@@ -194,3 +194,9 @@
 html {
   font-size: var(--font-size);
 }
+
+/* --- FIX START --- */
+/* Removed the problematic global override for dialog content that was causing centering issues. */
+@layer components {
+}
+/* --- FIX END --- */

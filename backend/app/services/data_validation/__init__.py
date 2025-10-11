@@ -16,6 +16,7 @@ from .csv_processor import (
     transform_uuid,
     validate_required,
     validate_email,
+    transform_string_to_array,
 )
 
 from .validation_schemas import ENTITY_SCHEMAS
@@ -36,6 +37,7 @@ __all__ = [
     "transform_decimal",
     "transform_boolean",
     "transform_uuid",
+    "transform_string_to_array",
     "validate_required",
     "validate_email",
 ]

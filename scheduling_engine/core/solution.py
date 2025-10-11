@@ -154,11 +154,48 @@ class TimetableSolution:
         return (assigned / total_exams) * 100
 
     def is_feasible(self) -> bool:
-        """FIXED - Check if solution is feasible (complete and conflict-free)"""
-        return (
-            self.get_completion_percentage() >= 100
-            and len(self.detect_conflicts_fixed()) == 0
-        )
+        """
+        FIXED - Check if solution is feasible (complete and conflict-free).
+        ADDED - Detailed logging for infeasibility cause.
+        """
+        self.update_assignment_statuses()  # Ensure statuses are up-to-date
+
+        completion_ok = self.get_completion_percentage() >= 100
+        conflicts_ok = len(self.detect_conflicts_fixed()) == 0
+
+        if completion_ok and conflicts_ok:
+            return True
+
+        # --- START OF NEW VALIDATION LOGGING ---
+        logger.warning("--- FINAL FEASIBILITY CHECK FAILED ---")
+        if not completion_ok:
+            logger.error("REASON: Not all exam assignments are complete.")
+            incomplete_assignments = [
+                a for a in self.assignments.values() if not a.is_complete()
+            ]
+            logger.error(f"Found {len(incomplete_assignments)} incomplete assignments:")
+            for i, assign in enumerate(incomplete_assignments):
+                exam = self.problem.exams.get(assign.exam_id)
+                exam_info = f"Exam ID: {assign.exam_id} (Course: {getattr(exam, 'course_code', 'N/A')})"
+                details = []
+                if assign.time_slot_id is None:
+                    details.append("Missing time_slot_id")
+                if not assign.room_ids:
+                    details.append("Missing room_ids")
+                if assign.assigned_date is None:
+                    details.append("Missing assigned_date")
+                logger.error(f"  {i+1}. {exam_info} - Issues: {', '.join(details)}")
+
+        if not conflicts_ok:
+            logger.error(
+                "REASON: Hard constraint conflicts were detected in the final solution."
+            )
+            # The conflicts are already logged by log_detected_conflicts(), so this message is sufficient.
+
+        logger.warning("------------------------------------")
+        # --- END OF NEW VALIDATION LOGGING ---
+
+        return False
 
     def calculate_objective_value(self) -> float:
         """Calculate objective value based on conflicts and completion"""
@@ -350,6 +387,24 @@ class TimetableSolution:
         )
 
         self.statistics = stats
+
+    def log_detected_conflicts(self):
+        """Logs the details of all detected conflicts."""
+        if not self.conflicts:
+            logger.info("No conflicts detected in the final solution.")
+            return
+
+        logger.info(f"--- DETECTED CONFLICTS ({len(self.conflicts)}) ---")
+        for conflict in self.conflicts.values():
+            logger.warning(
+                f"  - [{conflict.severity.value.upper()}] {conflict.conflict_type}: {conflict.description}"
+            )
+            logger.warning(f"    Affected Exams: {conflict.affected_exams}")
+            if conflict.affected_resources:
+                logger.warning(f"    Affected Resources: {conflict.affected_resources}")
+            if conflict.affected_students:
+                logger.warning(f"    Affected Students: {conflict.affected_students}")
+        logger.info("------------------------------------")
 
     def to_dict(self) -> Dict[str, Any]:
         """

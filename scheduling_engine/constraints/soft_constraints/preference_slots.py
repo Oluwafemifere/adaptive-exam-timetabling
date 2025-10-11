@@ -31,7 +31,7 @@ class PreferenceSlotsConstraint(CPSATBaseConstraint):
                     f"prefViol_{exam_id}"
                 )
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add preference slots penalty constraints."""
         constraints_added = 0
         if not self.pref_viol_vars:

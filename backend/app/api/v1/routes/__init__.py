@@ -23,6 +23,7 @@ from .portal import router as portal_router
 from .dashboard import router as dashboard_router
 from .notifications import router as notifications_router
 from .profile import router as profile_router
+from .staging import router as staging_router
 
 # Import the new configurations router
 from .configurations import router as configurations_router
@@ -80,7 +81,13 @@ router.include_router(websockets_router, prefix="/ws", tags=["WebSockets"])
 router.include_router(
     session_setup_router, prefix="/setup", tags=["Session Setup Wizard"]
 )
-router.include_router(seeding_router, prefix="/seeding", tags=["File Upload"])
+router.include_router(seeding_router, prefix="/seeding", tags=["Data Seeding Status"])
+router.include_router(
+    staging_router,
+    prefix="/staging-records",  # Using a distinct prefix
+    tags=["Staging Area Management"],
+)
+
 
 # Export the main router for use in the main API
 __all__ = ["router"]

@@ -26,7 +26,7 @@ class InvigilatorRequirementConstraint(CPSATBaseConstraint):
         super().__init__(definition, problem, shared_vars, model)
         # Define a weight for the soft penalty part of this constraint.
         # This can be a fixed value or made configurable. A low weight is often sufficient.
-        self.surplus_penalty_weight = 10
+        self.surplus_penalty_weight = 1000
 
     def initialize_variables(self):
         """Initialize surplus variables for the penalty component."""
@@ -38,7 +38,7 @@ class InvigilatorRequirementConstraint(CPSATBaseConstraint):
         phase="building_phase_2_model",
         message="Applying invigilator requirements...",
     )
-    def add_constraints(self):
+    async def add_constraints(self):
         """Links room assignments (y) to invigilator requirements (w)."""
         constraints_added = 0
         if not self.y or not self.w:

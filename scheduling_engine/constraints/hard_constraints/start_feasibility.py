@@ -22,7 +22,7 @@ class StartFeasibilityConstraint(CPSATBaseConstraint):
         """No local variables needed for this constraint."""
         pass
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add start feasibility constraints."""
         constraints_added = 0
         for (exam_id, slot_id), x_var in self.x.items():

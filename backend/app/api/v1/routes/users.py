@@ -9,15 +9,17 @@ from pydantic import BaseModel, UUID4
 
 from ....api.deps import db_session, current_user
 from ....models.users import User
-from ....services.user_management.authentication_service import AuthenticationService
+from ....services.user_management import (
+    AuthenticationService,
+    UserManagementService,  # --- UPDATED: Import new service ---
+)
 from ....services.data_retrieval.data_retrieval_service import DataRetrievalService
-from ....services.data_management.core_data_service import CoreDataService
 from ....schemas.users import (
     UserCreate,
     UserRead,
     UserUpdate,
-    PaginatedUserResponse,
-    AdminUserCreate,  # Import the new schema
+    PaginatedUserResponse,  # --- UPDATED: Schema now includes total counts ---
+    AdminUserCreate,
 )
 from ....schemas.system import GenericResponse
 
@@ -38,36 +40,6 @@ async def read_users_me(current_user: User = Depends(current_user)):
     return current_user
 
 
-@router.post(
-    "/register", response_model=GenericResponse, status_code=status.HTTP_201_CREATED
-)
-async def register_user(
-    user_in: UserCreate,
-    db: AsyncSession = Depends(db_session),
-):
-    """Register a new user with a specific role."""
-    service = AuthenticationService(db)
-    from ....core.security import hash_password
-
-    user_data = user_in.model_dump()
-    user_data["password_hash"] = hash_password(user_data.pop("password"))
-
-    result = await service.register_user(user_data)
-
-    if not result.get("status") == "success":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result.get("message", "User registration failed."),
-        )
-
-    return GenericResponse(
-        success=True,
-        message="User registered successfully.",
-        data={"user_id": result.get("user_id"), "role": result.get("role")},
-    )
-
-
-# NEW: Admin endpoint for creating and registering users
 @router.post(
     "/admin", response_model=GenericResponse, status_code=status.HTTP_201_CREATED
 )
@@ -139,7 +111,8 @@ async def update_user(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
         )
 
-    service = CoreDataService(db)
+    # --- UPDATED: Use the new dedicated service ---
+    service = UserManagementService(db)
     update_data = user_in.model_dump(exclude_unset=True)
 
     if not update_data:
@@ -165,7 +138,7 @@ async def delete_user(
     db: AsyncSession = Depends(db_session),
     admin_user: User = Depends(current_user),
 ):
-    """Soft delete a user by setting them to inactive (admin only)."""
+    """Delete a user (admin only)."""
     if not admin_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
@@ -177,7 +150,8 @@ async def delete_user(
             detail="Cannot delete your own user account.",
         )
 
-    service = CoreDataService(db)
+    # --- UPDATED: Use the new dedicated service ---
+    service = UserManagementService(db)
     result = await service.delete_user(user_id, admin_user.id)
 
     if not result.get("success"):
@@ -194,7 +168,7 @@ async def get_user_role_id(
     db: AsyncSession = Depends(db_session),
     current_user: User = Depends(current_user),
 ):
-    """Retrieves the specific role type and ID for a given user."""
+    """Retrieves the specific role type and ID (student or staff) for a given user."""
     service = DataRetrievalService(db)
     result = await service.get_user_role_id(user_id)
 

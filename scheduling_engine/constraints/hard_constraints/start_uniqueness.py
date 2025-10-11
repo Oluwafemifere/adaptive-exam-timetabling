@@ -28,7 +28,7 @@ class StartUniquenessConstraint(CPSATBaseConstraint):
         phase="building_phase_1_model",
         message="Applying exam start uniqueness...",
     )
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add start uniqueness constraints: each exam starts exactly once."""
         constraints_added = 0
 

@@ -81,8 +81,10 @@ class Room:
     capacity: int
     exam_capacity: int
     has_computers: bool = False
-    adjacent_seat_pairs: List[Tuple[int, int]] = field(default_factory=list)
     building_name: Optional[str] = None
+    building_faculty_id: Optional[UUID] = None
+    departments: List[Dict[str, Any]] = field(default_factory=list)
+    adjacent_seat_pairs: List[Tuple[int, int]] = field(default_factory=list)
 
     @property
     def overbookable(self) -> bool:
@@ -123,6 +125,12 @@ class Room:
             has_computers=bool(data.get("has_computers", False)),
             adjacent_seat_pairs=adjacent_pairs_value,
             building_name=data.get("building_name"),
+            building_faculty_id=(
+                UUID(str(data["building_faculty_id"]))
+                if data.get("building_faculty_id")
+                else None
+            ),
+            departments=data.get("departments", []),
         )
 
         # 2. Explicitly set the internal '_overbookable' attribute that the property relies on.
@@ -227,6 +235,7 @@ class Invigilator:
     name: str
     email: Optional[str] = None
     department: Optional[str] = None
+    department_id: Optional[UUID] = None
     can_invigilate: bool = True
     max_concurrent_exams: int = 1
     max_students_per_exam: int = 50
@@ -723,6 +732,7 @@ class ExamSchedulingProblem:
             logger.info("📋 PHASE 4: Applying student-exam mappings...")
             self._apply_exam_student_data(dataset.exams)
             self._log_exam_student_statistics()
+            self._log_registration_statistics()
 
             # Phase 4a: Build course-student mappings for quick lookup
             logger.info("📋 PHASE 4a: Building course-student mappings...")
@@ -1136,6 +1146,35 @@ class ExamSchedulingProblem:
 
     def add_instructor(self, instructor: Instructor) -> None:
         self.instructors[instructor.id] = instructor
+
+    def _log_registration_statistics(self) -> None:
+        """Counts and logs the breakdown of student registrations by type."""
+        normal_count = 0
+        carryover_count = 0
+        other_count = 0
+
+        if not self.exams:
+            logger.warning("No exams available to analyze registration statistics.")
+            return
+
+        for exam in self.exams.values():
+            for reg_type in exam.students.values():
+                if reg_type == "carryover":
+                    carryover_count += 1
+                elif reg_type == "normal":
+                    normal_count += 1
+                else:
+                    other_count += 1
+
+        total_registrations = normal_count + carryover_count + other_count
+
+        logger.info("=== STUDENT REGISTRATION STATISTICS ===")
+        logger.info(f"Total Registrations: {total_registrations}")
+        logger.info(f"  - Normal Registrations: {normal_count}")
+        logger.info(f"  - Carryover Registrations: {carryover_count}")
+        if other_count > 0:
+            logger.warning(f"  - Other Registration Types: {other_count}")
+        logger.info("========================================")
 
     def validate_problem_data(self) -> Dict[str, Any]:
         """Comprehensive problem data validation"""

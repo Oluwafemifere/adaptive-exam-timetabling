@@ -4259,6 +4259,32 @@ html {
   }
 }
 
+/* --- FIX START --- */
+/* Custom keyframes for centered modals to prevent transform conflicts. */
+/* These combine the centering transform with the animation. */
+@keyframes modal-content-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes modal-content-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.96);
+  }
+}
+/* --- FIX END --- */
+
 /* Custom Scrollbar Styling */
 /* For Webkit-based browsers (Chrome, Safari, Edge) */
 ::-webkit-scrollbar {

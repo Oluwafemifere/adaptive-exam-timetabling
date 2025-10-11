@@ -30,7 +30,7 @@ class MaxExamsPerStudentPerDayConstraint(CPSATBaseConstraint):
         """Create integer variables to hold the number of excess exams per student per day."""
         self.excess_exams_vars = []
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add penalty for each exam scheduled for a student beyond the daily limit."""
         constraints_added = 0
 

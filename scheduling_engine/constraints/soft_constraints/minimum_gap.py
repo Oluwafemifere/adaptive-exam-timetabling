@@ -32,7 +32,7 @@ class MinimumGapConstraint(CPSATBaseConstraint):
         """Initialize violation variables for minimum gap."""
         self.violation_vars = []
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add minimum gap penalty constraints between student exams."""
         constraints_added = 0
 

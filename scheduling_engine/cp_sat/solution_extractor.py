@@ -67,67 +67,83 @@ class SolutionExtractor:
         message="Extracting final assignments...",
     )
     async def extract_full_solution(
-        self, final_solution: TimetableSolution, phase1_results: Dict
+        self,
+        final_solution: TimetableSolution,
+        phase1_results_for_group: Dict,
     ):
         """
-        Extracts all room and invigilator assignments from the full Phase 2 model
-        and populates the final solution object.
+        FIXED: Extracts assignments from a start-time-group subproblem and updates
+        the final solution object. This now correctly populates room and invigilator
+        assignments for the entire duration of each exam in the group.
         """
         if not self.has_solution():
-            logger.error("No solution found for the full Phase 2 model.")
+            logger.error(
+                "No solution found for the Phase 2 subproblem. Cannot extract."
+            )
             return
 
-        # 1. Populate the time assignments from Phase 1 results
-        for exam_id, (slot_id, day_date) in phase1_results.items():
-            asm = ExamAssignment(
-                exam_id=exam_id,
-                time_slot_id=slot_id,
-                assigned_date=day_date,
-                status=AssignmentStatus.UNASSIGNED,
-            )
-            final_solution.assignments[exam_id] = asm
-
-        # 2. Pre-calculate assigned rooms for each exam's occupied slots
-        exam_room_map = defaultdict(lambda: defaultdict(list))
+        # 1. Extract all room assignments from the subproblem's y_vars.
+        # This correctly identifies which rooms each exam is assigned to.
+        # Key: exam_id, Value: set of room_ids
+        exam_room_map = defaultdict(set)
         for (exam_id, room_id, slot_id), y_var in self.y_vars.items():
             if self.solver.Value(y_var):
-                exam_room_map[exam_id][slot_id].append(room_id)
+                exam_room_map[exam_id].add(room_id)
 
-        # 3. Pre-calculate assigned invigilators for each room and slot
-        invigilator_room_map = defaultdict(lambda: defaultdict(set))
+        # 2. Extract invigilator assignments with full time-slot context.
+        # The map is now correctly keyed by both room and slot to be time-aware.
+        # Key: (room_id, slot_id), Value: set of invigilator_ids
+        room_slot_invigilator_map = defaultdict(set)
         for (inv_id, room_id, slot_id), w_var in self.w_vars.items():
             if self.solver.Value(w_var):
-                invigilator_room_map[slot_id][room_id].add(inv_id)
+                room_slot_invigilator_map[(room_id, slot_id)].add(inv_id)
 
-        # 4. Assemble the final assignments
-        for exam_id, assignment in final_solution.assignments.items():
-            start_slot_id, _ = phase1_results.get(exam_id, (None, None))
-            if not start_slot_id:
+        # 3. Update the final solution object for each exam in this start-time group.
+        # This loop now correctly combines the above maps to find the right invigilators for each exam.
+        for exam_id in phase1_results_for_group.keys():
+            assignment = final_solution.assignments.get(exam_id)
+            if not assignment:
+                logger.warning(
+                    f"Attempted to update a non-existent assignment for exam {exam_id}. Skipping."
+                )
                 continue
 
+            assigned_rooms_set = exam_room_map.get(exam_id, set())
+            if not assigned_rooms_set:
+                logger.error(
+                    f"CRITICAL: Solver found a solution, but no rooms were assigned to exam {exam_id}. The problem may be infeasible."
+                )
+                assignment.status = AssignmentStatus.INVALID
+                continue
+
+            # Determine the exact time slots this specific exam occupies using its start time from Phase 1
+            start_slot_id = phase1_results_for_group[exam_id][0]
             occupied_slots = self.problem.get_occupancy_slots(exam_id, start_slot_id)
 
-            # The rooms assigned are those from the start slot
-            assigned_rooms = exam_room_map.get(exam_id, {}).get(start_slot_id, [])
-            assignment.room_ids = assigned_rooms
-
-            # The invigilators assigned are the union of all invigilators
-            # in the assigned rooms across all occupied slots.
-            assigned_invigilators = set()
-            for slot_id in occupied_slots:
-                for room_id in assigned_rooms:
-                    invigilators_in_room = invigilator_room_map.get(slot_id, {}).get(
-                        room_id, set()
+            # Collect all unique invigilators assigned to this exam's rooms ONLY during its occupied slots
+            all_invigilators_for_this_exam = set()
+            for room_id in assigned_rooms_set:
+                for slot_id in occupied_slots:
+                    # Look up invigilators for this specific room AT this specific slot
+                    invigilators_in_room_at_time = room_slot_invigilator_map.get(
+                        (room_id, slot_id), set()
                     )
-                    assigned_invigilators.update(invigilators_in_room)
+                    all_invigilators_for_this_exam.update(invigilators_in_room_at_time)
 
-            assignment.invigilator_ids = list(assigned_invigilators)
+            # Populate the assignment object with the correctly filtered data
+            assignment.room_ids = list(assigned_rooms_set)
+            assignment.invigilator_ids = list(all_invigilators_for_this_exam)
             assignment.room_allocations = self.calculate_room_allocations(
-                exam_id, set(assigned_rooms)
+                exam_id, assigned_rooms_set
             )
 
+            # Update status if all required fields are now present
             if assignment.is_complete():
                 assignment.status = AssignmentStatus.ASSIGNED
+            else:
+                logger.warning(
+                    f"Assignment for exam {exam_id} is still not complete after extraction."
+                )
 
     def has_solution(self) -> bool:
         """Checks if the solver found a valid solution."""

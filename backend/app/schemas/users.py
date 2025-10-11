@@ -61,8 +61,8 @@ class UserRead(UserBase):
 
 
 class UserManagementRecord(UserRead):
-    # This model now correctly inherits the 'role' field from UserRead.
-    # The 'assigned_roles' field has been removed as it is no longer needed.
+    # This model correctly inherits all necessary fields from UserRead.
+    # The frontend will derive 'status' from 'is_active' and 'last_login'.
     pass
 
 
@@ -72,3 +72,6 @@ class PaginatedUserResponse(BaseModel):
     page: int
     page_size: int
     items: List[UserManagementRecord]
+    # --- UPDATED: Added fields to match DB function and support frontend stats ---
+    total_active: int
+    total_admins: int

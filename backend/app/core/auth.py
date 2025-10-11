@@ -1,6 +1,6 @@
 # backend/app/core/auth.py
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -32,6 +32,12 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> User
 
     if not verify_password(password, user.password_hash):
         return None
+
+    # Update the last_login timestamp upon successful authentication
+    user.last_login = datetime.utcnow()
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
 
     return user
 

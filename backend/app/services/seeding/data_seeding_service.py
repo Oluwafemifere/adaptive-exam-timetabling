@@ -2,15 +2,36 @@
 import logging
 from uuid import UUID
 from typing import Dict, Any, Optional, List
+import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import inspect, text, VARCHAR
 from sqlalchemy.engine import RowMapping
+from sqlalchemy.dialects.postgresql import UUID as UUIDType, ARRAY
+
 
 logger = logging.getLogger(__name__)
 
 
+# Define a whitelist of allowed staging tables to prevent SQL injection
+ALLOWED_STAGING_TABLES = [
+    "faculties",
+    "departments",
+    "programmes",
+    "buildings",
+    "rooms",
+    "courses",
+    "staff",
+    "students",
+    "course_instructors",
+    "course_departments",
+    "course_faculties",
+    "staff_unavailability",
+    "course_registrations",
+]
+
+
 class DataSeedingService:
-    """Service for managing data seeding sessions and interacting with staging tables."""
+    """Service for managing data seeding sessions and writing to staging tables."""
 
     def __init__(self, session: AsyncSession):
         self.session = session

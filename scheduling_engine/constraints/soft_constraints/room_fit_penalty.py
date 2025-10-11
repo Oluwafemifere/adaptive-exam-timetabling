@@ -31,7 +31,7 @@ class RoomFitPenaltyConstraint(CPSATBaseConstraint):
         """No new variables are needed; we will create penalty terms directly from y_vars."""
         pass
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add penalties for assigning exams to oversized rooms."""
         # This constraint should only run in Phase 2 when y_vars are present.
         if not self.y:

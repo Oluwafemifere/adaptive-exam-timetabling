@@ -19,7 +19,7 @@ class RoomContinuityConstraint(CPSATBaseConstraint):
         """No local variables needed."""
         pass
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """
         Adds constraints to ensure multi-slot exams remain in the same room(s)
         for the full duration in the Phase 2 model.

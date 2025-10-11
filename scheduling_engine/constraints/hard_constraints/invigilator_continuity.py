@@ -20,7 +20,7 @@ class InvigilatorContinuityConstraint(CPSATBaseConstraint):
         """No local variables needed."""
         pass
 
-    def add_constraints(self):
+    async def add_constraints(self):
         """Add invigilator continuity constraints for multi-slot exams."""
         constraints_added = 0
         phase1_results = self.precomputed_data.get("phase1_results")
@@ -47,13 +47,15 @@ class InvigilatorContinuityConstraint(CPSATBaseConstraint):
             for room_id in self.problem.rooms:
                 # The primary decision variable is if the exam is in this room at the start.
                 y_start_var = self.y.get((exam_id, room_id, start_slot_id))
-                if not y_start_var:
+                # --- FIX 1: Check for None explicitly ---
+                if y_start_var is None:
                     continue
 
                 for inv_id in self.problem.invigilators:
                     # The invigilator's assignment status at the start time.
                     w_start_var = self.w.get((inv_id, room_id, start_slot_id))
-                    if not w_start_var:
+                    # --- FIX 2: Check for None explicitly ---
+                    if w_start_var is None:
                         continue
 
                     # For every subsequent slot the exam occupies...
@@ -61,9 +63,11 @@ class InvigilatorContinuityConstraint(CPSATBaseConstraint):
                         next_slot_id = occupied_slots[i]
                         w_next_var = self.w.get((inv_id, room_id, next_slot_id))
 
-                        if w_next_var:
+                        # --- FIX 3: Check for None explicitly ---
+                        if w_next_var is not None:
                             # If the exam is in this room (y_start_var=1), then the invigilator's
                             # assignment status in the next slot must equal their status in the start slot.
+                            # This part is already correct! .OnlyEnforceIf is how you create conditional constraints.
                             self.model.Add(w_next_var == w_start_var).OnlyEnforceIf(
                                 y_start_var
                             )

@@ -33,16 +33,18 @@ class UnifiedStudentConflictConstraint(CPSATBaseConstraint):
         phase="building_phase_1_model",
         message="Applying student conflict rules...",
     )
-    def add_constraints(self):
+    async def add_constraints(self):
         """
         MODIFIED: Add hard conflict constraints ONLY for overlaps involving two or more 'normal' registrations.
         All other conflicts (e.g., normal-vs-carryover) are handled by soft constraints.
         """
         constraints_added = 0
         if not self.z:
-            raise RuntimeError(
-                f"{self.constraint_id}: No z (occupancy) variables available."
+            logger.info(
+                f"{self.constraint_id}: No occupancy variables (z_vars), skipping."
             )
+            self.constraint_count = 0
+            return
 
         if not self.student_exams:
             logger.info(

@@ -467,7 +467,195 @@ export interface JobSummary {
   version_id: string | null;
   is_published: boolean;
 }
+export type StagingRecord = {
+  session_id: string;
+  [key: string]: any; // Allows for other properties like 'code', 'matric_number', etc.
+};
 
+// Buildings
+export interface StagingBuildingCreate {
+  code: string;
+  name: string;
+  faculty_code: string;
+}
+export interface StagingBuildingUpdate {
+  name?: string;
+  faculty_code?: string;
+}
+
+// CourseDepartments
+export interface StagingCourseDepartmentCreate {
+  course_code: string;
+  department_code: string;
+}
+
+// CourseFaculties
+export interface StagingCourseFacultyCreate {
+  course_code: string;
+  faculty_code: string;
+}
+
+// CourseInstructors
+export interface StagingCourseInstructorCreate {
+  staff_number: string;
+  course_code: string;
+}
+
+// CourseRegistrations
+export interface StagingCourseRegistrationCreate {
+  student_matric_number: string;
+  course_code: string;
+  registration_type?: string;
+}
+export interface StagingCourseRegistrationUpdate {
+  registration_type: string;
+}
+
+// Courses
+export interface StagingCourseCreate {
+  code: string;
+  title: string;
+  credit_units: number;
+  exam_duration_minutes: number;
+  course_level: number;
+  semester: number;
+  is_practical: boolean;
+  morning_only: boolean;
+}
+export interface StagingCourseUpdate {
+  title?: string;
+  credit_units?: number;
+  exam_duration_minutes?: number;
+  course_level?: number;
+  semester?: number;
+  is_practical?: boolean;
+  morning_only?: boolean;
+}
+
+// Departments
+export interface StagingDepartmentCreate {
+  code: string;
+  name: string;
+  faculty_code: string;
+}
+export interface StagingDepartmentUpdate {
+  name?: string;
+  faculty_code?: string;
+}
+
+// Faculties
+export interface StagingFacultyCreate {
+  code: string;
+  name: string;
+}
+export interface StagingFacultyUpdate {
+  name?: string;
+}
+
+// Programmes
+export interface StagingProgrammeCreate {
+  code: string;
+  name: string;
+  department_code: string;
+  degree_type: string;
+  duration_years: number;
+}
+export interface StagingProgrammeUpdate {
+  name?: string;
+  department_code?: string;
+  degree_type?: string;
+  duration_years?: number;
+}
+
+// Rooms
+export interface StagingRoomCreate {
+  code: string;
+  name: string;
+  building_code: string;
+  capacity: number;
+  exam_capacity: number;
+  has_ac: boolean;
+  has_projector: boolean;
+  has_computers: boolean;
+  max_inv_per_room: number;
+  room_type_code: string;
+  floor_number: number;
+  accessibility_features: string[];
+  notes?: string;
+}
+export interface StagingRoomUpdate {
+  name?: string;
+  building_code?: string;
+  capacity?: number;
+  exam_capacity?: number;
+  has_ac?: boolean;
+  has_projector?: boolean;
+  has_computers?: boolean;
+  max_inv_per_room?: number;
+  room_type_code?: string;
+  floor_number?: number;
+  accessibility_features?: string[];
+  notes?: string;
+}
+
+// Staff
+export interface StagingStaffCreate {
+  staff_number: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  department_code: string;
+  staff_type: string;
+  can_invigilate: boolean;
+  is_instructor: boolean;
+  max_daily_sessions: number;
+  max_consecutive_sessions: number;
+  max_concurrent_exams: number;
+  max_students_per_invigilator: number;
+  user_email?: string;
+}
+export interface StagingStaffUpdate {
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  department_code?: string;
+  staff_type?: string;
+  can_invigilate?: boolean;
+  is_instructor?: boolean;
+  max_daily_sessions?: number;
+  max_consecutive_sessions?: number;
+  max_concurrent_exams?: number;
+  max_students_per_invigilator?: number;
+  user_email?: string;
+}
+
+// StaffUnavailability
+export interface StagingStaffUnavailabilityCreate {
+  staff_number: string;
+  unavailable_date: string; // YYYY-MM-DD
+  period_name: string;
+  reason?: string;
+}
+export interface StagingStaffUnavailabilityUpdate {
+  reason?: string;
+}
+
+// Students
+export interface StagingStudentCreate {
+  matric_number: string;
+  first_name: string;
+  last_name: string;
+  entry_year: number;
+  programme_code: string;
+  user_email?: string;
+}
+export interface StagingStudentUpdate {
+  first_name?: string;
+  last_name?: string;
+  entry_year?: number;
+  programme_code?: string;
+  user_email?: string;
+}
 export interface AppState {
 currentPage: string;
 isAuthenticated: boolean;

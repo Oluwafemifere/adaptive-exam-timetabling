@@ -1,8 +1,4 @@
-# scheduling_engine/constraints/soft_constraints/invigilator_load_balance.py
-"""
-REWRITTEN - InvigilatorLoadBalanceConstraint (Simplified Model)
-"""
-
+from ortools.sat.python import cp_model
 from scheduling_engine.constraints.base_constraint import CPSATBaseConstraint
 from scheduling_engine.core.constraint_types import ConstraintDefinition
 import logging
@@ -16,7 +12,13 @@ class InvigilatorLoadBalanceConstraint(CPSATBaseConstraint):
 
     dependencies = []
 
-    def __init__(self, definition: ConstraintDefinition, problem, shared_vars, model):
+    def __init__(
+        self,
+        definition: ConstraintDefinition,
+        problem,
+        shared_vars,
+        model: cp_model.CpModel,
+    ):
         super().__init__(definition, problem, shared_vars, model)
         self.penalty_weight = self.definition.weight
         logger.info(
@@ -24,62 +26,85 @@ class InvigilatorLoadBalanceConstraint(CPSATBaseConstraint):
         )
 
     def initialize_variables(self):
-        """Create auxiliary variables for load balance."""
-        self.work_vars = {}
-        self.load_imbalance_vars = {}
-        self.avg_work_var = None
+        """Create auxiliary variables for workload balancing."""
+        self.work_vars: dict[str, cp_model.IntVar] = {}
+        self.max_work_var: cp_model.IntVar | None = None
+        self.min_work_var: cp_model.IntVar | None = None
+        self.workload_range_var: cp_model.IntVar | None = None
 
-        if not self.problem.invigilators or not self.w:
+        if not getattr(self.problem, "invigilators", None) or not getattr(
+            self, "w", None
+        ):
             return
 
-        total_invigilators = len(self.problem.invigilators)
-        max_work = len(self.problem.timeslots)
+        max_possible_work = len(self.problem.timeslots)
 
         for inv_id in self.problem.invigilators:
-            self.work_vars[inv_id] = self.model.NewIntVar(0, max_work, f"work_{inv_id}")
-            self.load_imbalance_vars[inv_id] = self.model.NewIntVar(
-                0, max_work, f"loadImbalance_{inv_id}"
+            self.work_vars[inv_id] = self.model.NewIntVar(
+                0, max_possible_work, f"work_{inv_id}"
             )
 
-        if total_invigilators > 0:
-            self.avg_work_var = self.model.NewIntVar(0, max_work, "avgWork")
+        if self.work_vars:
+            self.max_work_var = self.model.NewIntVar(
+                0, max_possible_work, "max_invigilator_work"
+            )
+            self.min_work_var = self.model.NewIntVar(
+                0, max_possible_work, "min_invigilator_work"
+            )
+            self.workload_range_var = self.model.NewIntVar(
+                0, max_possible_work, "workload_range"
+            )
 
-    def add_constraints(self):
-        """Add invigilator load balance constraints."""
-        constraints_added = 0
+    async def add_constraints(self):
+        """Add constraints to minimize the range of invigilator workloads."""
         if not self.work_vars:
-            logger.info(
-                f"{self.constraint_id}: No invigilators or variables, skipping."
-            )
+            logger.info(f"{self.constraint_id}: No invigilators found, skipping.")
+            self.constraint_count = 0
             return
 
+        if (
+            self.max_work_var is None
+            or self.min_work_var is None
+            or self.workload_range_var is None
+        ):
+            logger.warning(
+                f"{self.constraint_id}: Missing auxiliary variables, skipping constraint."
+            )
+            self.constraint_count = 0
+            return
+
+        constraints_added = 0
         invigilator_assignments = defaultdict(list)
+
         for (inv_id, room_id, slot_id), w_var in self.w.items():
             invigilator_assignments[inv_id].append(w_var)
 
-        # Calculate the total work (number of assigned slots) for each invigilator
+        # Compute workload per invigilator
         for inv_id, work_var in self.work_vars.items():
-            work_terms = invigilator_assignments.get(inv_id, [])
-            if work_terms:
-                self.model.Add(work_var == sum(work_terms))
-                constraints_added += 1
+            terms = invigilator_assignments.get(inv_id, [])
+            if terms:
+                self.model.Add(work_var == sum(terms))
+            else:
+                self.model.Add(work_var == 0)
 
-        if self.avg_work_var is not None:
-            for inv_id, imbalance_var in self.load_imbalance_vars.items():
-                work_var = self.work_vars[inv_id]
-                diff_var = self.model.NewIntVar(
-                    -len(self.problem.timeslots),
-                    len(self.problem.timeslots),
-                    f"diff_{inv_id}",
-                )
-                self.model.Add(diff_var == work_var - self.avg_work_var)
-                self.model.AddAbsEquality(imbalance_var, diff_var)
-                constraints_added += 2
+            constraints_added += 1
 
-        self.penalty_terms.extend(
-            (self.penalty_weight, var) for var in self.load_imbalance_vars.values()
+        all_work_vars = list(self.work_vars.values())
+
+        # Safe max/min operations
+        self.model.AddMaxEquality(self.max_work_var, all_work_vars)
+        self.model.AddMinEquality(self.min_work_var, all_work_vars)
+        constraints_added += 2
+
+        # Workload range
+        self.model.Add(
+            self.workload_range_var == (self.max_work_var - self.min_work_var)
         )
+        constraints_added += 1
+
+        self.penalty_terms.append((self.penalty_weight, self.workload_range_var))
         self.constraint_count = constraints_added
+
         logger.info(
             f"{self.constraint_id}: Added {constraints_added} invigilator load balance constraints."
         )
