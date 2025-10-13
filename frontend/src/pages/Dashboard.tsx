@@ -276,17 +276,17 @@ export function Dashboard() {
                   <span className="font-medium">{formatTimeAgo(latestJob.created_at)}</span>
                 </div>
                  <div className="flex items-center justify-between p-3 border rounded-md bg-card text-sm">
-                  <span className="text-muted-foreground">Published</span>
-                  <Badge variant={latestJob.is_published ? "default" : "outline"}>{latestJob.is_published ? 'Yes' : 'No'}</Badge>
+                  <span className="text-muted-foreground">Progress</span>
+                  <span className="font-medium">{latestJob.progress_percentage?.toFixed(0) ?? 'N/A'}%</span>
                 </div>
                 <div className="mt-auto pt-2">
-                    <Button className="w-full" variant="outline" onClick={() => setCurrentPage('scheduler')}>Go to Scheduler History</Button>
+                    <Button className="w-full" variant="outline" onClick={() => setCurrentPage('scheduling')}>Go to Scheduler History</Button>
                 </div>
               </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center">
                 <p className="text-sm text-muted-foreground mb-4">No timetable jobs found for this session.</p>
-                <Button size="sm" onClick={() => setCurrentPage('scheduler')}><PlayCircle className="h-4 w-4 mr-2" /> Run Generator</Button>
+                <Button size="sm" onClick={() => setCurrentPage('scheduling')}><PlayCircle className="h-4 w-4 mr-2" /> Run Generator</Button>
               </div>
             )}
           </CardContent>

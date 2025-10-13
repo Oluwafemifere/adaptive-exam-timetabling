@@ -1,4 +1,3 @@
-// frontend/src/hooks/useApi.ts
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../services/api';
 import { useAppStore } from '../store';
@@ -7,6 +6,7 @@ import { JobStatus, Conflict, StudentExam, StaffAssignment, HistoryEntry, Pagina
 UserManagementRecord } from '../store/types';
 import { SessionSetupCreate, SessionSetupSummary } from '../pages/SessionSetup';
 import { config } from '../config';
+// import { SessionSetupCreate, SessionSetupSummary } from '../pages/SessionManagement'; 
 import { StagingRecord } from '../store/types';
 export function useDashboardData() {
 const {
@@ -78,7 +78,89 @@ return () => clearInterval(interval);
 
 return { isLoading, error, refetch: fetchData };
 }
+export function useSessionManager(sessionId: string | null) {
+  const [dataGraph, setDataGraph] = useState<any | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
+  const fetchData = useCallback(async () => {
+    if (!sessionId) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await api.getFullSessionDataGraph(sessionId);
+      setDataGraph(response.data || {});
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || 'Failed to fetch session data graph.';
+      setError(new Error(detail));
+      toast.error(detail);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleMutation = async (
+    action: Promise<any>,
+    successMessage: string,
+    errorMessage: string
+  ) => {
+    try {
+      await action;
+      toast.success(successMessage);
+      await fetchData(); // Refetch data on success
+      return true;
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || err.message || errorMessage;
+      toast.error(detail);
+      return false;
+    }
+  };
+
+  const createEntity = (entityType: 'course' | 'building' | 'room', payload: any) => {
+    if (!sessionId) return Promise.resolve(false);
+    let action;
+    switch (entityType) {
+      case 'course': action = api.createCourseInSession(sessionId, payload); break;
+      case 'building': action = api.createBuildingInSession(sessionId, payload); break;
+      case 'room': action = api.createRoomInSession(sessionId, payload); break;
+      default: return Promise.resolve(false);
+    }
+    return handleMutation(action, `${entityType} created successfully.`, `Failed to create ${entityType}.`);
+  };
+
+  const updateEntity = (entityType: 'course' | 'building' | 'room', entityId: string, payload: any) => {
+    if (!sessionId) return Promise.resolve(false);
+    let action;
+    switch (entityType) {
+      case 'course': action = api.updateCourseInSession(sessionId, entityId, payload); break;
+      case 'building': action = api.updateBuildingInSession(sessionId, entityId, payload); break;
+      case 'room': action = api.updateRoomInSession(sessionId, entityId, payload); break;
+      default: return Promise.resolve(false);
+    }
+    return handleMutation(action, `${entityType} updated successfully.`, `Failed to update ${entityType}.`);
+  };
+
+  const deleteEntity = (entityType: 'course' | 'building' | 'room', entityId: string) => {
+    if (!sessionId) return Promise.resolve(false);
+    let action;
+    switch (entityType) {
+      case 'course': action = api.deleteCourseInSession(sessionId, entityId); break;
+      case 'building': action = api.deleteBuildingInSession(sessionId, entityId); break;
+      case 'room': action = api.deleteRoomInSession(sessionId, entityId); break;
+      default: return Promise.resolve(false);
+    }
+    return handleMutation(action, `${entityType} deleted successfully.`, `Failed to delete ${entityType}.`);
+  };
+
+  return { dataGraph, isLoading, error, refetch: fetchData, createEntity, updateEntity, deleteEntity };
+}
 export function useUserManagementData() {
 const { users, setUsers } = useAppStore(state => ({
 users: state.users,
@@ -702,4 +784,38 @@ useEffect(() => {
 
 return { history, pagination, isLoading, error, refetch: () => fetchData(page, pageSize) };
 
+}
+
+export function useJobHistoryData() {
+  const { activeSessionId, sessionJobs, fetchSessionJobs } = useAppStore(state => ({
+    activeSessionId: state.activeSessionId,
+    sessionJobs: state.sessionJobs,
+    fetchSessionJobs: state.fetchSessionJobs,
+  }));
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  const fetchData = useCallback(async () => {
+    if (!activeSessionId) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      await fetchSessionJobs(activeSessionId);
+    } catch (err) {
+      const fetchError = err instanceof Error ? err : new Error('Failed to fetch job history');
+      setError(fetchError);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeSessionId, fetchSessionJobs]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  return { jobs: sessionJobs, isLoading, error, refetch: fetchData };
 }

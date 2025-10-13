@@ -1,4 +1,3 @@
-// frontend/src/pages/StudentPortal.tsx
 import React, { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -9,7 +8,7 @@ import { DialogFooter, DialogClose } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
-import { AlertTriangle, CalendarDays, Clock, MapPin, Building, LogOut, Grid3X3, List, Loader2, Sun, Moon, GraduationCap, Shield } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Clock, MapPin, Building, LogOut, Grid3X3, List, Loader2, Sun, Moon, GraduationCap, Shield, Download } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useAuth } from '../hooks/useAuth';
 import { useStudentPortalData } from '../hooks/useApi';
@@ -18,6 +17,8 @@ import { TimetableGrid } from '../components/TimetableGrid';
 import { FilterControls } from '../components/FilterControls';
 import { RenderableExam, StudentExam, ConflictReport } from '../store/types';
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert';
+import { PDFDownloadLink } from '@react-pdf/renderer';
+import { TimetablePDFDocument } from '../components/TimetablePDF';
 
 export function StudentPortal() {
   const { user, studentExams, conflictReports, addConflictReport, settings, updateSettings } = useAppStore();
@@ -190,6 +191,26 @@ export function StudentPortal() {
               <Button variant="outline" size="icon" onClick={toggleTheme}>
                 {settings.theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
               </Button>
+              <PDFDownloadLink
+                document={
+                  <TimetablePDFDocument 
+                    exams={renderableExams} 
+                    title={`Exam Schedule for ${user?.name}`}
+                  />
+                }
+                fileName={`my-schedule-${user?.name?.replace(/\s+/g, '_')}-${new Date().toISOString().split('T')[0]}.pdf`}
+              >
+                 {({ loading }) => (
+                    <Button variant="outline" size="sm" disabled={loading}>
+                      {loading ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                          <Download className="h-4 w-4 mr-2" />
+                      )}
+                      Download Schedule
+                    </Button>
+                  )}
+              </PDFDownloadLink>
               <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
                 <DialogTrigger asChild>
                   <Button variant="outline" className="w-full sm:w-auto">

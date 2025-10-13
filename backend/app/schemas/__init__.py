@@ -19,6 +19,7 @@ from . import (
     dashboard,
     configuration,
     staging,
+    session_management,  # IMPORT THE NEW SCHEMA MODULE
 )
 from .session_setup import SessionSetupCreate, SessionSetupSummary, TimeSlot
 
@@ -137,6 +138,16 @@ from .reports import (
     ChangeRequestItem,
 )
 
+# ADD NEW SESSION MANAGEMENT SCHEMAS TO EXPORTS
+from .session_management import (
+    CoursePayload,
+    BuildingPayload,
+    RoomPayload,
+    PaginatedCoursesResponse,
+    PaginatedStudentsResponse,
+    SessionDataGraphResponse,
+)
+
 
 __all__ = [
     # modules
@@ -156,6 +167,7 @@ __all__ = [
     "reports",
     "dashboard",
     "configuration",
+    "session_management",  # EXPORT THE NEW MODULE
     # auth
     "TokenData",
     "Token",
@@ -233,7 +245,7 @@ __all__ = [
     "UserRead",
     "UserManagementRecord",
     "PaginatedUserResponse",
-    "AdminUserCreate",  # ADD TO EXPORT LIST
+    "AdminUserCreate",
     # role
     "RoleAssignment",
     "UserRolesResponse",
@@ -257,4 +269,11 @@ __all__ = [
     "TimeSlot",
     # Staging
     "staging",
+    # Session Management
+    "CoursePayload",
+    "BuildingPayload",
+    "RoomPayload",
+    "PaginatedCoursesResponse",
+    "PaginatedStudentsResponse",
+    "SessionDataGraphResponse",
 ]

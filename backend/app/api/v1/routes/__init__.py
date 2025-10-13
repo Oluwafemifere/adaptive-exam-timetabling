@@ -28,6 +28,9 @@ from .staging import router as staging_router
 # Import the new configurations router
 from .configurations import router as configurations_router
 
+# IMPORT THE NEW SESSION MANAGEMENT ROUTER
+from .session_management import router as session_management_router
+
 # Create a main router that includes all sub-routers
 router = APIRouter()
 
@@ -53,6 +56,13 @@ router.include_router(scenarios_router, prefix="/scenarios", tags=["Scenarios"])
 router.include_router(jobs_router, prefix="/jobs", tags=["Background Jobs"])
 router.include_router(schedules_router, prefix="/schedules", tags=["Schedules"])
 router.include_router(sessions_router, prefix="/sessions", tags=["Academic Sessions"])
+
+# NEW: ADD THE SESSION MANAGEMENT ROUTER
+router.include_router(
+    session_management_router,
+    prefix="/session-management",
+    tags=["Session Data Management"],
+)
 
 # System & Administration
 router.include_router(versions_router, prefix="/versions", tags=["Versions"])

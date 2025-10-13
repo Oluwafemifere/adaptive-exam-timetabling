@@ -223,7 +223,16 @@ export function Notifications() {
                <Card>
                 <div className="overflow-x-auto">
                   <Table>
-                    <TableHeader><TableRow><TableHead>Staff</TableHead><TableHead>Course</TableHead><TableHead>Reason</TableHead><TableHead>Status</TableHead><TableHead>Submitted</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Staff</TableHead>
+                            <TableHead>Course</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Submitted</TableHead>
+                            <TableHead>Reason</TableHead>
+                            <TableHead>Actions</TableHead>
+                        </TableRow>
+                    </TableHeader>
                     <TableBody>
                       {allChangeRequests.map((request: AdminChangeRequest) => (
                       <TableRow key={request.id}>
@@ -232,10 +241,9 @@ export function Notifications() {
                           <div className="text-sm text-muted-foreground">{request.staff.staff_number}</div>
                         </TableCell>
                         <TableCell>{request.assignment_details.course_code}</TableCell>
-                        <TableCell>{request.reason}</TableCell>
                         <TableCell><Badge variant={request.status === 'pending' ? 'destructive' : request.status === 'approved' ? 'default' : 'secondary'}>{request.status}</Badge></TableCell>
                         <TableCell>{formatTimeAgo(request.submitted_at)}</TableCell>
-                        {/* --- FIX: Button now just calls openModal --- */}
+                        <TableCell>{request.reason}</TableCell>
                         <TableCell><Button variant="outline" size="sm" onClick={() => openModal(request)}><Eye className="h-4 w-4 mr-2" />View</Button></TableCell>
                       </TableRow>
                       ))}

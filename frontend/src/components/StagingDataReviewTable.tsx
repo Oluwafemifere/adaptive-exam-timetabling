@@ -52,7 +52,35 @@ const FlatDataViewer = ({ entityType, data, sessionId, allData, onRefetch }: { e
   const [isEditing, setIsEditing] = useState(false);
 
   const primaryKeys = useMemo(() => ENTITY_PRIMARY_KEYS[entityType] || ['code'], [entityType]);
-  const columns = useMemo(() => allData[entityType]?.length > 0 ? Object.keys(allData[entityType][0] || {}) : [], [allData, entityType]);
+  
+  const columns = useMemo(() => {
+    if (!allData[entityType] || allData[entityType].length === 0) return [];
+    
+    const allKeys = Object.keys(allData[entityType][0] || {});
+    
+    const filteredKeys = allKeys.filter(c => 
+        c.toLowerCase() !== 'id' && 
+        !c.toLowerCase().endsWith('_id') &&
+        !c.toLowerCase().endsWith('_at')
+    );
+    
+    // Define a preferred order for common fields to ensure consistency
+    const preferredOrder = [
+        'code', 'name', 'title', 'first_name', 'last_name', 'email', 
+        'staff_number', 'matric_number', 'course_code', 'department_code', 
+        'faculty_code', 'programme_code', 'building_code', 'room_code',
+        'capacity', 'course_level', 'semester'
+    ];
+
+    return [...filteredKeys].sort((a, b) => {
+        const indexA = preferredOrder.indexOf(a);
+        const indexB = preferredOrder.indexOf(b);
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+        return a.localeCompare(b);
+    });
+  }, [allData, entityType]);
 
   const handleCreate = () => {
     const newRecordTemplate = columns.reduce((acc, col) => ({ ...acc, [col]: '' }), {});
@@ -215,7 +243,11 @@ const GroupedDataViewer = ({ entityType, allData, sessionId, searchTerm, onRefet
         setSelectedRecord(null);
     };
 
-    const formColumns = useMemo(() => allData ? Object.keys(allData[entityType]?.[0] || {}) : [], [allData, entityType]);
+    const formColumns = useMemo(() => {
+        if (!allData || !allData[entityType]?.[0]) return [];
+        const allKeys = Object.keys(allData[entityType][0] || {});
+        return allKeys.filter(c => c.toLowerCase() !== 'id' && !c.toLowerCase().endsWith('_id') && !c.toLowerCase().endsWith('_at'));
+    }, [allData, entityType]);
 
     return (
         <div className="mt-4">

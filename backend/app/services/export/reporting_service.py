@@ -65,7 +65,7 @@ class ReportingService:
                 return None
 
             rows = report_data["rows"]
-            columns = report_data.get("columns", list(rows.keys()) if rows else [])
+            columns = report_data.get("columns", list(rows[0].keys()) if rows else [])
             title = report_data.get(
                 "title", f"{report_type.replace('_', ' ').title()} Report"
             )

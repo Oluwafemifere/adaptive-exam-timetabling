@@ -4,7 +4,10 @@ from uuid import UUID
 from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Query
+from fastapi.responses import Response
 
+from ....services.export import TimetableExportService
 from ....api.deps import db_session, current_user
 from ....models.users import User
 from ....services.data_retrieval.data_retrieval_service import DataRetrievalService
@@ -164,9 +167,20 @@ async def get_timetable_version(
 ):
     """Get a fully structured timetable version by its ID."""
     service = DataRetrievalService(db)
-    # The job_id and version_id are often the same if there's one version per job.
-    # We pass the version_id to the function expecting a job_id.
-    timetable_data = await service.get_timetable_job_results(job_id=version_id)
+
+    # --- START OF FIX ---
+    # First, get the job_id associated with the given version_id.
+    job_id = await service.get_job_id_from_version(version_id)
+    if not job_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No job associated with timetable version ID '{version_id}' found.",
+        )
+
+    # Now, use the correct job_id to fetch the results.
+    timetable_data = await service.get_timetable_job_results(job_id=job_id)
+    # --- END OF FIX ---
+
     if not timetable_data:
         raise HTTPException(
             status_code=404,
@@ -265,3 +279,45 @@ async def get_notification_users(
             status_code=404, detail="Could not retrieve users for notification."
         )
     return GenericResponse(success=True, data=user_data)
+
+
+@router.get(
+    "/versions/{version_id}/export",
+    summary="Export Timetable Version",
+    tags=["Timetables", "Export"],
+)
+async def export_timetable_version(
+    version_id: UUID,
+    format: str = Query(
+        "pdf",
+        description="The desired output format. Can be 'pdf' or 'csv'.",
+        enum=["pdf", "csv"],
+    ),
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Exports a fully structured timetable version to a downloadable file (PDF or CSV).
+    """
+    service = TimetableExportService(db)
+    file_bytes = await service.export_timetable(
+        version_id=version_id, output_format=format
+    )
+
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Could not generate export for timetable version '{version_id}'. The version may not exist or contains no data.",
+        )
+
+    # Determine file properties based on the requested format
+    if format.lower() == "csv":
+        media_type = "text/csv"
+        filename = f"timetable_{version_id}.csv"
+    else:
+        media_type = "application/pdf"
+        filename = f"timetable_{version_id}.pdf"
+
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+
+    return Response(content=file_bytes, media_type=media_type, headers=headers)

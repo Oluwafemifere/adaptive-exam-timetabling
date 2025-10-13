@@ -162,6 +162,7 @@ async def _async_generate_timetable(
 
     try:
         async with async_session_factory() as db:
+            # Step 1: Set job to 'running' and record the start time.
             await db.execute(
                 text(
                     "SELECT exam_system.update_job_status(:p_job_id, :p_status, :p_progress, :p_solver_phase, :p_metrics, :p_set_started_at)"
@@ -177,27 +178,24 @@ async def _async_generate_timetable(
             )
             await db.commit()
 
+            # Step 2: Prepare the full dataset for the scheduling problem.
             await task.update_progress(
                 5, "preparing_data", "Preparing scheduling dataset..."
             )
             data_prep = ExactDataFlowService(db)
             dataset = await data_prep.build_exact_problem_model_dataset(job_uuid)
-
             session_id = dataset.session_id
-
             assert options is not None
-
-            # --- START OF FIX: Remove fallback logic for date range ---
             start_date = dataset.exam_period_start
             end_date = dataset.exam_period_end
             logger.info(f"Using date range from dataset: {start_date} to {end_date}")
-            # --- END OF FIX ---
 
             if not start_date or not end_date:
                 raise SchedulingError(
                     "Could not determine a valid exam period start or end date."
                 )
 
+            # Step 3: Build the internal problem model from the dataset.
             await task.update_progress(
                 15, "building_problem", "Building problem model..."
             )
@@ -210,6 +208,28 @@ async def _async_generate_timetable(
             await problem.load_from_backend(dataset)
             problem.ensure_constraints_activated()
 
+            # Step 4: Initialize the solver manager.
+            await task.update_progress(
+                25, "initializing_solver", "Initializing CP-SAT solver..."
+            )
+            solver_manager = CPSATSolverManager(problem=problem)
+            solver_manager.task_context = task
+
+            # Step 5: Solve the problem. This is the main computational step.
+            status, solution = await solver_manager.solve()
+
+            # Step 6: Capture the solver's specific wall time.
+            solver_duration_seconds = math.ceil(solver_manager.solver.WallTime())
+            logger.info(f"CP-SAT solver finished in {solver_duration_seconds} seconds.")
+
+            if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
+                raise SchedulingError(
+                    f"Solver failed to find a solution. Status: {solver_manager.solver.StatusName(status)}"
+                )
+
+            # Step 7: Process the solution and prepare for saving.
+            await task.update_progress(85, "post_processing", "Processing solution...")
+            solution.update_statistics()
             lookup_metadata = {
                 "exams": {str(e.id): e.to_dict() for e in problem.exams.values()},
                 "rooms": {str(r.id): r.to_dict() for r in problem.rooms.values()},
@@ -229,29 +249,6 @@ async def _async_generate_timetable(
                     for ts_id in ts_set
                 },
             }
-
-            await task.update_progress(
-                25, "initializing_solver", "Initializing CP-SAT solver..."
-            )
-            solver_manager = CPSATSolverManager(problem=problem)
-
-            # --- START OF MODIFICATION ---
-            # Pass the task context to the solver manager so decorators can use it.
-            solver_manager.task_context = task
-
-            # The solve method will now trigger its own detailed progress updates via decorators.
-            # We no longer need a manual update to 30% here.
-            status, solution = await solver_manager.solve()
-            # --- END OF MODIFICATION ---
-
-            if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
-                raise SchedulingError(
-                    f"Solver failed to find a solution. Status: {solver_manager.solver.StatusName(status)}"
-                )
-
-            await task.update_progress(85, "post_processing", "Processing solution...")
-            solution.update_statistics()
-
             results_payload = {
                 "solution": solution.to_dict(),
                 "lookup_metadata": lookup_metadata,
@@ -261,22 +258,25 @@ async def _async_generate_timetable(
                 "is_enriched": False,
             }
 
+            # Step 8: Save results and solver duration to the database.
             await task.update_progress(
                 90, "saving_results", "Saving results to database..."
             )
             await db.execute(
                 text(
-                    "SELECT exam_system.update_job_results(:p_job_id, :p_results_data)"
+                    "SELECT exam_system.update_job_results(:p_job_id, :p_results_data, :p_solver_runtime_seconds)"
                 ),
                 {
                     "p_job_id": job_uuid,
                     "p_results_data": json.dumps(
                         results_payload, default=json_safe_default
                     ),
+                    "p_solver_runtime_seconds": solver_duration_seconds,
                 },
             )
             await db.commit()
 
+            # Step 9: Chain the next task for post-processing.
             logger.info(f"Chaining enrichment task for job {job_id}")
             enrich_timetable_result_task.delay(job_id=job_id)
 

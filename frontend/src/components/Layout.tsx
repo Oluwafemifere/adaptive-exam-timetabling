@@ -28,7 +28,8 @@ import {
   Search,
   Command,
   HelpCircle,
-  ListCollapse
+  ListCollapse,
+  Download
 } from 'lucide-react'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
@@ -50,8 +51,11 @@ const navigation = [
   { name: 'Scheduling', href: 'scheduling', icon: PlayCircle, description: 'Start and monitor scheduling jobs' },
   { name: 'Timetable', href: 'timetable', icon: Calendar, description: 'View and edit schedule' },
   { name: 'Constraints', href: 'constraints', icon: Sliders, description: 'Configure rules and weights' },
-  { name: 'Session Setup', href: 'session-setup', icon: Zap, description: 'Configure academic session' },
+  // --- MODIFICATION START ---
+  { name: 'Session Management', href: 'session-setup', icon: Zap, description: 'Create or manage sessions' },
+  // --- MODIFICATION END ---
   { name: 'User Management', href: 'user-management', icon: User, description: 'Manage users and permissions' },
+  { name: 'Export', href: 'export', icon: Download, description: 'Download timetables as PDF' },
 ]
 
 export function Layout({ children }: LayoutProps) {
@@ -103,8 +107,6 @@ export function Layout({ children }: LayoutProps) {
   }, [setCurrentPage])
 
   return (
-    // --- FIX START ---
-    // The Toaster component is now a sibling to the main layout div.
     <>
       <TooltipProvider>
         <div className="min-h-screen bg-background text-foreground flex">
@@ -207,6 +209,5 @@ export function Layout({ children }: LayoutProps) {
       </TooltipProvider>
       <Toaster />
     </>
-    // --- FIX END ---
   )
 }

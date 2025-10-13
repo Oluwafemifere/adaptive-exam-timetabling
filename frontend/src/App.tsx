@@ -7,13 +7,16 @@ import { Dashboard } from "./pages/Dashboard";
 import { Scheduling } from "./pages/Scheduling";
 import { Timetable } from "./pages/Timetable";
 import { Constraints } from "./pages/Constraints";
-import { SessionSetup } from "./pages/SessionSetup";
+// --- MODIFICATION START ---
+import { SessionManagement } from "./pages/SessionManagement"; // Updated import
+// --- MODIFICATION END ---
 import { UserManagement } from "./pages/UserManagement";
 import { Notifications } from "./pages/Notifications";
 import { History } from "./pages/History";
 import { StudentPortal } from "./pages/StudentPortal";
 import { StaffPortal } from "./pages/StaffPortal";
 import { useAppStore } from "./store";
+import { Export } from "./pages/Export";
 
 function AppContent() {
   const { currentPage, isAuthenticated, user, initializeApp } = useAppStore();
@@ -44,10 +47,13 @@ function AppContent() {
         case "scheduling": return <Scheduling />;
         case "timetable": return <Timetable />;
         case "constraints": return <Constraints />;
-        case "session-setup": return <SessionSetup />;
+        // --- MODIFICATION START ---
+        case "session-setup": return <SessionManagement />; // Render the new component
+        // --- MODIFICATION END ---
         case "user-management": return <UserManagement />;
         case "notifications": return <Notifications />;
         case "history": return <History />;
+        case "export": return <Export />;
         default: return <Dashboard />;
       }
     };
@@ -84,15 +90,12 @@ export default function App() {
   return (
     <>
       <AppContent />
-      {/* --- FIX START --- */}
-      {/* Updated toast styles to be more vibrant and integrated with the app theme. */}
-      {/* Uses a colored accent border and matching icon/title colors. */}
       <Toaster
       position="top-right"
-      offset={64} // distance from top bar; tweak as needed
+      offset={64}
       toastOptions={{
         style: {
-          zIndex: 99999, // forces it above modals, navbars, etc.
+          zIndex: 99999,
         },
         classNames: {
           toast:
@@ -112,7 +115,6 @@ export default function App() {
         },
       }}
     />
-      {/* --- FIX END --- */}
     </>
   );
 }

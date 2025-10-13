@@ -88,11 +88,6 @@ const HistoryItem = React.memo(({ entry }: { entry: any }) => {
             <p className="text-sm mt-1">
               <span className="font-medium">{entry.userName}</span>
               {' '}performed: {entry.action}
-              {entry.entityId && (
-                <span className="text-muted-foreground">
-                  {' '}(ID: {entry.entityId})
-                </span>
-              )}
             </p>
             
             {Object.keys(entry.details).length > 0 && (

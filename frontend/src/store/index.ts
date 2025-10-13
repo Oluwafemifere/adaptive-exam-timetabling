@@ -1,4 +1,3 @@
-// frontend/src/store/index.ts
 import { create } from 'zustand';
 import {
   AppState,
@@ -19,7 +18,7 @@ import {
   SystemConfiguration,
   JobStatus,
   SystemConfigurationDetails,
-  JobSummary,
+  SchedulingJob,
   SystemConfigSavePayload,
   RuleSettingRead,
   RuleSetting,
@@ -223,11 +222,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   fetchSessionJobs: async (sessionId) => {
     try {
-      const response = await api.getSuccessfulJobsForSession(sessionId);
+      const response = await api.getJobsList(sessionId);
       set({ sessionJobs: response.data || [] });
     } catch (error) {
       console.error("Failed to fetch session jobs:", error);
-      toast.error("Could not load timetable versions for this session.");
+      toast.error("Could not load job history for this session.");
     }
   },
 
@@ -362,7 +361,48 @@ export const useAppStore = create<AppState>()((set, get) => ({
       }));
     }
   },
+  createNewConfiguration: async (payload: SystemConfigSavePayload) => {
+    try {
+      // The API service correctly uses POST for creation when ID is absent
+      const response = await api.saveSystemConfiguration(payload);
+      toast.success(`Configuration "${payload.name}" created successfully.`);
+      
+      // Refresh the list of configurations
+      const listResponse = await api.getSystemConfigurationList();
+      const newConfigs = listResponse.data || [];
+      set({ configurations: newConfigs });
 
+      // Find the new config's ID from the response and set it as active
+      const newConfigId = response.data?.data?.configuration_id;
+      if (newConfigId) {
+        await get().fetchAndSetActiveConfiguration(newConfigId);
+      }
+      return true; // Indicate success
+    } catch (error) {
+      toast.error("Failed to create new configuration.");
+      console.error(error);
+      return false; // Indicate failure
+    }
+  },
+
+  setDefaultConfiguration: async (configId: string) => {
+    try {
+      await api.setDefaultSystemConfiguration(configId);
+      toast.success("Default configuration has been updated.");
+
+      // Refresh the entire list to update the 'is_default' flag everywhere
+      const listResponse = await api.getSystemConfigurationList();
+      const configs = listResponse.data || [];
+      set({ configurations: configs });
+
+      // Also refresh the currently viewed details to update the badge
+      await get().fetchAndSetActiveConfiguration(configId);
+
+    } catch (error) {
+      toast.error("Failed to set the default configuration.");
+      console.error(error);
+    }
+  },
   cancelSchedulingJob: async (jobId) => {
     try {
       await api.cancelScheduling(jobId);

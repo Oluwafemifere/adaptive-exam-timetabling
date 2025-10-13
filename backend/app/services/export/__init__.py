@@ -6,17 +6,25 @@ import from ``app.services.export`` directly.
 
 Example
 -------
-from app.services.export import CSVExporter, PDFGenerator, ReportBuilder, ReportingService
+from app.services.export import (
+    CSVExporter,
+    PDFGenerator,
+    ReportBuilder,
+    ReportingService,
+    TimetableExportService
+)
 """
 
 from .csv_exporter import CSVExporter
 from .pdf_generator import PDFGenerator
 from .report_builder import ReportBuilder
 from .reporting_service import ReportingService
+from .timetable_export_service import TimetableExportService
 
 __all__ = [
     "CSVExporter",
     "PDFGenerator",
     "ReportBuilder",
     "ReportingService",
+    "TimetableExportService",
 ]

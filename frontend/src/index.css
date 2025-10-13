@@ -3862,7 +3862,7 @@
   --destructive: #d4183d;
   --destructive-foreground: #fff;
   --border: #0000001a;
-  --input: transparent;
+  --input: var(--switch-background);
   --input-background: #f3f3f5;
   --switch-background: #cbced4;
   --font-weight-medium: 500;

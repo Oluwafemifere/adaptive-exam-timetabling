@@ -1,13 +1,13 @@
 # backend/app/services/data_management/__init__.py
-"""
-Data Management Services Package.
 
-Provides services for core CRUD operations and database seeding.
+"""
+Services for direct data manipulation and core entity management.
 """
 
 from .core_data_service import CoreDataService
-
+from .session_management_service import SessionManagementService  # <--- ADD THIS
 
 __all__ = [
     "CoreDataService",
+    "SessionManagementService",  # <--- AND ADD THIS
 ]

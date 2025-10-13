@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -6,13 +6,22 @@ import { Progress } from '../components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Label } from '../components/ui/label';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '../components/ui/alert-dialog';
-import { Play, Square, AlertTriangle, Settings, Calendar, Users, Loader2, Terminal, CheckCircle, XCircle, Zap } from 'lucide-react';
+import { Play, Square, Settings, Terminal, CheckCircle, XCircle, Zap, History, Eye, Loader2 } from 'lucide-react';
 import { useAppStore } from '../store';
-import { useJobStatusSocket } from '../hooks/useApi';
+import { useJobStatusSocket, useJobHistoryData } from '../hooks/useApi';
 import { toast } from 'sonner';
 import { api } from '../services/api';
 import { ScrollArea } from '../components/ui/scroll-area';
 import { cn } from '../utils/utils';
+import { formatDistanceToNow } from 'date-fns';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table';
 
 export function Scheduling() {
   const {
@@ -23,10 +32,14 @@ export function Scheduling() {
     activeConfigurationId,
     setConfigurations,
     schedulingStatus,
+    fetchAndSetJobResult,
+    setCurrentPage,
   } = useAppStore();
 
   const [selectedConfig, setSelectedConfig] = useState<string | undefined>(undefined);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  
+  const { jobs, isLoading: isHistoryLoading, refetch: refetchHistory } = useJobHistoryData();
 
   useEffect(() => {
     setSelectedConfig(activeConfigurationId ?? undefined);
@@ -59,6 +72,13 @@ export function Scheduling() {
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [schedulingStatus.logs]);
+  
+  // Refetch history when a job is no longer running
+  useEffect(() => {
+    if (!schedulingStatus.isRunning && schedulingStatus.jobId) {
+      refetchHistory();
+    }
+  }, [schedulingStatus.isRunning, schedulingStatus.jobId, refetchHistory]);
 
   const handleStartJob = () => {
     if (!activeSessionId) {
@@ -76,6 +96,20 @@ export function Scheduling() {
     if (schedulingStatus.jobId) {
       cancelSchedulingJob(schedulingStatus.jobId);
     }
+  };
+
+  const handleViewTimetable = (jobId: string) => {
+    toast.promise(
+      async () => {
+        await fetchAndSetJobResult(jobId);
+        setCurrentPage('timetable');
+      },
+      {
+        loading: 'Loading timetable data...',
+        success: 'Timetable loaded successfully!',
+        error: 'Failed to load the selected timetable.',
+      }
+    );
   };
 
   const getStatusIndicator = () => {
@@ -97,6 +131,15 @@ export function Scheduling() {
     if (log.startsWith('[INFO]')) return 'text-blue-600 dark:text-blue-400';
     if (log.startsWith('[WARNING]')) return 'text-yellow-600 dark:text-yellow-400';
     return 'text-muted-foreground';
+  };
+  
+  const getStatusBadgeVariant = (status: string) => {
+    switch (status) {
+      case 'completed': return 'default';
+      case 'failed':
+      case 'cancelled': return 'destructive';
+      default: return 'secondary';
+    }
   };
 
   return (
@@ -177,6 +220,57 @@ export function Scheduling() {
             </CardContent>
           </Card>
         )}
+        
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center"><History className="h-5 w-5 mr-2" />Job History</CardTitle>
+            <CardDescription>Review of past and ongoing scheduling jobs for this session.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isHistoryLoading ? (
+              <div className="flex justify-center items-center h-40"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
+            ) : jobs.length === 0 ? (
+              <p className="text-center text-muted-foreground py-10">No job history found for this session.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Initiated</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {jobs.map((job) => (
+                    <TableRow key={job.id}>
+                      <TableCell>
+                        <Badge variant={getStatusBadgeVariant(job.status)} className="capitalize">{job.status}</Badge>
+                      </TableCell>
+                      <TableCell>{formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}</TableCell>
+                      <TableCell>
+                        {job.started_at && job.completed_at
+                          ? `${(Math.abs(new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()) / 60000).toFixed(2)} min`
+                          : '-'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleViewTimetable(job.id)}
+                          disabled={job.status !== 'completed'}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          View Timetable
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       </div>
   );
 }

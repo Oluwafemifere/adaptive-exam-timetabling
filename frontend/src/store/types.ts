@@ -1,4 +1,3 @@
-// frontend/src/store/types.ts
 export interface RenderableExam {
 id: string;
 examId: string;
@@ -470,13 +469,25 @@ export interface SystemConfigSavePayload {
   rules: RuleSetting[];
 }
 
-export interface JobSummary {
+export interface SchedulingJob {
   id: string;
+  session_id: string;
+  configuration_id: string;
+  initiated_by: string;
+  status: 'completed' | 'failed' | 'running' | 'queued' | 'cancelled' | 'initializing';
+  progress_percentage: number;
+  solver_phase: string | null;
+  error_message: string | null;
   created_at: string;
-  status: string;
-  version_id: string | null;
-  is_published: boolean;
+  started_at?: string | null;
+  completed_at?: string | null;
+  result_data?: {
+      solution?: {
+          solution_id: string;
+      }
+  };
 }
+
 export type StagingRecord = {
   id?: string;
   session_id: string;
@@ -707,7 +718,7 @@ dashboardKpis: DashboardKpis | null;
 conflictHotspots: ConflictHotspot[];
 topBottlenecks: TopBottleneck[];
 recentActivity: HistoryEntry[];
-sessionJobs: JobSummary[];
+sessionJobs: SchedulingJob[];
 // Configuration State
   configurations: SystemConfiguration[]; // For the dropdown list
   activeConfigurationId: string | null;
@@ -749,6 +760,9 @@ setAllReports: (data: AllReportsResponse) => void;
 setConfigurations: (configs: SystemConfiguration[]) => void;
   fetchAndSetActiveConfiguration: (configId: string) => Promise<void>;
   saveActiveConfiguration: (updatedConfig: SystemConfigurationDetails) => Promise<void>;
+
+createNewConfiguration: (payload: SystemConfigSavePayload) => Promise<boolean>;
+  setDefaultConfiguration: (configId: string) => Promise<void>;
 // NEW DASHBOARD ACTIONS
 setDashboardKpis: (kpis: DashboardKpis) => void;
 setConflictHotspots: (hotspots: ConflictHotspot[]) => void;

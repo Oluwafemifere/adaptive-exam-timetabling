@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
-import { CalendarDays, Clock, MapPin, Building, FileEdit, GraduationCap, Shield, LogOut, Grid3X3, List, Loader2, AlertTriangle, Sun, Moon } from 'lucide-react';
+import { CalendarDays, Clock, MapPin, Building, FileEdit, GraduationCap, Shield, LogOut, Grid3X3, List, Loader2, AlertTriangle, Sun, Moon, Download } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useAuth } from '../hooks/useAuth';
 import { useStaffPortalData } from '../hooks/useApi';
@@ -16,6 +16,9 @@ import { TimetableGrid } from '../components/TimetableGrid';
 import { FilterControls } from '../components/FilterControls';
 import { RenderableExam, StaffAssignment, ChangeRequest } from '../store/types';
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert';
+import { PDFDownloadLink } from '@react-pdf/renderer';
+import { TimetablePDFDocument } from '../components/TimetablePDF';
+
 
 export function StaffPortal() {
   const { user, instructorSchedule, invigilatorSchedule, changeRequests, addChangeRequest, settings, updateSettings } = useAppStore();
@@ -228,6 +231,31 @@ export function StaffPortal() {
                 <p className="text-sm text-muted-foreground">Welcome, {user?.name}</p>
               </div>
               <div className="flex items-center gap-2">
+                <PDFDownloadLink
+                  document={
+                    <TimetablePDFDocument
+                      exams={renderableInstructorExams.concat(renderableInvigilatorExams)}
+                      title={`Exam Schedule for ${user?.name}`}
+                    />
+                  }
+                  fileName={`my-schedule-${user?.name?.replace(/\s+/g, '_')}-${new Date().toISOString().split('T')[0]}.pdf`}
+                >
+                  {({ loading }) => (
+                    <Button variant="outline" size="sm" disabled={loading}>
+                      {loading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="h-4 w-4 mr-2" />
+                          Download PDF
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </PDFDownloadLink>
                 <Button variant="outline" size="icon" onClick={toggleTheme}>
                   {settings.theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
                 </Button>

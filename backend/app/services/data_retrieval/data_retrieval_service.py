@@ -150,14 +150,18 @@ class DataRetrievalService:
         """
         logger.info(f"Fetching latest version metadata for session: {session_id}")
         try:
+            # --- START OF FIX ---
+            # Also select the job_id to avoid a second query in the route.
             base_query = """
                 SELECT
                     tv.id,
+                    tv.job_id,
                     tv.updated_at as last_modified
                 FROM exam_system.timetable_versions tv
                 JOIN exam_system.timetable_jobs tj ON tv.job_id = tj.id
                 WHERE tj.status = 'completed'
             """
+            # --- END OF FIX ---
             params = {}
             if session_id:
                 base_query += " AND tj.session_id = :session_id"
@@ -358,6 +362,15 @@ class DataRetrievalService:
     async def get_active_academic_session(self) -> Optional[Dict[str, Any]]:
         """Calls `get_active_academic_session`."""
         return await self._execute_pg_function("get_active_academic_session")
+
+    # --- START OF FIX ---
+    async def get_job_id_from_version(self, version_id: UUID) -> Optional[UUID]:
+        """Calls `get_job_id_from_version` to find the job associated with a version."""
+        return await self._execute_pg_function(
+            "get_job_id_from_version", {"p_version_id": version_id}
+        )
+
+    # --- END OF FIX ---
 
     async def get_latest_successful_timetable_job(
         self, session_id: UUID
