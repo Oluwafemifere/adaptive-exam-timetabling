@@ -31,6 +31,7 @@ class AuditService:
         notes: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        session_id: Optional[UUID] = None,
     ) -> None:
         """
         Logs an audit activity by calling the `log_audit_activity` PostgreSQL function.
@@ -39,6 +40,7 @@ class AuditService:
             user_id: The ID of the user performing the action.
             action: The action being performed (e.g., 'create', 'update', 'login').
             entity_type: The type of entity being affected (e.g., 'course', 'user').
+            session_id: The academic session ID related to the action, if any.
             ... and other audit parameters.
         """
         try:
@@ -51,7 +53,8 @@ class AuditService:
                     p_user_id => :user_id, p_action => :action, p_entity_type => :entity_type,
                     p_entity_id => :entity_id, p_old_values => :old_values,
                     p_new_values => :new_values, p_notes => :notes,
-                    p_ip_address => :ip_address, p_user_agent => :user_agent
+                    p_ip_address => :ip_address, p_user_agent => :user_agent,
+                    p_session_id => :session_id
                 )
                 """
             )
@@ -63,6 +66,7 @@ class AuditService:
                 "notes": notes,
                 "ip_address": ip_address,
                 "user_agent": user_agent,
+                "session_id": str(session_id) if session_id else None,
                 "old_values": (
                     json.dumps(old_values, default=str) if old_values else None
                 ),

@@ -18,7 +18,8 @@ StagingCourseInstructorCreate, StagingCourseRegistrationCreate, StagingCourseReg
 StagingCourseCreate, StagingCourseUpdate, StagingDepartmentCreate, StagingDepartmentUpdate,
 StagingFacultyCreate, StagingFacultyUpdate, StagingProgrammeCreate, StagingProgrammeUpdate,
 StagingRoomCreate, StagingRoomUpdate, StagingStaffCreate, StagingStaffUpdate,
-StagingStaffUnavailabilityCreate, StagingStaffUnavailabilityUpdate, StagingStudentCreate, StagingStudentUpdate
+StagingStaffUnavailabilityCreate, StagingStaffUnavailabilityUpdate, StagingStudentCreate, StagingStudentUpdate,
+StagingCourseDepartmentUpdate, StagingCourseFacultyUpdate
 } from '../store/types';
 
 const apiService = axios.create({
@@ -77,9 +78,8 @@ deleteUser: (userId: string) => apiService.delete(`/users/${userId}`),
 getActiveSession: () => apiService.get('/sessions/active'),
 getCurrentUser: () => apiService.get('/users/me'),
 
-getDashboardKpis: (sessionId: string) => apiService.get(`/dashboard/${sessionId}/kpis`),
-getConflictHotspots: (sessionId: string) => apiService.get(`/dashboard/${sessionId}/conflict-hotspots`),
-getTopBottlenecks: (sessionId: string) => apiService.get(`/dashboard/${sessionId}/top-bottlenecks`),
+// --- UPDATED: Replaced multiple dashboard calls with a single analytics endpoint ---
+getDashboardAnalytics: (sessionId: string) => apiService.get(`/dashboard/${sessionId}/analytics`),
 getAuditHistory: (page = 1, pageSize = 5) => apiService.get('/system/audit-history', { params: { page, page_size: pageSize } }),
 
 getLatestTimetableForActiveSession: () => apiService.get('/timetables/active/latest'),
@@ -87,15 +87,13 @@ getJobStatus: (jobId: string) => apiService.get(`/jobs/${jobId}`),
 getPortalData: (userId: string) => apiService.get(`/portal/${userId}`),
 
 startScheduling: (data: {configuration_id: string }) => apiService.post('/scheduling/generate', data),
-cancelScheduling: (jobId: string) => apiService.post(`/jobs/${jobId}/cancel`),
+cancelScheduling: (jobId: string) => apiService.delete(`/jobs/${jobId}`),
 
 uploadFilesBatch: (files: File[], academicSessionId: string) => {
     const formData = new FormData();
     files.forEach(file => {
       formData.append('files', file);
     });
-    // FIX: Changed the endpoint from a non-existent '/uploads/.../batch' to the
-    // correct endpoint '/uploads/upload/...' as defined in the OpenAPI specification.
     return apiService.post(`/uploads/upload/${academicSessionId}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
@@ -110,6 +108,7 @@ getSessionSummary: (sessionId: string) => apiService.get(`/setup/session/${sessi
 processStagedData: (sessionId: string) => apiService.post(`/setup/session/${sessionId}/process-data`),
 getAllStagedData: (sessionId: string) => apiService.get(`/staging-records/${sessionId}`),
 updateStagedRecord: (entityType: string, recordPk: string, payload: any) => apiService.put(`/setup/staging-data/${entityType}/${recordPk}`, payload),
+getSeedingStatus: (academicSessionId: string) => apiService.get(`/seeding/${academicSessionId}/status`),
 // Buildings
 addStagedBuilding: (sessionId: string, data: StagingBuildingCreate) => apiService.post(`/staging-records/${sessionId}/buildings`, data),
 updateStagedBuilding: (sessionId: string, code: string, data: StagingBuildingUpdate) => apiService.put(`/staging-records/${sessionId}/buildings/${code}`, data),
@@ -117,10 +116,14 @@ deleteStagedBuilding: (sessionId: string, code: string) => apiService.delete(`/s
 
 // CourseDepartments
 addStagedCourseDepartment: (sessionId: string, data: StagingCourseDepartmentCreate) => apiService.post(`/staging-records/${sessionId}/course-departments`, data),
+// --- FIX: Added missing update function ---
+updateStagedCourseDepartment: (sessionId: string, courseCode: string, oldDepartmentCode: string, data: StagingCourseDepartmentUpdate) => apiService.put(`/staging-records/${sessionId}/course-departments/${courseCode}/${oldDepartmentCode}`, data),
 deleteStagedCourseDepartment: (sessionId: string, courseCode: string, departmentCode: string) => apiService.delete(`/staging-records/${sessionId}/course-departments/${courseCode}/${departmentCode}`),
 
 // CourseFaculties
 addStagedCourseFaculty: (sessionId: string, data: StagingCourseFacultyCreate) => apiService.post(`/staging-records/${sessionId}/course-faculties`, data),
+// --- FIX: Added missing update function ---
+updateStagedCourseFaculty: (sessionId: string, courseCode: string, oldFacultyCode: string, data: StagingCourseFacultyUpdate) => apiService.put(`/staging-records/${sessionId}/course-faculties/${courseCode}/${oldFacultyCode}`, data),
 deleteStagedCourseFaculty: (sessionId: string, courseCode: string, facultyCode: string) => apiService.delete(`/staging-records/${sessionId}/course-faculties/${courseCode}/${facultyCode}`),
 
 // CourseInstructors

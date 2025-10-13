@@ -67,29 +67,112 @@ class DataRetrievalService:
         )
 
     async def get_paginated_entities(
-        self, entity_type: str, page: int, page_size: int
+        self,
+        entity_type: str,
+        page: int,
+        page_size: int,
+        session_id: Optional[UUID] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Calls `get_paginated_entities`."""
+        """Calls `get_paginated_entities` or a custom query for non-session entities."""
+        # This is a special case because academic_sessions doesn't have a session_id column
+        if entity_type == "academic_sessions":
+            # Direct query as a workaround for the PG function's limitation
+            try:
+                offset_val = (page - 1) * page_size
+                count_query = text("SELECT count(*) FROM exam_system.academic_sessions")
+                total_count_res = await self.session.execute(count_query)
+                total_count = total_count_res.scalar_one()
+
+                data_query = text(
+                    "SELECT COALESCE(jsonb_agg(t), '[]'::jsonb) FROM (SELECT * FROM exam_system.academic_sessions ORDER BY created_at DESC LIMIT :page_size OFFSET :offset) t"
+                )
+                data_res = await self.session.execute(
+                    data_query, {"page_size": page_size, "offset": offset_val}
+                )
+                data_json = data_res.scalar_one()
+
+                return {
+                    "total": total_count,
+                    "page": page,
+                    "page_size": page_size,
+                    "data": data_json,
+                }
+            except Exception as e:
+                logger.error(
+                    f"Failed to directly query paginated academic_sessions: {e}",
+                    exc_info=True,
+                )
+                raise
+
+        if session_id is None:
+            raise ValueError(f"session_id is required for entity type '{entity_type}'")
+
         return await self._execute_pg_function(
             "get_paginated_entities",
-            {"p_entity_type": entity_type, "p_page": page, "p_page_size": page_size},
+            {
+                "p_entity_type": entity_type,
+                "p_page": page,
+                "p_page_size": page_size,
+                "p_session_id": session_id,
+            },
         )
 
     async def get_all_entities_as_json(
-        self, entity_type: str
+        self, entity_type: str, session_id: UUID
     ) -> Optional[List[Dict[str, Any]]]:
         """Calls `get_entity_data_as_json`."""
         return await self._execute_pg_function(
-            "get_entity_data_as_json", {"p_entity_type": entity_type}
+            "get_entity_data_as_json",
+            {"p_entity_type": entity_type, "p_session_id": session_id},
         )
+
+    async def get_default_system_configuration(self) -> Optional[UUID]:
+        """Retrieves the ID of the default system configuration."""
+        logger.info("Fetching default system configuration ID")
+        try:
+            query = text(
+                "SELECT id FROM exam_system.system_configurations WHERE is_default = true LIMIT 1"
+            )
+            result = await self.session.execute(query)
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(
+                f"Failed to fetch default system configuration: {e}", exc_info=True
+            )
+            raise
+
+    async def get_latest_version_metadata(
+        self, session_id: Optional[UUID] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves metadata for the latest completed timetable version,
+        optionally filtered by session.
+        """
+        logger.info(f"Fetching latest version metadata for session: {session_id}")
+        try:
+            base_query = """
+                SELECT
+                    tv.id,
+                    tv.updated_at as last_modified
+                FROM exam_system.timetable_versions tv
+                JOIN exam_system.timetable_jobs tj ON tv.job_id = tj.id
+                WHERE tj.status = 'completed'
+            """
+            params = {}
+            if session_id:
+                base_query += " AND tj.session_id = :session_id"
+                params["session_id"] = session_id
+
+            query_str = base_query + " ORDER BY tv.updated_at DESC LIMIT 1"
+            query = text(query_str)
+            result = await self.session.execute(query, params)
+            row = result.mappings().first()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to fetch latest version metadata: {e}", exc_info=True)
+            raise
 
     # --- Timetable, Scheduling & Scenario Data ---
-    async def get_full_timetable(self, version_id: UUID) -> Optional[Dict[str, Any]]:
-        """Calls `get_full_timetable`."""
-        return await self._execute_pg_function(
-            "get_full_timetable", {"p_version_id": version_id}
-        )
-
     async def get_full_timetable_with_details(
         self, version_id: UUID
     ) -> Optional[Dict[str, Any]]:
@@ -133,13 +216,6 @@ class DataRetrievalService:
             "get_scenario_comparison_details", {"p_scenario_ids": scenario_ids}
         )
 
-    async def get_latest_version_metadata(
-        self, session_id: Optional[UUID] = None
-    ) -> Optional[Dict[str, Any]]:
-        """Calls `get_latest_version_metadata`."""
-        params = {"p_session_id": session_id} if session_id else {}
-        return await self._execute_pg_function("get_latest_version_metadata", params)
-
     # --- User-Specific Portal & Schedule Data ---
     async def get_portal_data(self, user_id: UUID) -> Optional[Dict[str, Any]]:
         """Calls the master `get_portal_data` DB function."""
@@ -168,74 +244,40 @@ class DataRetrievalService:
             {"p_room_id": room_id, "p_job_id": job_id},
         )
 
-    async def get_invigilator_schedule(
-        self, staff_id: UUID, job_id: UUID
+    async def get_staff_schedule(
+        self, staff_id: UUID, version_id: UUID
     ) -> Optional[Dict[str, Any]]:
-        """Calls `get_invigilator_schedule` using a job_id."""
+        """Calls `get_staff_schedule` to retrieve instructor and invigilator duties."""
         return await self._execute_pg_function(
-            "get_invigilator_schedule",
-            {"p_staff_id": staff_id, "p_job_id": job_id},
+            "get_staff_schedule",
+            {"p_staff_id": staff_id, "p_version_id": version_id},
         )
 
-    async def get_instructor_schedule(
-        self, staff_id: UUID, job_id: UUID
-    ) -> Optional[Dict[str, Any]]:
-        """Calls `get_instructor_schedule` using a job_id."""
-        return await self._execute_pg_function(
-            "get_instructor_schedule",
-            {"p_staff_id": staff_id, "p_job_id": job_id},
-        )
-
-    async def get_student_portal_data(
+    async def get_student_conflict_reports(
         self, user_id: UUID, session_id: UUID
-    ) -> Optional[Dict[str, Any]]:
-        """Calls `get_student_portal_data`."""
+    ) -> Dict[str, Any]:
+        """Calls `get_student_conflict_reports`."""
         return await self._execute_pg_function(
-            "get_student_portal_data",
+            "get_student_conflict_reports",
             {"p_user_id": user_id, "p_session_id": session_id},
         )
 
-    async def get_staff_portal_data(
+    async def get_staff_change_requests(
         self, user_id: UUID, session_id: UUID
-    ) -> Optional[Dict[str, Any]]:
-        """Calls `get_staff_portal_data`."""
-        return await self._execute_pg_function(
-            "get_staff_portal_data", {"p_user_id": user_id, "p_session_id": session_id}
-        )
-
-    async def get_student_conflict_reports(self, user_id: UUID) -> Dict[str, Any]:
-        """Calls `get_student_conflict_reports`."""
-        return await self._execute_pg_function(
-            "get_student_conflict_reports", {"p_user_id": user_id}
-        )
-
-    async def get_staff_change_requests(self, user_id: UUID) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Calls `get_staff_change_requests`."""
         return await self._execute_pg_function(
-            "get_staff_change_requests", {"p_user_id": user_id}
+            "get_staff_change_requests",
+            {"p_user_id": user_id, "p_session_id": session_id},
         )
 
     # --- User & Role Management Data ---
-    async def get_all_users_json(self) -> Optional[List[Dict[str, Any]]]:
-        """Calls `get_all_users_json`."""
-        return await self._execute_pg_function("get_all_users_json")
-
-    async def get_active_users_json(self) -> Optional[List[Dict[str, Any]]]:
-        """Calls `get_active_users_json`."""
-        return await self._execute_pg_function("get_active_users_json")
-
-    async def get_users_by_role_json(
-        self, role_name: str
-    ) -> Optional[List[Dict[str, Any]]]:
-        """Calls `get_users_by_role_json`."""
-        return await self._execute_pg_function(
-            "get_users_by_role_json", {"p_role_name": role_name}
-        )
-
-    async def get_user_role_id(self, user_id: UUID) -> Optional[Dict[str, Any]]:
+    async def get_user_role_id(
+        self, user_id: UUID, session_id: UUID
+    ) -> Optional[Dict[str, Any]]:
         """Calls `get_user_role_id` to get the specific role ID (staff, student) for a user."""
         return await self._execute_pg_function(
-            "get_user_role_id", {"p_user_id": user_id}
+            "get_user_role_id", {"p_user_id": user_id, "p_session_id": session_id}
         )
 
     async def get_user_management_data(
@@ -365,10 +407,6 @@ class DataRetrievalService:
         )
 
     # --- Configuration Retrieval ---
-    async def get_default_system_configuration(self) -> Optional[UUID]:
-        """Calls `get_default_system_configuration`."""
-        return await self._execute_pg_function("get_default_system_configuration")
-
     async def get_system_configuration_details(self, config_id: UUID) -> Dict[str, Any]:
         """Calls `get_system_configuration_details`."""
         return await self._execute_pg_function(

@@ -105,37 +105,65 @@ class TimetableManagementService:
         self, version_id: UUID, assignments: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Validates proposed timetable assignments by calling `validate_assignments`.
+        Validates proposed timetable assignments by calling `validate_timetable`.
         Checks for student clashes, room overcapacity, double bookings, and invigilator conflicts.
         """
-        logger.info(f"Validating assignments for version {version_id}")
+        logger.info(f"Validating timetable for version {version_id}")
         query = text(
-            "SELECT exam_system.validate_assignments(:p_version_id, :p_assignments)"
+            "SELECT exam_system.validate_timetable(:p_assignments, :p_version_id)"
         )
         result = await self.session.execute(
             query,
             {
-                "p_version_id": version_id,
                 "p_assignments": json.dumps(assignments, default=str),
+                "p_version_id": version_id,
             },
         )
         return result.scalar_one()
 
-    async def publish_timetable_version(self, version_id: UUID, user_id: UUID) -> None:
+    async def publish_timetable_version(
+        self, job_id: UUID, user_id: UUID
+    ) -> Dict[str, Any]:
         """
         Publishes a timetable version, making it official, by calling `publish_timetable_version`.
         """
-        logger.info(f"User {user_id} publishing timetable version {version_id}")
+        logger.info(f"User {user_id} publishing timetable from job {job_id}")
         try:
             query = text(
-                "SELECT exam_system.publish_timetable_version(:p_version_id, :p_user_id)"
+                "SELECT exam_system.publish_timetable_version(:p_job_id, :p_user_id)"
             )
-            await self.session.execute(
-                query, {"p_version_id": version_id, "p_user_id": user_id}
+            result = await self.session.execute(
+                query, {"p_job_id": job_id, "p_user_id": user_id}
             )
+            publish_result = result.scalar_one()
             await self.session.commit()
-            logger.info(f"Successfully published timetable version {version_id}")
+            logger.info(f"Successfully published timetable from job {job_id}")
+            return publish_result
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"Failed to publish version {version_id}: {e}", exc_info=True)
+            logger.error(f"Failed to publish from job {job_id}: {e}", exc_info=True)
+            raise
+
+    async def unpublish_timetable_version(
+        self, version_id: UUID, user_id: UUID
+    ) -> Dict[str, Any]:
+        """
+        Unpublishes a specific timetable version. Assumes a corresponding PG function exists.
+        """
+        logger.warning(f"User {user_id} un-publishing timetable version {version_id}")
+        try:
+            # This assumes a new PG function 'unpublish_timetable_version' exists
+            # that sets is_published to false for a given version_id.
+            query = text(
+                "UPDATE exam_system.timetable_versions SET is_published = FALSE WHERE id = :p_version_id"
+            )
+            await self.session.execute(query, {"p_version_id": version_id})
+            await self.session.commit()
+            logger.info(f"Successfully unpublished timetable version {version_id}")
+            return {"success": True, "message": "Timetable version unpublished."}
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(
+                f"Failed to unpublish version {version_id}: {e}", exc_info=True
+            )
             raise

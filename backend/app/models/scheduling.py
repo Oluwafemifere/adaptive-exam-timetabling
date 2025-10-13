@@ -111,7 +111,7 @@ class ExamDepartment(Base, TimestampMixin):
     )
 
     exam: Mapped["Exam"] = relationship(back_populates="exam_departments")
-    department: Mapped["Department"] = relationship()
+    department: Mapped["Department"] = relationship(back_populates="exam_departments")
 
 
 class Staff(Base, TimestampMixin):
@@ -120,7 +120,7 @@ class Staff(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    staff_number: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    staff_number: Mapped[str] = mapped_column(String, nullable=False)
     first_name: Mapped[str] = mapped_column(String, nullable=False)
     last_name: Mapped[str] = mapped_column(String, nullable=False)
     department_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -133,13 +133,16 @@ class Staff(Base, TimestampMixin):
     max_consecutive_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False)
     max_concurrent_exams: Mapped[int] = mapped_column(Integer, nullable=False)
-    # FIX: Corrected column name from max_students_per_invigilator to match schema
     max_students_per_invigilator: Mapped[int] = mapped_column(Integer, nullable=False)
-    # FIX: Added missing column from schema
     generic_availability_preferences: Mapped[dict | None] = mapped_column(JSONB)
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id"), unique=True
     )
+    # ADDED: session_id and relationship
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
+    )
+    session: Mapped["AcademicSession"] = relationship(back_populates="staff")
 
     department: Mapped[Optional["Department"]] = relationship(back_populates="staff")
     user: Mapped[Optional["User"]] = relationship(back_populates="staff_profile")
@@ -154,6 +157,10 @@ class Staff(Base, TimestampMixin):
     )
     courses: AssociationProxy[List["Course"]] = association_proxy(
         "course_associations", "course"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("staff_number", "session_id", name="uq_staff_number_session"),
     )
 
 

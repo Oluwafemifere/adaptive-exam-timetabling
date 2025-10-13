@@ -8,12 +8,30 @@ from ....api.deps import db_session, current_user
 from ....models.users import User
 from ....services.data_retrieval import DataRetrievalService
 from ....schemas.dashboard import (
-    DashboardKpis,
+    DashboardAnalytics,
     ConflictHotspot,
     TopBottleneck,
+    DashboardKpis,
 )
 
 router = APIRouter()
+
+
+@router.get("/{session_id}/analytics", response_model=DashboardAnalytics)
+async def get_dashboard_analytics(
+    session_id: UUID,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """Retrieve all dashboard analytics data in a single call."""
+    service = DataRetrievalService(db)
+    analytics_data = await service.get_dashboard_analytics(session_id)
+    if not analytics_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Dashboard analytics not found. A timetable may not be generated or published yet.",
+        )
+    return analytics_data
 
 
 @router.get("/{session_id}/kpis", response_model=DashboardKpis)

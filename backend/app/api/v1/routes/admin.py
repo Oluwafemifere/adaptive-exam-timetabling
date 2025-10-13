@@ -27,19 +27,22 @@ async def test_email_connection(
     return {"detail": "SMTP connection successful"}
 
 
-@router.get("/data/{entity_type}", response_model=List[Dict[str, Any]])
+@router.get("/data/{session_id}/{entity_type}", response_model=List[Dict[str, Any]])
 async def get_all_entity_data(
+    session_id: UUID,
     entity_type: str,
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """Retrieve all records for a given entity type."""
+    """Retrieve all records for a given entity type within a specific session."""
     service = DataRetrievalService(db)
-    result = await service.get_all_entities_as_json(entity_type)
+    result = await service.get_all_entities_as_json(
+        entity_type=entity_type, session_id=session_id
+    )
     if result is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Entity type '{entity_type}' not found or no data available.",
+            detail=f"Entity type '{entity_type}' not found or no data available for the given session.",
         )
     return result
 

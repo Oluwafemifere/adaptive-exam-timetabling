@@ -86,7 +86,9 @@ async def get_latest_timetable_version(
             detail="No completed timetable versions found.",
         )
     version_id = metadata["id"]
-    timetable_data = await service.get_timetable_job_results(job_id=version_id)
+    job_id = metadata.get("job_id")  # Assuming job_id is returned by the service
+    assert job_id
+    timetable_data = await service.get_timetable_job_results(job_id=job_id)
     if not timetable_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -119,7 +121,9 @@ async def get_latest_timetable_for_session(
             detail=f"No completed timetables found for session '{session_id}'.",
         )
     version_id = metadata["id"]
-    timetable_data = await service.get_timetable_job_results(job_id=version_id)
+    job_id = metadata.get("job_id")  # Assuming job_id is returned by the service method
+    assert job_id
+    timetable_data = await service.get_timetable_job_results(job_id=job_id)
     return {
         "success": True,
         "message": "Latest session timetable retrieved successfully.",
@@ -127,9 +131,6 @@ async def get_latest_timetable_for_session(
         "version_id": version_id,
         "last_modified": metadata["last_modified"],
     }
-
-
-# --- NEWLY ADDED ROUTES ---
 
 
 @router.get(
@@ -161,9 +162,10 @@ async def get_timetable_version(
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """Get a fully structured timetable version by its job/version ID."""
+    """Get a fully structured timetable version by its ID."""
     service = DataRetrievalService(db)
-    # Corrected method name
+    # The job_id and version_id are often the same if there's one version per job.
+    # We pass the version_id to the function expecting a job_id.
     timetable_data = await service.get_timetable_job_results(job_id=version_id)
     if not timetable_data:
         raise HTTPException(
@@ -173,22 +175,51 @@ async def get_timetable_version(
     return GenericResponse(success=True, data=timetable_data)
 
 
-@router.post("/versions/{version_id}/publish", response_model=GenericResponse)
+@router.post("/versions/{job_id}/publish", response_model=GenericResponse)
 async def publish_version(
-    version_id: UUID,
+    job_id: UUID,
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    """Publish a specific timetable version."""
-    # Corrected: Use TimetableManagementService
+    """Publish a specific timetable version by its associated job ID."""
     service = TimetableManagementService(db)
     try:
-        await service.publish_timetable_version(version_id=version_id, user_id=user.id)
+        await service.publish_timetable_version(job_id=job_id, user_id=user.id)
         return GenericResponse(
             success=True, message="Timetable version published successfully."
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/versions/{version_id}/unpublish",
+    response_model=GenericResponse,
+    summary="Unpublish a Timetable Version",
+)
+async def unpublish_version(
+    version_id: UUID,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Unpublishes a specific timetable version, making it no longer the official version.
+    """
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can unpublish timetables.",
+        )
+    service = TimetableManagementService(db)
+    result = await service.unpublish_timetable_version(
+        version_id=version_id, user_id=user.id
+    )
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("message", "Failed to unpublish timetable version."),
+        )
+    return GenericResponse(success=True, message=result.get("message"))
 
 
 @router.post("/versions/{version_id}/edit", response_model=GenericResponse)
@@ -199,7 +230,6 @@ async def create_manual_edit(
     user: User = Depends(current_user),
 ):
     """Record a manual edit made to a timetable version."""
-    # Corrected: Use TimetableManagementService
     service = TimetableManagementService(db)
     result = await service.create_manual_edit(
         version_id=version_id,
@@ -216,7 +246,7 @@ async def create_manual_edit(
 
 @router.get(
     "/versions/{version_id}/notifications/users",
-    response_model=List[Dict[str, Any]],
+    response_model=GenericResponse,
     summary="Get Users for Notification",
 )
 async def get_notification_users(
@@ -229,9 +259,9 @@ async def get_notification_users(
     Uses `get_users_for_notification` service method.
     """
     service = DataRetrievalService(db)
-    users = await service.get_users_for_timetable_notification(version_id)
-    if users is None:
+    user_data = await service.get_users_for_timetable_notification(version_id)
+    if user_data is None:
         raise HTTPException(
             status_code=404, detail="Could not retrieve users for notification."
         )
-    return users
+    return GenericResponse(success=True, data=user_data)

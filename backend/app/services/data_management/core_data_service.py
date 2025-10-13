@@ -28,6 +28,7 @@ class CoreDataService:
         Generic helper for Create, Update, Delete (CUD) operations.
         """
         try:
+            # Log params before potential modification
             logger.info(
                 f"Executing {function_name} for {entity_name} with params: {params}"
             )
@@ -53,46 +54,76 @@ class CoreDataService:
 
     # --- Course Management ---
     async def create_course(
-        self, course_data: Dict[str, Any], user_id: UUID
+        self, course_data: Dict[str, Any], user_id: UUID, session_id: UUID
     ) -> Dict[str, Any]:
         return await self._execute_cud_function(
-            "create_course", {"p_data": course_data, "p_user_id": user_id}, "course"
-        )
-
-    async def update_course(
-        self, course_id: UUID, course_data: Dict[str, Any], user_id: UUID
-    ) -> Dict[str, Any]:
-        return await self._execute_cud_function(
-            "update_course",
-            {"p_course_id": course_id, "p_data": course_data, "p_user_id": user_id},
+            "create_course",
+            {"p_data": course_data, "p_user_id": user_id, "p_session_id": session_id},
             "course",
         )
 
-    async def delete_course(self, course_id: UUID, user_id: UUID) -> Dict[str, Any]:
+    async def update_course(
+        self,
+        course_id: UUID,
+        course_data: Dict[str, Any],
+        user_id: UUID,
+        session_id: UUID,
+    ) -> Dict[str, Any]:
         return await self._execute_cud_function(
-            "delete_course", {"p_course_id": course_id, "p_user_id": user_id}, "course"
+            "update_course",
+            {
+                "p_course_id": course_id,
+                "p_data": course_data,
+                "p_user_id": user_id,
+                "p_session_id": session_id,
+            },
+            "course",
+        )
+
+    async def delete_course(
+        self, course_id: UUID, user_id: UUID, session_id: UUID
+    ) -> Dict[str, Any]:
+        return await self._execute_cud_function(
+            "delete_course",
+            {
+                "p_course_id": course_id,
+                "p_user_id": user_id,
+                "p_session_id": session_id,
+            },
+            "course",
         )
 
     # --- Room/Venue Management ---
     async def create_room(
-        self, room_data: Dict[str, Any], user_id: UUID
+        self, room_data: Dict[str, Any], user_id: UUID, session_id: UUID
     ) -> Dict[str, Any]:
         return await self._execute_cud_function(
-            "create_room", {"p_data": room_data, "p_user_id": user_id}, "room"
-        )
-
-    async def update_room(
-        self, room_id: UUID, room_data: Dict[str, Any], user_id: UUID
-    ) -> Dict[str, Any]:
-        return await self._execute_cud_function(
-            "update_room",
-            {"p_room_id": room_id, "p_data": room_data, "p_user_id": user_id},
+            "create_room",
+            {"p_data": room_data, "p_user_id": user_id, "p_session_id": session_id},
             "room",
         )
 
-    async def delete_room(self, room_id: UUID, user_id: UUID) -> Dict[str, Any]:
+    async def update_room(
+        self, room_id: UUID, room_data: Dict[str, Any], user_id: UUID, session_id: UUID
+    ) -> Dict[str, Any]:
         return await self._execute_cud_function(
-            "delete_room", {"p_room_id": room_id, "p_user_id": user_id}, "room"
+            "update_room",
+            {
+                "p_room_id": room_id,
+                "p_data": room_data,
+                "p_user_id": user_id,
+                "p_session_id": session_id,
+            },
+            "room",
+        )
+
+    async def delete_room(
+        self, room_id: UUID, user_id: UUID, session_id: UUID
+    ) -> Dict[str, Any]:
+        return await self._execute_cud_function(
+            "delete_room",
+            {"p_room_id": room_id, "p_user_id": user_id, "p_session_id": session_id},
+            "room",
         )
 
     # --- Exam Management ---
@@ -104,17 +135,26 @@ class CoreDataService:
         )
 
     async def update_exam(
-        self, exam_id: UUID, exam_data: Dict[str, Any], user_id: UUID
+        self, exam_id: UUID, exam_data: Dict[str, Any], user_id: UUID, session_id: UUID
     ) -> Dict[str, Any]:
         return await self._execute_cud_function(
             "update_exam",
-            {"p_exam_id": exam_id, "p_data": exam_data, "p_user_id": user_id},
+            {
+                "p_exam_id": exam_id,
+                "p_data": exam_data,
+                "p_user_id": user_id,
+                "p_session_id": session_id,
+            },
             "exam",
         )
 
-    async def delete_exam(self, exam_id: UUID, user_id: UUID) -> Dict[str, Any]:
+    async def delete_exam(
+        self, exam_id: UUID, user_id: UUID, session_id: UUID
+    ) -> Dict[str, Any]:
         return await self._execute_cud_function(
-            "delete_exam", {"p_exam_id": exam_id, "p_user_id": user_id}, "exam"
+            "delete_exam",
+            {"p_exam_id": exam_id, "p_user_id": user_id, "p_session_id": session_id},
+            "exam",
         )
 
     # --- User Management (NEW) ---

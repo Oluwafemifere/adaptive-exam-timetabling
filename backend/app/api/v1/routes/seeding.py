@@ -38,12 +38,17 @@ async def get_data_seeding_status(
 
     # Get the detailed view including file statuses
     seeding_session_id = session_data["id"]
-    detailed_status = await service.get_seeding_session_with_files(seeding_session_id)
+    detailed_status_row = await service.get_seeding_session_with_files(
+        seeding_session_id
+    )
 
-    if not detailed_status:
+    if not detailed_status_row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Could not retrieve status details for seeding session {seeding_session_id}.",
         )
+
+    # Convert the RowMapping object to a dictionary
+    detailed_status = dict(detailed_status_row)
 
     return GenericResponse(success=True, data=detailed_status)

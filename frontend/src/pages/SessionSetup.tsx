@@ -34,7 +34,7 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { cn, formatHeader } from '../utils/utils'; 
 import { toast } from 'sonner';
-import { useCreateSession, useFileUpload, useSessionSummary, useProcessStagedData } from '../hooks/useApi';
+import { useCreateSession, useFileUpload, useSessionSummary, useProcessStagedData, useSeedingStatus } from '../hooks/useApi';
 import { useAppStore } from '../store';
 import { StagingDataReviewTable } from '../components/StagingDataReviewTable'; 
 
@@ -79,6 +79,11 @@ const statusStyles = {
         bg: "bg-gray-100",
         text: "text-gray-600",
         icon: null
+    },
+    processing: {
+        bg: "bg-blue-100",
+        text: "text-blue-600",
+        icon: <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
     }
 };
 
@@ -94,13 +99,17 @@ export function SessionSetup() {
   const { data: summaryData, isLoading: isLoadingSummary, refetch: refetchSummary } = useSessionSummary(sessionId);
   const { mutateAsync: processData, isPending: isProcessing } = useProcessStagedData();
 
+  // State and hook for polling file upload status
+  const [isPolling, setIsPolling] = useState(false);
+  const { data: seedingStatus, refetch: refetchSeedingStatus } = useSeedingStatus(sessionId);
+  
   // New state for summary refresh
   const [isSummaryRefetching, setIsSummaryRefetching] = useState(false);
 
   // File Upload state
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [uploadResults, setUploadResults] = useState<Record<string, { status: 'success' | 'failed'; message?: string; fileName?: string }>>({});
+  const [uploadResults, setUploadResults] = useState<Record<string, { status: 'success' | 'failed' | 'processing' | 'pending'; message?: string; fileName?: string }>>({});
   
   // Form State
   const [sessionData, setSessionData] = useState({
@@ -128,13 +137,58 @@ export function SessionSetup() {
       refetchSummary();
     }
   }, [currentStep, sessionId, refetchSummary]);
+
+  // Effect to handle polling for file status updates
+  useEffect(() => {
+    if (!isPolling || !sessionId) return;
+
+    const intervalId = setInterval(() => {
+      refetchSeedingStatus();
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(intervalId);
+  }, [isPolling, sessionId, refetchSeedingStatus]);
+
+  // Effect to process polling results and update the UI
+  useEffect(() => {
+    if (!seedingStatus?.files) return;
+
+    const newUploadResults: typeof uploadResults = {};
+    let allDone = true;
+    const requiredFileKeys = new Set(requiredFiles.map(f => f.key));
+
+    seedingStatus.files.forEach((file: any) => {
+        const uiStatus = file.status === 'completed' ? 'success' : file.status;
+        
+        newUploadResults[file.upload_type] = {
+            status: uiStatus,
+            fileName: file.file_name,
+            message: file.validation_errors?.error
+        };
+        
+        if (requiredFileKeys.has(file.upload_type) && (uiStatus === 'pending' || uiStatus === 'processing')) {
+            allDone = false;
+        }
+    });
+
+    setUploadResults(prev => ({...prev, ...newUploadResults}));
+
+    const allTrackedFiles = Object.keys(uploadResults).filter(key => requiredFileKeys.has(key));
+    if (allTrackedFiles.length > 0 && allTrackedFiles.every(key => newUploadResults[key]?.status === 'success' || newUploadResults[key]?.status === 'failed')) {
+        allDone = true;
+    }
+
+    if (allDone && allTrackedFiles.length > 0) {
+      setIsPolling(false);
+      toast.info("File processing complete. You may now proceed.");
+    }
+  }, [seedingStatus]);
   
   const steps = [
     { id: 1, name: 'Define Session', icon: Calendar },
     { id: 2, name: 'Schedule Structure', icon: Clock },
     { id: 3, name: 'Upload Data', icon: Upload },
     { id: 4, name: 'Review & Edit Data', icon: Database },
-    // MODIFICATION: Renamed the step to better reflect its purpose.
     { id: 5, name: 'Summary & Finish', icon: ShieldCheck },
   ];
 
@@ -206,14 +260,25 @@ export function SessionSetup() {
     try {
       const result = await uploadFiles({ files: selectedFiles, academicSessionId: sessionId });
       const newResults: typeof uploadResults = {};
-      result.staged_files.forEach((file: any) => { newResults[file.entity_type] = { status: 'success', fileName: file.file_name }; });
-      result.failed_files.forEach((file: any) => {
-        if (file.entity_type) { newResults[file.entity_type] = { status: 'failed', message: file.error, fileName: file.file_name }; } 
-        else { toast.error(`File upload failed: ${file.file_name}`, { description: file.error }); }
+
+      result.dispatched_tasks.forEach((file: any) => { 
+        newResults[file.entity_type] = { status: 'processing', fileName: file.file_name }; 
       });
+
+      result.failed_files.forEach((file: any) => {
+        if (file.entity_type) { 
+          newResults[file.entity_type] = { status: 'failed', message: file.error, fileName: file.file_name }; 
+        } else { 
+          toast.error(`File upload failed: ${file.file_name}`, { description: file.error }); 
+        }
+      });
+
       setUploadResults(prev => ({ ...prev, ...newResults }));
       setSelectedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
+      
+      setIsPolling(true);
+
     } catch (error) { /* Handled by hook */ }
   };
 
@@ -301,13 +366,12 @@ export function SessionSetup() {
         <Button variant="outline" onClick={prevStep} disabled={currentStep === 1 || isCreatingSession || isUploading || isProcessing}><ChevronLeft className="h-4 w-4 mr-2" />Previous</Button>
         <div className="flex space-x-3">
           {currentStep < 5 && (<Button onClick={handleNextStep} disabled={!isStepValid(currentStep) || isCreatingSession}>{isCreatingSession ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Creating...</> : <>Next<ChevronRight className="h-4 w-4 ml-2" /></>}</Button>)}
-          {/* MODIFICATION: The button now simply navigates and does not trigger another process. */}
           {currentStep === 5 && (
             <Button 
-              onClick={() => setCurrentPage('constraints')} 
-              disabled={!isStepValid(5) || isLoadingSummary}
+              onClick={handleProcessData} 
+              disabled={!isStepValid(5) || isLoadingSummary || isProcessing}
             >
-              Finish<ChevronRight className="h-4 w-4 ml-2" />
+              {isProcessing ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Processing Data...</> : <>Process & Finish<ChevronRight className="h-4 w-4 ml-2" /></>}
             </Button>
           )}
         </div>

@@ -11,14 +11,14 @@ from ....api.deps import db_session, current_user
 from ....models.users import User
 from ....services.user_management import (
     AuthenticationService,
-    UserManagementService,  # --- UPDATED: Import new service ---
+    UserManagementService,
 )
 from ....services.data_retrieval.data_retrieval_service import DataRetrievalService
 from ....schemas.users import (
     UserCreate,
     UserRead,
     UserUpdate,
-    PaginatedUserResponse,  # --- UPDATED: Schema now includes total counts ---
+    PaginatedUserResponse,
     AdminUserCreate,
 )
 from ....schemas.system import GenericResponse
@@ -111,7 +111,6 @@ async def update_user(
             status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
         )
 
-    # --- UPDATED: Use the new dedicated service ---
     service = UserManagementService(db)
     update_data = user_in.model_dump(exclude_unset=True)
 
@@ -150,7 +149,6 @@ async def delete_user(
             detail="Cannot delete your own user account.",
         )
 
-    # --- UPDATED: Use the new dedicated service ---
     service = UserManagementService(db)
     result = await service.delete_user(user_id, admin_user.id)
 
@@ -165,12 +163,14 @@ async def delete_user(
 @router.get("/{user_id}/role", response_model=UserRoleIDResponse)
 async def get_user_role_id(
     user_id: UUID,
+    session_id: UUID,  # FIX: Added session_id as a required parameter
     db: AsyncSession = Depends(db_session),
     current_user: User = Depends(current_user),
 ):
     """Retrieves the specific role type and ID (student or staff) for a given user."""
     service = DataRetrievalService(db)
-    result = await service.get_user_role_id(user_id)
+    # FIX: Pass session_id to the service method
+    result = await service.get_user_role_id(user_id, session_id)
 
     if not result or result.get("type") == "unknown":
         raise HTTPException(

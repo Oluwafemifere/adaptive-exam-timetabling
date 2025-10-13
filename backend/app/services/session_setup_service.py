@@ -4,10 +4,7 @@
 import logging
 import json
 
-# --- START OF FIX ---
 from typing import Dict, Any, List, Optional
-
-# --- END OF FIX ---
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -75,11 +72,9 @@ class SessionSetupService:
             logger.error(f"Error setting up new exam session: {e}", exc_info=True)
             return {"success": False, "message": f"Database error: {e}"}
 
-    # --- START OF FIX ---
     async def get_session_setup_summary_and_validate(
         self, session_id: UUID
     ) -> Optional[Dict[str, Any]]:
-        # --- END OF FIX ---
         """
         Calls the `get_session_setup_summary_and_validate` DB function to get review data.
         """
@@ -107,6 +102,12 @@ class SessionSetupService:
             result = await self.session.execute(query, {"p_session_id": session_id})
             await self.session.commit()
             db_response = result.scalar_one()
+            # --- START OF FIX ---
+            # If the database function returns a JSON response without a 'success' key,
+            # we assume success because the transaction did not raise an exception.
+            if isinstance(db_response, dict) and "success" not in db_response:
+                db_response["success"] = True
+            # --- END OF FIX ---
             return db_response
         except Exception as e:
             await self.session.rollback()

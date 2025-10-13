@@ -1,4 +1,3 @@
-// frontend/src/pages/StaffPortal.tsx
 import React, { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -28,7 +27,8 @@ export function StaffPortal() {
   const [changeDescription, setChangeDescription] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [portalView, setPortalView] = useState<'list' | 'grid'>('list');
-  const [selectedDepartments, setSelectedDepartments] = useState<string[]>([]);
+  const [selectedInstructorDepts, setSelectedInstructorDepts] = useState<string[]>([]);
+  const [selectedInvigilatorDepts, setSelectedInvigilatorDepts] = useState<string[]>([]);
   
   useEffect(() => {
     const root = document.documentElement;
@@ -55,8 +55,7 @@ export function StaffPortal() {
     return departmentMap[prefix] || 'General Studies';
   };
 
-  const renderableExams = useMemo((): RenderableExam[] => {
-    return allAssignments.map((assignment) => ({
+  const mapToRenderableExam = (assignment: StaffAssignment): RenderableExam => ({
       id: assignment.id,
       examId: assignment.examId,
       courseCode: assignment.courseCode,
@@ -65,33 +64,46 @@ export function StaffPortal() {
       startTime: assignment.startTime,
       endTime: assignment.endTime,
       duration: new Date(`1970-01-01T${assignment.endTime}`).getTime() - new Date(`1970-01-01T${assignment.startTime}`).getTime(),
-      expectedStudents: 0,
+      expectedStudents: assignment.expectedStudents,
       room: assignment.room,
-      roomCapacity: 0,
+      roomCapacity: assignment.roomCapacity,
       building: assignment.building,
-      invigilator: assignment.role === 'invigilator' ? user?.name || 'N/A' : 'N/A',
+      invigilator: assignment.invigilator,
       departments: [getDepartmentFromCourseCode(assignment.courseCode)],
       facultyName: 'N/A',
-      instructor: assignment.role === 'instructor' ? user?.name || 'N/A' : 'N/A',
+      instructor: assignment.instructor,
       examType: 'Theory',
       conflicts: [],
       level: 'undergraduate',
       semester: 'Fall 2025',
       academicYear: '2025-2026',
-    }));
-  }, [allAssignments, user]);
+  });
 
-  const departments = useMemo(() => {
-    const deptSet = new Set<string>();
-    renderableExams.forEach(exam => exam.departments.forEach(dept => deptSet.add(dept)));
-    return Array.from(deptSet).sort();
-  }, [renderableExams]);
-
-  const filteredGridExams = useMemo(() => {
-    if (selectedDepartments.length === 0) return renderableExams;
-    return renderableExams.filter(exam => exam.departments.some(dept => selectedDepartments.includes(dept)));
-  }, [renderableExams, selectedDepartments]);
+  const renderableInstructorExams = useMemo(() => instructorSchedule.map(mapToRenderableExam), [instructorSchedule, user]);
+  const renderableInvigilatorExams = useMemo(() => invigilatorSchedule.map(mapToRenderableExam), [invigilatorSchedule, user]);
   
+  const instructorDepartments = useMemo(() => {
+    const deptSet = new Set<string>();
+    renderableInstructorExams.forEach(exam => exam.departments.forEach(dept => deptSet.add(dept)));
+    return Array.from(deptSet).sort();
+  }, [renderableInstructorExams]);
+
+  const invigilatorDepartments = useMemo(() => {
+    const deptSet = new Set<string>();
+    renderableInvigilatorExams.forEach(exam => exam.departments.forEach(dept => deptSet.add(dept)));
+    return Array.from(deptSet).sort();
+  }, [renderableInvigilatorExams]);
+
+  const filteredInstructorGridExams = useMemo(() => {
+    if (selectedInstructorDepts.length === 0) return renderableInstructorExams;
+    return renderableInstructorExams.filter(exam => exam.departments.some(dept => selectedInstructorDepts.includes(dept)));
+  }, [renderableInstructorExams, selectedInstructorDepts]);
+  
+  const filteredInvigilatorGridExams = useMemo(() => {
+    if (selectedInvigilatorDepts.length === 0) return renderableInvigilatorExams;
+    return renderableInvigilatorExams.filter(exam => exam.departments.some(dept => selectedInvigilatorDepts.includes(dept)));
+  }, [renderableInvigilatorExams, selectedInvigilatorDepts]);
+
   const handleMoveExam = () => toast.error('Staff cannot reschedule assignments directly. Please submit a change request.');
 
   const formatDate = (dateString: string) => {
@@ -181,8 +193,11 @@ export function StaffPortal() {
           <div className="flex items-center gap-2"><Clock className="h-4 w-4 text-muted-foreground" /><span className="text-sm">{formatTime(assignment.startTime)} - {formatTime(assignment.endTime)}</span></div>
           <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" /><span className="text-sm">{assignment.room}</span></div>
         </div>
-        <div className="flex items-center justify-between pt-3 border-t">
-          <div className="flex items-center gap-2"><Building className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">{assignment.building}</span></div>
+         <div className="space-y-2 mt-3 pt-3 border-t">
+            <div className="flex items-center gap-2"><Building className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">{assignment.building}</span></div>
+            <div className="flex items-center gap-2"><GraduationCap className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">Instructor(s): {assignment.instructor}</span></div>
+         </div>
+        <div className="flex items-center justify-end pt-3">
           {assignment.status === 'assigned' && (<Button variant="outline" size="sm" onClick={() => { setSelectedAssignment(assignment.id); setIsModalOpen(true); }}>Request Change</Button>)}
         </div>
       </CardContent>
@@ -209,7 +224,7 @@ export function StaffPortal() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-bold">My Assignments</h1>
-                <p className="text-muted-foreground">Teaching & Invigilation Duties - Fall 2025</p>
+                <p className="text-muted-foreground">Instructor & Invigilation Duties - Fall 2025</p>
                 <p className="text-sm text-muted-foreground">Welcome, {user?.name}</p>
               </div>
               <div className="flex items-center gap-2">
@@ -224,17 +239,17 @@ export function StaffPortal() {
         <div className="max-w-6xl mx-auto px-4 py-6">
           <Tabs value={portalView} onValueChange={(value) => setPortalView(value as 'list' | 'grid')} className="w-full">
             <TabsList className="grid w-full grid-cols-2 mb-4">
-              <TabsTrigger value="list"><List className="h-4 w-4 mr-2" />Assignments</TabsTrigger>
-              <TabsTrigger value="grid"><Grid3X3 className="h-4 w-4 mr-2" />Timetable View</TabsTrigger>
+              <TabsTrigger value="list"><List className="h-4 w-4 mr-2" />List View</TabsTrigger>
+              <TabsTrigger value="grid"><Grid3X3 className="h-4 w-4 mr-2" />Schedule View</TabsTrigger>
             </TabsList>
             <TabsContent value="list">
               <Tabs defaultValue="teaching" className="w-full">
                 <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="teaching"><GraduationCap className="h-4 w-4 mr-2" />Teaching ({instructorSchedule.length})</TabsTrigger>
+                  <TabsTrigger value="teaching"><GraduationCap className="h-4 w-4 mr-2" />Instructor Duties ({instructorSchedule.length})</TabsTrigger>
                   <TabsTrigger value="invigilation"><Shield className="h-4 w-4 mr-2" />Invigilation ({invigilatorSchedule.length})</TabsTrigger>
                   <TabsTrigger value="requests"><FileEdit className="h-4 w-4 mr-2" />My Requests ({changeRequests.length})</TabsTrigger>
                 </TabsList>
-                <TabsContent value="teaching" className="mt-4"><div className="space-y-4">{sortedInstructorSchedule.length === 0 ? <Card><CardContent className="py-8 text-center"><h3 className="font-semibold">No Teaching Assignments</h3><p className="text-sm text-muted-foreground">You have no teaching duties assigned.</p></CardContent></Card> : sortedInstructorSchedule.map((assignment) => <AssignmentCard key={assignment.id} assignment={assignment} />)}</div></TabsContent>
+                <TabsContent value="teaching" className="mt-4"><div className="space-y-4">{sortedInstructorSchedule.length === 0 ? <Card><CardContent className="py-8 text-center"><h3 className="font-semibold">No Instructor Assignments</h3><p className="text-sm text-muted-foreground">You have no instructor duties assigned for this period.</p></CardContent></Card> : sortedInstructorSchedule.map((assignment) => <AssignmentCard key={assignment.id} assignment={assignment} />)}</div></TabsContent>
                 <TabsContent value="invigilation" className="mt-4"><div className="space-y-4">{sortedInvigilatorSchedule.length === 0 ? <Card><CardContent className="py-8 text-center"><h3 className="font-semibold">No Invigilation Duties</h3><p className="text-sm text-muted-foreground">You have no invigilation duties assigned.</p></CardContent></Card> : sortedInvigilatorSchedule.map((assignment) => <AssignmentCard key={assignment.id} assignment={assignment} />)}</div></TabsContent>
                 <TabsContent value="requests" className="mt-4">
                   <Card>
@@ -279,10 +294,24 @@ export function StaffPortal() {
               </Tabs>
             </TabsContent>
             <TabsContent value="grid">
-              <div className="space-y-4">
-                <FilterControls departments={departments} selectedDepartments={selectedDepartments} onDepartmentsChange={setSelectedDepartments} />
-                <TimetableGrid exams={filteredGridExams} viewMode="general" departments={departments} onMoveExam={handleMoveExam} />
-              </div>
+              <Tabs defaultValue="teachingGrid" className="w-full">
+                 <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="teachingGrid"><GraduationCap className="h-4 w-4 mr-2" />Instructor Schedule</TabsTrigger>
+                    <TabsTrigger value="invigilationGrid"><Shield className="h-4 w-4 mr-2" />Invigilation Schedule</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="teachingGrid" className="mt-4">
+                    <div className="space-y-4">
+                      <FilterControls departments={instructorDepartments} selectedDepartments={selectedInstructorDepts} onDepartmentsChange={setSelectedInstructorDepts} />
+                      <TimetableGrid exams={filteredInstructorGridExams} viewMode="general" departments={instructorDepartments} onMoveExam={handleMoveExam} />
+                    </div>
+                  </TabsContent>
+                   <TabsContent value="invigilationGrid" className="mt-4">
+                    <div className="space-y-4">
+                      <FilterControls departments={invigilatorDepartments} selectedDepartments={selectedInvigilatorDepts} onDepartmentsChange={setSelectedInvigilatorDepts} />
+                      <TimetableGrid exams={filteredInvigilatorGridExams} viewMode="general" departments={invigilatorDepartments} onMoveExam={handleMoveExam} />
+                    </div>
+                  </TabsContent>
+              </Tabs>
             </TabsContent>
           </Tabs>
         </div>

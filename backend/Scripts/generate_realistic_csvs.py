@@ -348,7 +348,7 @@ def generate_course_registrations_data(
             registration_type = (
                 "carryover"
                 if random.random() < config["CARRYOVER_REGISTRATION_CHANCE"]
-                else "regular"
+                else "normal"
             )
             registrations.append(
                 {

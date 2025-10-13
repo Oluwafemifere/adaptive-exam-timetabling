@@ -1,10 +1,4 @@
 # backend/app/services/data_validation/validation_schemas.py
-"""
-Centralized schemas for CSV processing.
-Each schema defines how to validate, map, and transform a CSV file
-for a specific entity type before sending it to the database's
-staging tables.
-"""
 
 from .csv_processor import (
     transform_date,
@@ -17,13 +11,13 @@ from .csv_processor import (
 
 ENTITY_SCHEMAS = {
     "faculties": {
-        "required_columns": ["name", "code"],
+        "required_columns": ["code"],
         "column_mappings": {"faculty_name": "name", "faculty_code": "code"},
         "transformers": {"name": str, "code": str},
         "validators": {"name": validate_required, "code": validate_required},
     },
     "departments": {
-        "required_columns": ["name", "code", "faculty_code"],
+        "required_columns": ["code", "faculty_code"],
         "column_mappings": {
             "department_name": "name",
             "dept_name": "name",
@@ -39,13 +33,7 @@ ENTITY_SCHEMAS = {
         },
     },
     "programmes": {
-        "required_columns": [
-            "name",
-            "code",
-            "department_code",
-            "degree_type",
-            "duration_years",
-        ],
+        "required_columns": ["code", "department_code", "duration_years"],
         "column_mappings": {
             "programme_name": "name",
             "program_name": "name",
@@ -69,9 +57,8 @@ ENTITY_SCHEMAS = {
             "duration_years": validate_required,
         },
     },
-    # --- UPDATED SCHEMAS ---
     "buildings": {
-        "required_columns": ["code", "name"],
+        "required_columns": ["code"],
         "column_mappings": {
             "building_code": "code",
             "building_name": "name",
@@ -81,13 +68,7 @@ ENTITY_SCHEMAS = {
         "validators": {"code": validate_required, "name": validate_required},
     },
     "rooms": {
-        "required_columns": [
-            "code",
-            "name",
-            "building_code",
-            "capacity",
-            "exam_capacity",
-        ],
+        "required_columns": ["code", "building_code", "capacity", "exam_capacity"],
         "column_mappings": {
             "room_code": "code",
             "room_name": "name",
@@ -150,13 +131,7 @@ ENTITY_SCHEMAS = {
         },
     },
     "staff": {
-        "required_columns": [
-            "staff_number",
-            "first_name",
-            "last_name",
-            "department_code",
-            "email",
-        ],
+        "required_columns": ["staff_number", "department_code"],
         "column_mappings": {
             "staff_no": "staff_number",
             "firstname": "first_name",
@@ -164,7 +139,6 @@ ENTITY_SCHEMAS = {
             "department_name": "department_code",
             "invigilator": "can_invigilate",
             "instructor": "is_instructor",
-            # REMOVED: "user_email": "email" mapping
         },
         "transformers": {
             "staff_number": str,
@@ -179,7 +153,7 @@ ENTITY_SCHEMAS = {
             "max_consecutive_sessions": transform_integer,
             "max_concurrent_exams": transform_integer,
             "max_students_per_invigilator": transform_integer,
-            "user_email": str,  # ADDED user_email transformer
+            "user_email": str,
         },
         "validators": {
             "staff_number": validate_required,
@@ -187,17 +161,11 @@ ENTITY_SCHEMAS = {
             "last_name": validate_required,
             "department_code": validate_required,
             "email": [validate_required, validate_email],
-            "user_email": [validate_email],  # ADDED user_email validator (optional)
+            "user_email": [validate_email],
         },
     },
     "students": {
-        "required_columns": [
-            "matric_number",
-            "first_name",
-            "last_name",
-            "programme_code",
-            "entry_year",
-        ],
+        "required_columns": ["matric_number", "programme_code", "entry_year"],
         "column_mappings": {
             "matric_no": "matric_number",
             "reg_no": "matric_number",
@@ -205,7 +173,6 @@ ENTITY_SCHEMAS = {
             "lastname": "last_name",
             "program_code": "programme_code",
             "year_of_entry": "entry_year",
-            # REMOVED: "user_email": "email" mapping
         },
         "transformers": {
             "matric_number": str,
@@ -213,8 +180,7 @@ ENTITY_SCHEMAS = {
             "last_name": str,
             "entry_year": transform_integer,
             "programme_code": str,
-            "email": str,  # This should be user_email
-            "user_email": str,  # ADDED user_email transformer
+            "user_email": str,
         },
         "validators": {
             "matric_number": validate_required,
@@ -222,7 +188,7 @@ ENTITY_SCHEMAS = {
             "last_name": validate_required,
             "programme_code": validate_required,
             "entry_year": validate_required,
-            "user_email": [validate_email],  # ADDED user_email validator (optional)
+            "user_email": [validate_email],
         },
     },
     "course_instructors": {
@@ -234,7 +200,6 @@ ENTITY_SCHEMAS = {
             "course_code": validate_required,
         },
     },
-    # --- NEW SCHEMAS FOR MANY-TO-MANY RELATIONSHIPS ---
     "course_departments": {
         "required_columns": ["course_code", "department_code"],
         "column_mappings": {"course": "course_code", "department": "department_code"},

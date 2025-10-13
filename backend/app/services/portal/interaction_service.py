@@ -20,22 +20,24 @@ class InteractionService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create_student_conflict_report(
+    async def create_conflict_report(
         self, user_id: UUID, exam_id: UUID, description: str
     ) -> Dict[str, Any]:
         """
         Creates a new conflict report for a student.
-        Calls `create_student_conflict_report` and `create_conflict_report` DB functions.
+        Calls the `create_conflict_report` DB function.
         """
         logger.info(f"User {user_id} creating conflict report for exam {exam_id}")
         query = text(
-            "SELECT exam_system.create_student_conflict_report(:p_user_id, :p_exam_id, :p_description)"
+            "SELECT exam_system.create_conflict_report(:p_user_id, :p_exam_id, :p_description)"
         )
         result = await self.session.execute(
             query,
             {"p_user_id": user_id, "p_exam_id": exam_id, "p_description": description},
         )
-        return result.scalar_one()
+        db_result = result.scalar_one()
+        await self.session.commit()
+        return db_result
 
     async def manage_conflict_report(
         self, admin_user_id: UUID, report_id: UUID, new_status: str, notes: str
@@ -59,20 +61,22 @@ class InteractionService:
                 "p_notes": notes,
             },
         )
-        return result.scalar_one()
+        db_result = result.scalar_one()
+        await self.session.commit()
+        return db_result
 
-    async def create_staff_assignment_change_request(
+    async def create_assignment_change_request(
         self, user_id: UUID, assignment_id: UUID, reason: str, description: str
     ) -> Dict[str, Any]:
         """
         Creates a new invigilation assignment change request for a staff member.
-        Calls `create_staff_assignment_change_request` and `create_assignment_change_request` DB functions.
+        Calls `create_assignment_change_request` DB function.
         """
         logger.info(
             f"Staff (user {user_id}) creating change request for assignment {assignment_id}"
         )
         query = text(
-            "SELECT exam_system.create_staff_assignment_change_request(:p_user_id, :p_assignment_id, :p_reason, :p_description)"
+            "SELECT exam_system.create_assignment_change_request(:p_user_id, :p_assignment_id, :p_reason, :p_description)"
         )
         result = await self.session.execute(
             query,
@@ -83,7 +87,9 @@ class InteractionService:
                 "p_description": description,
             },
         )
-        return result.scalar_one()
+        db_result = result.scalar_one()
+        await self.session.commit()
+        return db_result
 
     async def manage_assignment_change_request(
         self, admin_user_id: UUID, request_id: UUID, new_status: str, notes: str
@@ -107,24 +113,31 @@ class InteractionService:
                 "p_notes": notes,
             },
         )
-        return result.scalar_one()
+        db_result = result.scalar_one()
+        await self.session.commit()
+        return db_result
 
     async def update_staff_availability(
-        self, user_id: UUID, availability_data: Dict[str, Any]
+        self, user_id: UUID, session_id: UUID, availability_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Updates a staff member's availability preferences.
         Calls the `update_staff_availability` DB function.
         """
-        logger.info(f"User {user_id} updating their availability.")
+        logger.info(
+            f"User {user_id} updating their availability for session {session_id}."
+        )
         query = text(
-            "SELECT exam_system.update_staff_availability(:p_user_id, :p_availability_data)"
+            "SELECT exam_system.update_staff_availability(:p_user_id, :p_session_id, :p_availability_data)"
         )
         result = await self.session.execute(
             query,
             {
                 "p_user_id": user_id,
+                "p_session_id": session_id,
                 "p_availability_data": json.dumps(availability_data, default=str),
             },
         )
-        return result.scalar_one()
+        db_result = result.scalar_one()
+        await self.session.commit()
+        return db_result

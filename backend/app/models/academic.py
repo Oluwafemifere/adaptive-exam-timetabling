@@ -23,7 +23,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin
 from datetime import date, datetime
-from sqlalchemy import ARRAY
+from sqlalchemy import ARRAY, UniqueConstraint
 from sqlalchemy.ext.associationproxy import association_proxy, AssociationProxy
 
 if TYPE_CHECKING:
@@ -60,6 +60,12 @@ class CourseDepartment(Base):
         ForeignKey("departments.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    # ADDED: session_id column
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("academic_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
 
 
 # Association table for Course <-> Faculty
@@ -73,6 +79,12 @@ class CourseFaculty(Base):
     faculty_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("faculties.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    # ADDED: session_id column
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("academic_sessions.id", ondelete="CASCADE"),
         primary_key=True,
     )
 
@@ -105,6 +117,8 @@ class AcademicSession(Base, TimestampMixin):
         ),
         nullable=False,
     )
+
+    # Existing relationships
     exams: Mapped[List["Exam"]] = relationship(back_populates="session")
     course_registrations: Mapped[List["CourseRegistration"]] = relationship(
         back_populates="session"
@@ -134,6 +148,17 @@ class AcademicSession(Base, TimestampMixin):
         foreign_keys="SessionTemplate.source_session_id",
         back_populates="source_session",
     )
+
+    # ADDED: Relationships from session-scoped tables
+    faculties: Mapped[List["Faculty"]] = relationship(back_populates="session")
+    departments: Mapped[List["Department"]] = relationship(back_populates="session")
+    programmes: Mapped[List["Programme"]] = relationship(back_populates="session")
+    buildings: Mapped[List["Building"]] = relationship(back_populates="session")
+    rooms: Mapped[List["Room"]] = relationship(back_populates="session")
+    staff: Mapped[List["Staff"]] = relationship(back_populates="session")
+    students: Mapped[List["Student"]] = relationship(back_populates="session")
+    courses: Mapped[List["Course"]] = relationship(back_populates="session")
+
     __table_args__ = (
         Index("idx_academic_sessions_template_id", "template_id"),
         Index("idx_academic_sessions_active", "is_active"),
@@ -153,6 +178,13 @@ class CourseInstructor(Base, TimestampMixin):
         ForeignKey("staff.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    # ADDED: session_id column
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("academic_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
     course: Mapped["Course"] = relationship(back_populates="instructor_associations")
     staff: Mapped["Staff"] = relationship(back_populates="course_associations")
 
@@ -162,7 +194,7 @@ class Department(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    code: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     faculty_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("faculties.id"), nullable=False
@@ -170,6 +202,12 @@ class Department(Base, TimestampMixin):
     is_active: Mapped[Optional[bool]] = mapped_column(
         Boolean, default=True, nullable=True
     )
+    # ADDED: session_id and relationship
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
+    )
+    session: Mapped["AcademicSession"] = relationship(back_populates="departments")
+
     faculty: Mapped["Faculty"] = relationship("Faculty", back_populates="departments")
     programmes: Mapped[List["Programme"]] = relationship(
         "Programme", back_populates="department"
@@ -179,16 +217,17 @@ class Department(Base, TimestampMixin):
         "ExamDepartment", back_populates="department", cascade="all, delete-orphan"
     )
     exams = association_proxy("exam_departments", "exam")
-
-    # New relationships for many-to-many
     course_associations: Mapped[List["CourseDepartment"]] = relationship()
     courses: AssociationProxy[List["Course"]] = association_proxy(
         "course_associations", "course"
     )
-
     room_associations: Mapped[List["RoomDepartment"]] = relationship()
     rooms: AssociationProxy[List["Room"]] = association_proxy(
         "room_associations", "room"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("code", "session_id", name="uq_department_code_session"),
     )
 
 
@@ -197,20 +236,29 @@ class Faculty(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    code: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     is_active: Mapped[Optional[bool]] = mapped_column(
         Boolean, default=True, nullable=True
     )
+    # ADDED: session_id and relationship
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
+    )
+    session: Mapped["AcademicSession"] = relationship(back_populates="faculties")
+
     departments: Mapped[List["Department"]] = relationship(
         "Department", back_populates="faculty"
     )
-
-    # New relationships
     buildings: Mapped[List["Building"]] = relationship(back_populates="faculty")
     course_associations: Mapped[List["CourseFaculty"]] = relationship()
     courses: AssociationProxy[List["Course"]] = association_proxy(
         "course_associations", "course"
+    )
+
+    # FIXED: Added the missing composite unique constraint
+    __table_args__ = (
+        UniqueConstraint("code", "session_id", name="uq_faculty_code_session"),
     )
 
 
@@ -229,11 +277,21 @@ class Programme(Base, TimestampMixin):
     is_active: Mapped[Optional[bool]] = mapped_column(
         Boolean, default=True, nullable=True
     )
+    # ADDED: session_id and relationship
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
+    )
+    session: Mapped["AcademicSession"] = relationship(back_populates="programmes")
+
     department: Mapped["Department"] = relationship(
         "Department", back_populates="programmes"
     )
     students: Mapped[List["Student"]] = relationship(
         "Student", back_populates="programme"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("code", "session_id", name="uq_programme_code_session"),
     )
 
 
@@ -242,7 +300,7 @@ class Course(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    code: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     credit_units: Mapped[int] = mapped_column(Integer, nullable=False)
     course_level: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -259,6 +317,11 @@ class Course(Base):
     is_active: Mapped[Optional[bool]] = mapped_column(
         Boolean, default=True, nullable=True
     )
+    # ADDED: session_id and relationship
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
+    )
+    session: Mapped["AcademicSession"] = relationship(back_populates="courses")
 
     exams: Mapped[List["Exam"]] = relationship("Exam", back_populates="course")
     registrations: Mapped[List["CourseRegistration"]] = relationship(
@@ -270,16 +333,17 @@ class Course(Base):
     instructors: AssociationProxy[List["Staff"]] = association_proxy(
         "instructor_associations", "staff"
     )
-
-    # New many-to-many relationships
     department_associations: Mapped[List["CourseDepartment"]] = relationship()
     departments: AssociationProxy[List["Department"]] = association_proxy(
         "department_associations", "department"
     )
-
     faculty_associations: Mapped[List["CourseFaculty"]] = relationship()
     faculties: AssociationProxy[List["Faculty"]] = association_proxy(
         "faculty_associations", "faculty"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("code", "session_id", name="uq_course_code_session"),
     )
 
 
@@ -288,7 +352,7 @@ class Student(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    matric_number: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    matric_number: Mapped[str] = mapped_column(String, nullable=False)
     first_name: Mapped[str] = mapped_column(String, nullable=False)
     last_name: Mapped[str] = mapped_column(String, nullable=False)
     entry_year: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -304,10 +368,18 @@ class Student(Base, TimestampMixin):
         nullable=True,
         unique=True,
     )
+    # ADDED: session_id and relationship
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("academic_sessions.id"), nullable=False
+    )
+    session: Mapped["AcademicSession"] = relationship(back_populates="students")
+
     programme: Mapped["Programme"] = relationship(
         "Programme", back_populates="students"
     )
-    user: Mapped[Optional["User"]] = relationship("User")
+    user: Mapped[Optional["User"]] = relationship(
+        "User", back_populates="student_profile"
+    )
     registrations: Mapped[List["CourseRegistration"]] = relationship(
         "CourseRegistration", back_populates="student"
     )
@@ -316,6 +388,12 @@ class Student(Base, TimestampMixin):
     )
     conflict_reports: Mapped[List["ConflictReport"]] = relationship(
         back_populates="student"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "matric_number", "session_id", name="uq_student_matric_session"
+        ),
     )
 
 

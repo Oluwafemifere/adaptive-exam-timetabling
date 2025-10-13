@@ -349,9 +349,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
         configuration_id,
       });
 
-      const { job_id } = response.data;
+      const { job_id, status } = response.data;
       set((state) => ({
-        schedulingStatus: { ...state.schedulingStatus, jobId: job_id, phase: 'queued', isRunning: true }
+        schedulingStatus: { ...state.schedulingStatus, jobId: job_id, phase: status, isRunning: true }
       }));
       toast.success("Scheduling job has been started.");
     } catch (error: any) {

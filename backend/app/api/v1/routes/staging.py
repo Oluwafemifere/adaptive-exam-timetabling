@@ -1,6 +1,7 @@
 # backend/app/api/v1/routes/staging.py
 """API endpoints for managing individual records in staging tables."""
 
+import logging
 from uuid import UUID
 from datetime import date
 from typing import Callable, Coroutine, Any
@@ -32,10 +33,11 @@ async def _execute_and_respond(
         return GenericResponse(success=True, message=success_message)
     except Exception as e:
         await db.rollback()
-
+        # Log the full exception for debugging
+        logging.error(f"Staging API operation failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Operation failed: {e}",
+            detail=f"Operation failed: {str(e)}",
         )
 
 
@@ -44,7 +46,7 @@ async def _execute_and_respond(
 # =================================================================
 
 
-@router.get("/{session_id}", response_model=staging_schemas.StagedSessionData)
+@router.get("/{session_id}", response_model=GenericResponse, tags=["Staging Data"])
 async def get_staged_session_data(
     session_id: UUID,
     db: AsyncSession = Depends(db_session),
@@ -59,7 +61,7 @@ async def get_staged_session_data(
     service = StagingService(db)
     try:
         data = await service.get_session_data(session_id)
-        return data
+        return GenericResponse(success=True, data=data)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -72,7 +74,9 @@ async def get_staged_session_data(
 # =================================================================
 
 
-@router.post("/{session_id}/buildings", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/buildings", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def add_staged_building(
     session_id: UUID,
     building_in: staging_schemas.BuildingCreate,
@@ -81,14 +85,18 @@ async def add_staged_building(
 ):
     """Add a new building to the staging table for a session."""
     service = StagingService(db)
+    return await _execute_and_respond(
+        db,
+        lambda: service.add_building(session_id=session_id, **building_in.model_dump()),
+        "Building added successfully.",
+    )
 
-    async def action():
-        await service.add_building(session_id, **building_in.model_dump())
 
-    return await _execute_and_respond(db, action, "Building added successfully.")
-
-
-@router.put("/{session_id}/buildings/{code}", response_model=GenericResponse)
+@router.put(
+    "/{session_id}/buildings/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def update_staged_building(
     session_id: UUID,
     code: str,
@@ -99,14 +107,20 @@ async def update_staged_building(
     """Update an existing building in the staging table."""
     service = StagingService(db)
     update_data = building_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_building(
+            session_id=session_id, code=code, **update_data
+        ),
+        "Building updated successfully.",
+    )
 
-    async def action():
-        await service.update_building(session_id, code, **update_data)
 
-    return await _execute_and_respond(db, action, "Building updated successfully.")
-
-
-@router.delete("/{session_id}/buildings/{code}", response_model=GenericResponse)
+@router.delete(
+    "/{session_id}/buildings/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def delete_staged_building(
     session_id: UUID,
     code: str,
@@ -115,11 +129,11 @@ async def delete_staged_building(
 ):
     """Delete a building from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_building(session_id, code)
-
-    return await _execute_and_respond(db, action, "Building deleted successfully.")
+    return await _execute_and_respond(
+        db,
+        lambda: service.delete_building(session_id, code),
+        "Building deleted successfully.",
+    )
 
 
 # =================================================================
@@ -127,7 +141,11 @@ async def delete_staged_building(
 # =================================================================
 
 
-@router.post("/{session_id}/course-departments", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/course-departments",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def add_staged_course_department(
     session_id: UUID,
     data_in: staging_schemas.CourseDepartmentCreate,
@@ -136,18 +154,47 @@ async def add_staged_course_department(
 ):
     """Link a course to a department in the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.add_course_department(session_id, **data_in.model_dump())
-
     return await _execute_and_respond(
-        db, action, "Course department link added successfully."
+        db,
+        lambda: service.add_course_department(
+            session_id=session_id, **data_in.model_dump()
+        ),
+        "Course department link added successfully.",
+    )
+
+
+@router.put(
+    "/{session_id}/course-departments/{course_code}/{old_department_code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
+async def update_staged_course_department(
+    session_id: UUID,
+    course_code: str,
+    old_department_code: str,
+    data_in: staging_schemas.CourseDepartmentUpdate,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """Update a course-department link in the staging table."""
+    service = StagingService(db)
+    update_data = data_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_course_department(
+            session_id=session_id,
+            course_code=course_code,
+            old_department_code=old_department_code,
+            **update_data,
+        ),
+        "Course department link updated successfully.",
     )
 
 
 @router.delete(
     "/{session_id}/course-departments/{course_code}/{department_code}",
     response_model=GenericResponse,
+    tags=["Staging Data"],
 )
 async def delete_staged_course_department(
     session_id: UUID,
@@ -158,12 +205,12 @@ async def delete_staged_course_department(
 ):
     """Delete a course-department link from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_course_department(session_id, course_code, department_code)
-
     return await _execute_and_respond(
-        db, action, "Course department link deleted successfully."
+        db,
+        lambda: service.delete_course_department(
+            session_id, course_code, department_code
+        ),
+        "Course department link deleted successfully.",
     )
 
 
@@ -172,7 +219,11 @@ async def delete_staged_course_department(
 # =================================================================
 
 
-@router.post("/{session_id}/course-faculties", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/course-faculties",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def add_staged_course_faculty(
     session_id: UUID,
     data_in: staging_schemas.CourseFacultyCreate,
@@ -181,18 +232,47 @@ async def add_staged_course_faculty(
 ):
     """Link a course to a faculty in the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.add_course_faculty(session_id, **data_in.model_dump())
-
     return await _execute_and_respond(
-        db, action, "Course faculty link added successfully."
+        db,
+        lambda: service.add_course_faculty(
+            session_id=session_id, **data_in.model_dump()
+        ),
+        "Course faculty link added successfully.",
+    )
+
+
+@router.put(
+    "/{session_id}/course-faculties/{course_code}/{old_faculty_code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
+async def update_staged_course_faculty(
+    session_id: UUID,
+    course_code: str,
+    old_faculty_code: str,
+    data_in: staging_schemas.CourseFacultyUpdate,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """Update a course-faculty link in the staging table."""
+    service = StagingService(db)
+    update_data = data_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_course_faculty(
+            session_id=session_id,
+            course_code=course_code,
+            old_faculty_code=old_faculty_code,
+            **update_data,
+        ),
+        "Course faculty link updated successfully.",
     )
 
 
 @router.delete(
     "/{session_id}/course-faculties/{course_code}/{faculty_code}",
     response_model=GenericResponse,
+    tags=["Staging Data"],
 )
 async def delete_staged_course_faculty(
     session_id: UUID,
@@ -203,21 +283,25 @@ async def delete_staged_course_faculty(
 ):
     """Delete a course-faculty link from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_course_faculty(session_id, course_code, faculty_code)
-
     return await _execute_and_respond(
-        db, action, "Course faculty link deleted successfully."
+        db,
+        lambda: service.delete_course_faculty(session_id, course_code, faculty_code),
+        "Course faculty link deleted successfully.",
     )
 
+
+# ... (The rest of the file remains the same, as the endpoint structures for other entities were already correct) ...
 
 # =================================================================
 # Course Instructors Endpoints
 # =================================================================
 
 
-@router.post("/{session_id}/course-instructors", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/course-instructors",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def add_staged_course_instructor(
     session_id: UUID,
     data_in: staging_schemas.CourseInstructorCreate,
@@ -226,18 +310,19 @@ async def add_staged_course_instructor(
 ):
     """Assign an instructor to a course in the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.add_course_instructor(session_id, **data_in.model_dump())
-
     return await _execute_and_respond(
-        db, action, "Course instructor added successfully."
+        db,
+        lambda: service.add_course_instructor(
+            session_id=session_id, **data_in.model_dump()
+        ),
+        "Course instructor added successfully.",
     )
 
 
 @router.delete(
     "/{session_id}/course-instructors/{staff_number}/{course_code}",
     response_model=GenericResponse,
+    tags=["Staging Data"],
 )
 async def delete_staged_course_instructor(
     session_id: UUID,
@@ -248,12 +333,10 @@ async def delete_staged_course_instructor(
 ):
     """Delete a course-instructor assignment from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_course_instructor(session_id, staff_number, course_code)
-
     return await _execute_and_respond(
-        db, action, "Course instructor deleted successfully."
+        db,
+        lambda: service.delete_course_instructor(session_id, staff_number, course_code),
+        "Course instructor deleted successfully.",
     )
 
 
@@ -262,7 +345,11 @@ async def delete_staged_course_instructor(
 # =================================================================
 
 
-@router.post("/{session_id}/course-registrations", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/course-registrations",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def add_staged_course_registration(
     session_id: UUID,
     data_in: staging_schemas.CourseRegistrationCreate,
@@ -271,18 +358,19 @@ async def add_staged_course_registration(
 ):
     """Add a student course registration to the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.add_course_registration(session_id, **data_in.model_dump())
-
     return await _execute_and_respond(
-        db, action, "Course registration added successfully."
+        db,
+        lambda: service.add_course_registration(
+            session_id=session_id, **data_in.model_dump()
+        ),
+        "Course registration added successfully.",
     )
 
 
 @router.put(
     "/{session_id}/course-registrations/{student_matric_number}/{course_code}",
     response_model=GenericResponse,
+    tags=["Staging Data"],
 )
 async def update_staged_course_registration(
     session_id: UUID,
@@ -294,23 +382,20 @@ async def update_staged_course_registration(
 ):
     """Update a course registration in the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.update_course_registration(
-            session_id,
-            student_matric_number,
-            course_code,
-            data_in.registration_type,
-        )
-
+    update_data = data_in.model_dump(exclude_unset=True)
     return await _execute_and_respond(
-        db, action, "Course registration updated successfully."
+        db,
+        lambda: service.update_course_registration(
+            session_id, student_matric_number, course_code, **update_data
+        ),
+        "Course registration updated successfully.",
     )
 
 
 @router.delete(
     "/{session_id}/course-registrations/{student_matric_number}/{course_code}",
     response_model=GenericResponse,
+    tags=["Staging Data"],
 )
 async def delete_staged_course_registration(
     session_id: UUID,
@@ -321,14 +406,12 @@ async def delete_staged_course_registration(
 ):
     """Delete a course registration from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_course_registration(
-            session_id, student_matric_number, course_code
-        )
-
     return await _execute_and_respond(
-        db, action, "Course registration deleted successfully."
+        db,
+        lambda: service.delete_course_registration(
+            session_id, student_matric_number, course_code
+        ),
+        "Course registration deleted successfully.",
     )
 
 
@@ -337,7 +420,9 @@ async def delete_staged_course_registration(
 # =================================================================
 
 
-@router.post("/{session_id}/courses", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/courses", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def add_staged_course(
     session_id: UUID,
     course_in: staging_schemas.CourseCreate,
@@ -346,14 +431,18 @@ async def add_staged_course(
 ):
     """Add a new course to the staging table."""
     service = StagingService(db)
+    return await _execute_and_respond(
+        db,
+        lambda: service.add_course(session_id=session_id, **course_in.model_dump()),
+        "Course added successfully.",
+    )
 
-    async def action():
-        await service.add_course(session_id, **course_in.model_dump())
 
-    return await _execute_and_respond(db, action, "Course added successfully.")
-
-
-@router.put("/{session_id}/courses/{code}", response_model=GenericResponse)
+@router.put(
+    "/{session_id}/courses/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def update_staged_course(
     session_id: UUID,
     code: str,
@@ -364,14 +453,18 @@ async def update_staged_course(
     """Update a course in the staging table."""
     service = StagingService(db)
     update_data = course_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_course(session_id, code, **update_data),
+        "Course updated successfully.",
+    )
 
-    async def action():
-        await service.update_course(session_id, code, **update_data)
 
-    return await _execute_and_respond(db, action, "Course updated successfully.")
-
-
-@router.delete("/{session_id}/courses/{code}", response_model=GenericResponse)
+@router.delete(
+    "/{session_id}/courses/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def delete_staged_course(
     session_id: UUID,
     code: str,
@@ -380,11 +473,11 @@ async def delete_staged_course(
 ):
     """Delete a course from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_course(session_id, code)
-
-    return await _execute_and_respond(db, action, "Course deleted successfully.")
+    return await _execute_and_respond(
+        db,
+        lambda: service.delete_course(session_id, code),
+        "Course deleted successfully.",
+    )
 
 
 # =================================================================
@@ -392,7 +485,9 @@ async def delete_staged_course(
 # =================================================================
 
 
-@router.post("/{session_id}/departments", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/departments", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def add_staged_department(
     session_id: UUID,
     department_in: staging_schemas.DepartmentCreate,
@@ -401,14 +496,20 @@ async def add_staged_department(
 ):
     """Add a new department to the staging table."""
     service = StagingService(db)
+    return await _execute_and_respond(
+        db,
+        lambda: service.add_department(
+            session_id=session_id, **department_in.model_dump()
+        ),
+        "Department added successfully.",
+    )
 
-    async def action():
-        await service.add_department(session_id, **department_in.model_dump())
 
-    return await _execute_and_respond(db, action, "Department added successfully.")
-
-
-@router.put("/{session_id}/departments/{code}", response_model=GenericResponse)
+@router.put(
+    "/{session_id}/departments/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def update_staged_department(
     session_id: UUID,
     code: str,
@@ -419,14 +520,18 @@ async def update_staged_department(
     """Update a department in the staging table."""
     service = StagingService(db)
     update_data = department_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_department(session_id, code, **update_data),
+        "Department updated successfully.",
+    )
 
-    async def action():
-        await service.update_department(session_id, code, **update_data)
 
-    return await _execute_and_respond(db, action, "Department updated successfully.")
-
-
-@router.delete("/{session_id}/departments/{code}", response_model=GenericResponse)
+@router.delete(
+    "/{session_id}/departments/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def delete_staged_department(
     session_id: UUID,
     code: str,
@@ -435,11 +540,11 @@ async def delete_staged_department(
 ):
     """Delete a department from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_department(session_id, code)
-
-    return await _execute_and_respond(db, action, "Department deleted successfully.")
+    return await _execute_and_respond(
+        db,
+        lambda: service.delete_department(session_id, code),
+        "Department deleted successfully.",
+    )
 
 
 # =================================================================
@@ -447,7 +552,9 @@ async def delete_staged_department(
 # =================================================================
 
 
-@router.post("/{session_id}/faculties", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/faculties", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def add_staged_faculty(
     session_id: UUID,
     faculty_in: staging_schemas.FacultyCreate,
@@ -456,14 +563,18 @@ async def add_staged_faculty(
 ):
     """Add a new faculty to the staging table."""
     service = StagingService(db)
+    return await _execute_and_respond(
+        db,
+        lambda: service.add_faculty(session_id=session_id, **faculty_in.model_dump()),
+        "Faculty added successfully.",
+    )
 
-    async def action():
-        await service.add_faculty(session_id, **faculty_in.model_dump())
 
-    return await _execute_and_respond(db, action, "Faculty added successfully.")
-
-
-@router.put("/{session_id}/faculties/{code}", response_model=GenericResponse)
+@router.put(
+    "/{session_id}/faculties/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def update_staged_faculty(
     session_id: UUID,
     code: str,
@@ -474,14 +585,18 @@ async def update_staged_faculty(
     """Update a faculty in the staging table."""
     service = StagingService(db)
     update_data = faculty_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_faculty(session_id, code, **update_data),
+        "Faculty updated successfully.",
+    )
 
-    async def action():
-        await service.update_faculty(session_id, code, **update_data)
 
-    return await _execute_and_respond(db, action, "Faculty updated successfully.")
-
-
-@router.delete("/{session_id}/faculties/{code}", response_model=GenericResponse)
+@router.delete(
+    "/{session_id}/faculties/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def delete_staged_faculty(
     session_id: UUID,
     code: str,
@@ -490,11 +605,11 @@ async def delete_staged_faculty(
 ):
     """Delete a faculty from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_faculty(session_id, code)
-
-    return await _execute_and_respond(db, action, "Faculty deleted successfully.")
+    return await _execute_and_respond(
+        db,
+        lambda: service.delete_faculty(session_id, code),
+        "Faculty deleted successfully.",
+    )
 
 
 # =================================================================
@@ -502,7 +617,9 @@ async def delete_staged_faculty(
 # =================================================================
 
 
-@router.post("/{session_id}/programmes", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/programmes", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def add_staged_programme(
     session_id: UUID,
     programme_in: staging_schemas.ProgrammeCreate,
@@ -511,14 +628,20 @@ async def add_staged_programme(
 ):
     """Add a new programme to the staging table."""
     service = StagingService(db)
+    return await _execute_and_respond(
+        db,
+        lambda: service.add_programme(
+            session_id=session_id, **programme_in.model_dump()
+        ),
+        "Programme added successfully.",
+    )
 
-    async def action():
-        await service.add_programme(session_id, **programme_in.model_dump())
 
-    return await _execute_and_respond(db, action, "Programme added successfully.")
-
-
-@router.put("/{session_id}/programmes/{code}", response_model=GenericResponse)
+@router.put(
+    "/{session_id}/programmes/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def update_staged_programme(
     session_id: UUID,
     code: str,
@@ -529,14 +652,18 @@ async def update_staged_programme(
     """Update a programme in the staging table."""
     service = StagingService(db)
     update_data = programme_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_programme(session_id, code, **update_data),
+        "Programme updated successfully.",
+    )
 
-    async def action():
-        await service.update_programme(session_id, code, **update_data)
 
-    return await _execute_and_respond(db, action, "Programme updated successfully.")
-
-
-@router.delete("/{session_id}/programmes/{code}", response_model=GenericResponse)
+@router.delete(
+    "/{session_id}/programmes/{code}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def delete_staged_programme(
     session_id: UUID,
     code: str,
@@ -545,11 +672,11 @@ async def delete_staged_programme(
 ):
     """Delete a programme from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_programme(session_id, code)
-
-    return await _execute_and_respond(db, action, "Programme deleted successfully.")
+    return await _execute_and_respond(
+        db,
+        lambda: service.delete_programme(session_id, code),
+        "Programme deleted successfully.",
+    )
 
 
 # =================================================================
@@ -557,7 +684,9 @@ async def delete_staged_programme(
 # =================================================================
 
 
-@router.post("/{session_id}/rooms", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/rooms", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def add_staged_room(
     session_id: UUID,
     room_in: staging_schemas.RoomCreate,
@@ -566,14 +695,16 @@ async def add_staged_room(
 ):
     """Add a new room to the staging table."""
     service = StagingService(db)
+    return await _execute_and_respond(
+        db,
+        lambda: service.add_room(session_id=session_id, **room_in.model_dump()),
+        "Room added successfully.",
+    )
 
-    async def action():
-        await service.add_room(session_id, **room_in.model_dump())
 
-    return await _execute_and_respond(db, action, "Room added successfully.")
-
-
-@router.put("/{session_id}/rooms/{code}", response_model=GenericResponse)
+@router.put(
+    "/{session_id}/rooms/{code}", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def update_staged_room(
     session_id: UUID,
     code: str,
@@ -584,14 +715,16 @@ async def update_staged_room(
     """Update a room in the staging table."""
     service = StagingService(db)
     update_data = room_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_room(session_id, code, **update_data),
+        "Room updated successfully.",
+    )
 
-    async def action():
-        await service.update_room(session_id, code, **update_data)
 
-    return await _execute_and_respond(db, action, "Room updated successfully.")
-
-
-@router.delete("/{session_id}/rooms/{code}", response_model=GenericResponse)
+@router.delete(
+    "/{session_id}/rooms/{code}", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def delete_staged_room(
     session_id: UUID,
     code: str,
@@ -600,11 +733,9 @@ async def delete_staged_room(
 ):
     """Delete a room from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_room(session_id, code)
-
-    return await _execute_and_respond(db, action, "Room deleted successfully.")
+    return await _execute_and_respond(
+        db, lambda: service.delete_room(session_id, code), "Room deleted successfully."
+    )
 
 
 # =================================================================
@@ -612,7 +743,9 @@ async def delete_staged_room(
 # =================================================================
 
 
-@router.post("/{session_id}/staff", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/staff", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def add_staged_staff(
     session_id: UUID,
     staff_in: staging_schemas.StaffCreate,
@@ -621,14 +754,18 @@ async def add_staged_staff(
 ):
     """Add a new staff member to the staging table."""
     service = StagingService(db)
+    return await _execute_and_respond(
+        db,
+        lambda: service.add_staff(session_id=session_id, **staff_in.model_dump()),
+        "Staff member added successfully.",
+    )
 
-    async def action():
-        await service.add_staff(session_id, **staff_in.model_dump())
 
-    return await _execute_and_respond(db, action, "Staff member added successfully.")
-
-
-@router.put("/{session_id}/staff/{staff_number}", response_model=GenericResponse)
+@router.put(
+    "/{session_id}/staff/{staff_number}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def update_staged_staff(
     session_id: UUID,
     staff_number: str,
@@ -639,14 +776,18 @@ async def update_staged_staff(
     """Update a staff member in the staging table."""
     service = StagingService(db)
     update_data = staff_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_staff(session_id, staff_number, **update_data),
+        "Staff member updated successfully.",
+    )
 
-    async def action():
-        await service.update_staff(session_id, staff_number, **update_data)
 
-    return await _execute_and_respond(db, action, "Staff member updated successfully.")
-
-
-@router.delete("/{session_id}/staff/{staff_number}", response_model=GenericResponse)
+@router.delete(
+    "/{session_id}/staff/{staff_number}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def delete_staged_staff(
     session_id: UUID,
     staff_number: str,
@@ -655,11 +796,11 @@ async def delete_staged_staff(
 ):
     """Delete a staff member from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_staff(session_id, staff_number)
-
-    return await _execute_and_respond(db, action, "Staff member deleted successfully.")
+    return await _execute_and_respond(
+        db,
+        lambda: service.delete_staff(session_id, staff_number),
+        "Staff member deleted successfully.",
+    )
 
 
 # =================================================================
@@ -667,7 +808,11 @@ async def delete_staged_staff(
 # =================================================================
 
 
-@router.post("/{session_id}/staff-unavailability", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/staff-unavailability",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def add_staged_staff_unavailability(
     session_id: UUID,
     data_in: staging_schemas.StaffUnavailabilityCreate,
@@ -676,18 +821,19 @@ async def add_staged_staff_unavailability(
 ):
     """Add a staff unavailability record to the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.add_staff_unavailability(session_id, **data_in.model_dump())
-
     return await _execute_and_respond(
-        db, action, "Staff unavailability record added successfully."
+        db,
+        lambda: service.add_staff_unavailability(
+            session_id=session_id, **data_in.model_dump()
+        ),
+        "Staff unavailability record added successfully.",
     )
 
 
 @router.put(
     "/{session_id}/staff-unavailability/{staff_number}/{unavailable_date}/{period_name}",
     response_model=GenericResponse,
+    tags=["Staging Data"],
 )
 async def update_staged_staff_unavailability(
     session_id: UUID,
@@ -700,24 +846,20 @@ async def update_staged_staff_unavailability(
 ):
     """Update a staff unavailability record in the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.update_staff_unavailability(
-            session_id,
-            staff_number,
-            unavailable_date,
-            period_name,
-            data_in.reason,
-        )
-
+    update_data = data_in.model_dump(exclude_unset=True)
     return await _execute_and_respond(
-        db, action, "Staff unavailability record updated successfully."
+        db,
+        lambda: service.update_staff_unavailability(
+            session_id, staff_number, unavailable_date, period_name, **update_data
+        ),
+        "Staff unavailability record updated successfully.",
     )
 
 
 @router.delete(
     "/{session_id}/staff-unavailability/{staff_number}/{unavailable_date}/{period_name}",
     response_model=GenericResponse,
+    tags=["Staging Data"],
 )
 async def delete_staged_staff_unavailability(
     session_id: UUID,
@@ -729,14 +871,12 @@ async def delete_staged_staff_unavailability(
 ):
     """Delete a staff unavailability record from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_staff_unavailability(
-            session_id, staff_number, unavailable_date, period_name
-        )
-
     return await _execute_and_respond(
-        db, action, "Staff unavailability record deleted successfully."
+        db,
+        lambda: service.delete_staff_unavailability(
+            session_id, staff_number, unavailable_date, period_name
+        ),
+        "Staff unavailability record deleted successfully.",
     )
 
 
@@ -745,7 +885,9 @@ async def delete_staged_staff_unavailability(
 # =================================================================
 
 
-@router.post("/{session_id}/students", response_model=GenericResponse)
+@router.post(
+    "/{session_id}/students", response_model=GenericResponse, tags=["Staging Data"]
+)
 async def add_staged_student(
     session_id: UUID,
     student_in: staging_schemas.StudentCreate,
@@ -754,14 +896,18 @@ async def add_staged_student(
 ):
     """Add a new student to the staging table."""
     service = StagingService(db)
+    return await _execute_and_respond(
+        db,
+        lambda: service.add_student(session_id=session_id, **student_in.model_dump()),
+        "Student added successfully.",
+    )
 
-    async def action():
-        await service.add_student(session_id, **student_in.model_dump())
 
-    return await _execute_and_respond(db, action, "Student added successfully.")
-
-
-@router.put("/{session_id}/students/{matric_number}", response_model=GenericResponse)
+@router.put(
+    "/{session_id}/students/{matric_number}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def update_staged_student(
     session_id: UUID,
     matric_number: str,
@@ -772,14 +918,18 @@ async def update_staged_student(
     """Update a student in the staging table."""
     service = StagingService(db)
     update_data = student_in.model_dump(exclude_unset=True)
+    return await _execute_and_respond(
+        db,
+        lambda: service.update_student(session_id, matric_number, **update_data),
+        "Student updated successfully.",
+    )
 
-    async def action():
-        await service.update_student(session_id, matric_number, **update_data)
 
-    return await _execute_and_respond(db, action, "Student updated successfully.")
-
-
-@router.delete("/{session_id}/students/{matric_number}", response_model=GenericResponse)
+@router.delete(
+    "/{session_id}/students/{matric_number}",
+    response_model=GenericResponse,
+    tags=["Staging Data"],
+)
 async def delete_staged_student(
     session_id: UUID,
     matric_number: str,
@@ -788,8 +938,8 @@ async def delete_staged_student(
 ):
     """Delete a student from the staging table."""
     service = StagingService(db)
-
-    async def action():
-        await service.delete_student(session_id, matric_number)
-
-    return await _execute_and_respond(db, action, "Student deleted successfully.")
+    return await _execute_and_respond(
+        db,
+        lambda: service.delete_student(session_id, matric_number),
+        "Student deleted successfully.",
+    )

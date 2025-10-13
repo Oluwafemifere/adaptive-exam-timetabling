@@ -9,7 +9,7 @@ import { DialogFooter, DialogClose } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
-import { AlertTriangle, CalendarDays, Clock, MapPin, Building, LogOut, Grid3X3, List, Loader2, Sun, Moon } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Clock, MapPin, Building, LogOut, Grid3X3, List, Loader2, Sun, Moon, GraduationCap, Shield } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useAuth } from '../hooks/useAuth';
 import { useStudentPortalData } from '../hooks/useApi';
@@ -27,7 +27,7 @@ export function StudentPortal() {
   const [selectedExam, setSelectedExam] = useState('');
   const [conflictDescription, setConflictDescription] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
+  const [selectedDepartments, setSelectedDepartments] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'general' | 'department'>('general');
 
   useEffect(() => {
@@ -113,14 +113,14 @@ export function StudentPortal() {
       startTime: exam.startTime,
       endTime: exam.endTime,
       duration: exam.duration,
-      expectedStudents: 0,
+      expectedStudents: exam.expectedStudents,
       room: exam.room,
-      roomCapacity: 0,
+      roomCapacity: exam.roomCapacity,
       building: exam.building,
-      invigilator: '',
+      invigilator: exam.invigilator,
       departments: [getDepartmentFromCourseCode(exam.courseCode)],
       facultyName: 'N/A',
-      instructor: 'N/A',
+      instructor: exam.instructor,
       examType: 'Theory',
       conflicts: [],
       level: 'undergraduate',
@@ -138,13 +138,13 @@ export function StudentPortal() {
   }, [renderableExams]);
 
   const filteredExams = useMemo(() => {
-    if (selectedDepartment === 'all') {
+    if (selectedDepartments.length === 0) {
       return renderableExams;
     }
     return renderableExams.filter(exam =>
-      exam.departments.includes(selectedDepartment)
+      exam.departments.some(dept => selectedDepartments.includes(dept))
     );
-  }, [selectedDepartment, renderableExams]);
+  }, [selectedDepartments, renderableExams]);
 
   const sortedExams = useMemo(() => 
     [...studentExams].sort((a, b) =>
@@ -292,7 +292,11 @@ export function StudentPortal() {
                         <div className="flex items-center gap-2"><Clock className="h-4 w-4 text-muted-foreground" /><span className="text-sm">{formatTime(exam.startTime)} - {formatTime(exam.endTime)}</span></div>
                         <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" /><span className="text-sm">{exam.room}</span></div>
                       </div>
-                      <div className="flex items-center gap-2 mt-3 pt-3 border-t"><Building className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">{exam.building}</span></div>
+                      <div className="space-y-2 mt-3 pt-3 border-t">
+                        <div className="flex items-center gap-2"><Building className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">{exam.building}</span></div>
+                        <div className="flex items-center gap-2"><GraduationCap className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">Instructor(s): {exam.instructor}</span></div>
+                        <div className="flex items-center gap-2"><Shield className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">Invigilator(s): {exam.invigilator}</span></div>
+                      </div>
                     </CardContent>
                   </Card>
                 ))}
@@ -302,19 +306,30 @@ export function StudentPortal() {
 
           <TabsContent value="grid" className="mt-0">
             <div className="space-y-6">
-              <FilterControls
-                departments={departments}
-                selectedDepartments={selectedDepartment === 'all' ? [] : [selectedDepartment]}
-                onDepartmentsChange={(deps) => {
-                  const currentSelected = selectedDepartment === 'all' ? [] : [selectedDepartment];
-                  const newSelection = deps.find(d => !currentSelected.includes(d));
-                  if (newSelection) {
-                    setSelectedDepartment(newSelection);
-                  } else if (deps.length === 0) {
-                    setSelectedDepartment('all');
-                  }
-                }}
-              />
+              <Card>
+                <CardContent className="p-4 flex flex-col sm:flex-row gap-4">
+                  <div className="flex-grow">
+                     <FilterControls
+                        departments={departments}
+                        selectedDepartments={selectedDepartments}
+                        onDepartmentsChange={setSelectedDepartments}
+                      />
+                  </div>
+                  <div className="w-full sm:w-48">
+                    <Label>Color Scheme</Label>
+                    <Select value={viewMode} onValueChange={(value) => setViewMode(value as 'general' | 'department')}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select color mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="general">Default</SelectItem>
+                        <SelectItem value="department">By Department</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </CardContent>
+              </Card>
+              
               {filteredExams.length === 0 ? (
                 <Card>
                   <CardContent className="py-8 text-center">

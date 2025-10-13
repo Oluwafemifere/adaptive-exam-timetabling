@@ -22,7 +22,7 @@ class AuthenticationService:
 
     # --- NEW: Method for student self-registration ---
     async def self_register_student(
-        self, matric_number: str, email: str, password: str
+        self, matric_number: str, email: str, password: str, session_id: UUID
     ) -> Dict[str, Any]:
         """
         Registers a user account for an existing student record.
@@ -37,13 +37,19 @@ class AuthenticationService:
                 SELECT exam_system.student_self_register(
                     p_matric_number => :matric_number,
                     p_email => :email,
-                    p_password => :password
+                    p_password => :password,
+                    p_session_id => :session_id
                 )
                 """
             )
             result = await self.session.execute(
                 query,
-                {"matric_number": matric_number, "email": email, "password": password},
+                {
+                    "matric_number": matric_number,
+                    "email": email,
+                    "password": password,
+                    "session_id": session_id,
+                },
             )
             registration_result = result.scalar_one()
 
@@ -62,7 +68,7 @@ class AuthenticationService:
 
     # --- NEW: Method for staff self-registration ---
     async def self_register_staff(
-        self, staff_number: str, email: str, password: str
+        self, staff_number: str, email: str, password: str, session_id: UUID
     ) -> Dict[str, Any]:
         """
         Registers a user account for an existing staff record.
@@ -77,13 +83,19 @@ class AuthenticationService:
                 SELECT exam_system.staff_self_register(
                     p_staff_number => :staff_number,
                     p_email => :email,
-                    p_password => :password
+                    p_password => :password,
+                    p_session_id => :session_id
                 )
                 """
             )
             result = await self.session.execute(
                 query,
-                {"staff_number": staff_number, "email": email, "password": password},
+                {
+                    "staff_number": staff_number,
+                    "email": email,
+                    "password": password,
+                    "session_id": session_id,
+                },
             )
             registration_result = result.scalar_one()
 
@@ -100,12 +112,15 @@ class AuthenticationService:
             return {"success": False, "message": str(e)}
 
     # ... (existing methods: register_user, admin_create_user, login_user)
-    async def register_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def register_user(
+        self, user_data: Dict[str, Any], session_id: UUID
+    ) -> Dict[str, Any]:
         """
         Registers a new user by calling the `register_user` PostgreSQL function.
 
         Args:
             user_data: A dictionary containing user details, including 'role'.
+            session_id: The ID of the session to register the user against.
 
         Returns:
             A dictionary with the result from the database function.
@@ -120,11 +135,15 @@ class AuthenticationService:
                 )
 
             user_data_json = json.dumps(user_data)
-            query = text("SELECT exam_system.register_user(p_user_data => :user_data)")
-            result = await self.session.execute(query, {"user_data": user_data_json})
+            query = text(
+                "SELECT exam_system.register_user(p_user_data => :user_data, p_session_id => :session_id)"
+            )
+            result = await self.session.execute(
+                query, {"user_data": user_data_json, "session_id": session_id}
+            )
             registration_result = result.scalar_one()
 
-            if not registration_result.get("success"):
+            if not registration_result.get("status") == "success":
                 raise Exception(
                     registration_result.get(
                         "message", "Registration failed in database."
@@ -214,7 +233,6 @@ class AuthenticationService:
         """
         try:
             logger.info(f"Attempting to log in user: {email}")
-            # MODIFIED: Changed function name to match the updated SQL script
             query = text(
                 "SELECT exam_system.user_login(p_email => :email, p_password => :password)"
             )

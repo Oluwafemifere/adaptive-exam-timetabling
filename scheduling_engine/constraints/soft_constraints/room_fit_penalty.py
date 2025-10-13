@@ -22,7 +22,12 @@ class RoomFitPenaltyConstraint(CPSATBaseConstraint):
     def __init__(self, definition: ConstraintDefinition, problem, shared_vars, model):
         super().__init__(definition, problem, shared_vars, model)
         # The weight can be low; the goal is just to guide the choice between valid options.
-        self.penalty_weight = self.definition.get_parameter_value("weight", default=1.0)
+        # --- START OF FIX ---
+        # The parameter value might be a string, so it must be cast to a float for calculations.
+        self.penalty_weight = float(
+            definition.get_parameter_value("weight", default=1.0)
+        )
+        # --- END OF FIX ---
         logger.info(
             f"🟡 Initializing SOFT constraint {self.constraint_id} with weight {self.penalty_weight}"
         )

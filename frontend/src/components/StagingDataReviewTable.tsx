@@ -5,16 +5,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { Alert, AlertDescription } from './ui/alert';
-import { Loader2, AlertTriangle, Database, PlusCircle, Pencil, Trash2 } from 'lucide-react';
+import { Loader2, AlertTriangle, Database, PlusCircle, Pencil, Trash2, Search } from 'lucide-react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog';
+import { Input } from './ui/input';
 import { StagingRecord } from '../store/types';
 import { StagingDataForm } from './StagingDataForm';
 import { EditableStagingDataRow } from './EditableStagingDataRow';
 import { formatHeader } from '../utils/utils';
 import { Badge } from './ui/badge';
-
 
 // --- Configuration for Primary Keys ---
 const ENTITY_PRIMARY_KEYS: Record<string, string[]> = {
@@ -36,27 +36,13 @@ const ENTITY_PRIMARY_KEYS: Record<string, string[]> = {
 // --- Entities to be displayed in a grouped view ---
 const GROUPED_ENTITIES = ['course_registrations', 'course_instructors'];
 
-// --- Type definitions for entities used in grouping ---
-interface SimpleCourse {
-  code: string;
-  title: string;
-  course_level: number;
-  semester: number;
-}
-interface SimpleStudent {
-  matric_number: string;
-  first_name: string;
-  last_name: string;
-}
-interface SimpleStaff {
-  staff_number: string;
-  first_name: string;
-  last_name: string;
-}
-
+// --- Type definitions ---
+interface SimpleCourse { code: string; title: string; course_level: number; semester: number; }
+interface SimpleStudent { matric_number: string; first_name: string; last_name: string; }
+interface SimpleStaff { staff_number: string; first_name: string; last_name: string; }
 
 // --- Generic Flat Data Viewer ---
-const FlatDataViewer = ({ entityType, data, sessionId, onRefetch }: { entityType: string; data: StagingRecord[]; sessionId: string, onRefetch: () => Promise<void> }) => {
+const FlatDataViewer = ({ entityType, data, sessionId, allData, onRefetch }: { entityType: string; data: StagingRecord[]; sessionId: string; allData: any; onRefetch: () => Promise<void> }) => {
   const { addRecord, updateRecord, deleteRecord, setRefetch } = useStagedData(sessionId, entityType);
   useEffect(() => { setRefetch(onRefetch) }, [onRefetch, setRefetch]);
 
@@ -66,7 +52,7 @@ const FlatDataViewer = ({ entityType, data, sessionId, onRefetch }: { entityType
   const [isEditing, setIsEditing] = useState(false);
 
   const primaryKeys = useMemo(() => ENTITY_PRIMARY_KEYS[entityType] || ['code'], [entityType]);
-  const columns = useMemo(() => data.length > 0 ? Object.keys(data[0] || {}) : [], [data]);
+  const columns = useMemo(() => allData[entityType]?.length > 0 ? Object.keys(allData[entityType][0] || {}) : [], [allData, entityType]);
 
   const handleCreate = () => {
     const newRecordTemplate = columns.reduce((acc, col) => ({ ...acc, [col]: '' }), {});
@@ -114,7 +100,7 @@ const FlatDataViewer = ({ entityType, data, sessionId, onRefetch }: { entityType
       
       {!data || data.length === 0 ? (
         <div className="flex justify-center items-center h-64 flex-col border-2 border-dashed rounded-lg">
-          <Database className="h-8 w-8 text-muted-foreground mb-2"/><p className="text-muted-foreground">No data found for {formatHeader(entityType)}.</p>
+          <Database className="h-8 w-8 text-muted-foreground mb-2"/><p className="text-muted-foreground">No matching data found for {formatHeader(entityType)}.</p>
         </div>
       ) : (
         <div className="border rounded-lg overflow-auto max-h-[60vh]">
@@ -132,7 +118,7 @@ const FlatDataViewer = ({ entityType, data, sessionId, onRefetch }: { entityType
 
       <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}><DialogContent className="max-w-3xl">
           <DialogHeader><DialogTitle>{isEditing ? 'Edit' : 'Create'} {formatHeader(entityType)} Record</DialogTitle></DialogHeader>
-          {selectedRecord && <StagingDataForm record={selectedRecord} columns={columns} primaryKeys={primaryKeys} onSave={handleSave} onCancel={() => setIsFormOpen(false)} isEditing={isEditing} />}
+          {selectedRecord && <StagingDataForm record={selectedRecord} entityType={entityType} columns={columns} primaryKeys={primaryKeys} allData={allData} onSave={handleSave} onCancel={() => setIsFormOpen(false)} isEditing={isEditing} />}
       </DialogContent></Dialog>
       
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}><AlertDialogContent>
@@ -145,7 +131,7 @@ const FlatDataViewer = ({ entityType, data, sessionId, onRefetch }: { entityType
 
 
 // --- Specialized Grouped Data Viewer ---
-const GroupedDataViewer = ({ entityType, allData, sessionId, onRefetch }: { entityType: string; allData: any; sessionId: string, onRefetch: () => Promise<void> }) => {
+const GroupedDataViewer = ({ entityType, allData, sessionId, searchTerm, onRefetch }: { entityType: string; allData: any; sessionId: string; searchTerm: string; onRefetch: () => Promise<void> }) => {
     const { addRecord, updateRecord, deleteRecord, setRefetch } = useStagedData(sessionId, entityType);
     useEffect(() => { setRefetch(onRefetch) }, [onRefetch, setRefetch]);
 
@@ -153,9 +139,9 @@ const GroupedDataViewer = ({ entityType, allData, sessionId, onRefetch }: { enti
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
     const [selectedRecord, setSelectedRecord] = useState<StagingRecord | null>(null);
     const [isEditing, setIsEditing] = useState(false);
-    const [activeCourseCode, setActiveCourseCode] = useState<string | null>(null);
 
     const primaryKeys = useMemo(() => ENTITY_PRIMARY_KEYS[entityType] || [], [entityType]);
+
     const { groupedData, columns, childEntityName } = useMemo(() => {
         if (!allData) return { groupedData: [], columns: [], childEntityName: '' };
 
@@ -189,18 +175,27 @@ const GroupedDataViewer = ({ entityType, allData, sessionId, onRefetch }: { enti
             });
         }
         
-        return { groupedData: Array.from(result.values()), columns: relationColumns, childEntityName: name };
-    }, [allData, entityType]);
+        const lowercasedSearchTerm = searchTerm.toLowerCase();
+        const filteredResult = Array.from(result.values()).filter(({ course, relations }) => {
+            if (!searchTerm) return true;
+            if (course.code.toLowerCase().includes(lowercasedSearchTerm) || course.title.toLowerCase().includes(lowercasedSearchTerm)) {
+                return true;
+            }
+            return relations.some(rel => Object.values(rel).some(val => String(val).toLowerCase().includes(lowercasedSearchTerm)));
+        });
+
+        return { groupedData: filteredResult, columns: relationColumns, childEntityName: name };
+    }, [allData, entityType, searchTerm]);
 
     const handleCreate = (courseCode: string) => {
         const newRecordTemplate = primaryKeys.reduce((acc, pk) => ({ ...acc, [pk]: pk === 'course_code' ? courseCode : '' }), {});
         setSelectedRecord(newRecordTemplate as StagingRecord);
-        setActiveCourseCode(courseCode);
         setIsEditing(false);
         setIsFormOpen(true);
     };
     const handleEdit = (record: StagingRecord) => { setSelectedRecord(record); setIsEditing(true); setIsFormOpen(true); };
     const handleDelete = (record: StagingRecord) => { setSelectedRecord(record); setIsDeleteDialogOpen(true); };
+
     const handleConfirmDelete = async () => {
         if (selectedRecord) {
             const pks = primaryKeys.map(pk => selectedRecord[pk]);
@@ -211,8 +206,8 @@ const GroupedDataViewer = ({ entityType, allData, sessionId, onRefetch }: { enti
     };
     const handleSave = async (formData: StagingRecord) => {
         if (isEditing && selectedRecord) {
-            const pks = primaryKeys.map(pk => selectedRecord[pk]);
-            await updateRecord(pks, formData);
+            const oldPks = primaryKeys.map(pk => selectedRecord[pk]);
+            await updateRecord(oldPks, formData);
         } else {
             await addRecord(formData);
         }
@@ -224,46 +219,54 @@ const GroupedDataViewer = ({ entityType, allData, sessionId, onRefetch }: { enti
 
     return (
         <div className="mt-4">
-            <Accordion type="single" collapsible className="w-full">
-                {groupedData.map(({ course, relations }) => (
-                    <AccordionItem value={course.code} key={course.code}>
-                        <AccordionTrigger>
-                            <div className="flex items-center justify-between w-full pr-4">
-                                <div className="flex flex-col items-start">
-                                    <span className="font-semibold">{course.code} - {course.title}</span>
-                                    <span className="text-sm text-muted-foreground">{course.course_level} Level, {course.semester === 1 ? '1st' : '2nd'} Semester</span>
+            {groupedData.length === 0 ? (
+                <div className="flex justify-center items-center h-64 flex-col border-2 border-dashed rounded-lg">
+                    <Database className="h-8 w-8 text-muted-foreground mb-2"/><p className="text-muted-foreground">No matching data found for {formatHeader(entityType)}.</p>
+                </div>
+            ) : (
+                <Accordion type="single" collapsible className="w-full">
+                    {groupedData.map(({ course, relations }) => (
+                        <AccordionItem value={course.code} key={course.code}>
+                            <AccordionTrigger>
+                                <div className="flex items-center justify-between w-full pr-4">
+                                    <div className="flex flex-col items-start text-left">
+                                        <span className="font-semibold">{course.code} - {course.title}</span>
+                                        <span className="text-sm text-muted-foreground">{course.course_level} Level, {course.semester === 1 ? '1st' : '2nd'} Semester</span>
+                                    </div>
+                                    <Badge variant="secondary">{relations.length} {childEntityName}{relations.length !== 1 && 's'}</Badge>
                                 </div>
-                                <Badge variant="secondary">{relations.length} {childEntityName}{relations.length !== 1 && 's'}</Badge>
-                            </div>
-                        </AccordionTrigger>
-                        <AccordionContent>
-                            <div className="p-2 bg-muted/50 rounded-md">
-                                <div className="flex justify-end mb-2">
-                                    <Button size="sm" onClick={() => handleCreate(course.code)}><PlusCircle className="h-4 w-4 mr-2" />Add {childEntityName}</Button>
+                            </AccordionTrigger>
+                            <AccordionContent>
+                                <div className="p-2 bg-muted/50 rounded-md">
+                                    <div className="flex justify-end mb-2">
+                                        <Button size="sm" onClick={() => handleCreate(course.code)}><PlusCircle className="h-4 w-4 mr-2" />Add {childEntityName}</Button>
+                                    </div>
+                                    <div className="overflow-auto border rounded-lg">
+                                      <Table>
+                                          <TableHeader><TableRow>{columns.map(c => <TableHead key={c}>{formatHeader(c)}</TableHead>)}<TableHead>Actions</TableHead></TableRow></TableHeader>
+                                          <TableBody>
+                                              {relations.map((rel, idx) => (
+                                                  <TableRow key={idx}>
+                                                      {columns.map(col => <TableCell key={col}>{rel[col]}</TableCell>)}
+                                                      <TableCell><div className="flex items-center space-x-2">
+                                                          <Button variant="outline" size="icon" onClick={() => handleEdit(rel)}><Pencil className="h-4 w-4" /></Button>
+                                                          <Button variant="destructive" size="icon" onClick={() => handleDelete(rel)}><Trash2 className="h-4 w-4" /></Button>
+                                                      </div></TableCell>
+                                                  </TableRow>
+                                              ))}
+                                          </TableBody>
+                                      </Table>
+                                    </div>
                                 </div>
-                                <Table>
-                                    <TableHeader><TableRow>{columns.map(c => <TableHead key={c}>{formatHeader(c)}</TableHead>)}<TableHead>Actions</TableHead></TableRow></TableHeader>
-                                    <TableBody>
-                                        {relations.map((rel, idx) => (
-                                            <TableRow key={idx}>
-                                                {columns.map(col => <TableCell key={col}>{rel[col]}</TableCell>)}
-                                                <TableCell><div className="flex items-center space-x-2">
-                                                    <Button variant="outline" size="icon" onClick={() => handleEdit(rel)}><Pencil className="h-4 w-4" /></Button>
-                                                    <Button variant="destructive" size="icon" onClick={() => handleDelete(rel)}><Trash2 className="h-4 w-4" /></Button>
-                                                </div></TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            </div>
-                        </AccordionContent>
-                    </AccordionItem>
-                ))}
-            </Accordion>
+                            </AccordionContent>
+                        </AccordionItem>
+                    ))}
+                </Accordion>
+            )}
 
             <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}><DialogContent className="max-w-3xl">
-                <DialogHeader><DialogTitle>{isEditing ? `Edit ${childEntityName}` : `Add ${childEntityName} to ${activeCourseCode}`}</DialogTitle></DialogHeader>
-                {selectedRecord && <StagingDataForm record={selectedRecord} columns={formColumns} primaryKeys={primaryKeys} onSave={handleSave} onCancel={() => setIsFormOpen(false)} isEditing={isEditing} />}
+                <DialogHeader><DialogTitle>{isEditing ? `Edit ${childEntityName}` : `Add ${childEntityName}`}</DialogTitle></DialogHeader>
+                {selectedRecord && <StagingDataForm record={selectedRecord} entityType={entityType} columns={formColumns} primaryKeys={primaryKeys} allData={allData} onSave={handleSave} onCancel={() => setIsFormOpen(false)} isEditing={isEditing} />}
             </DialogContent></Dialog>
       
             <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}><AlertDialogContent>
@@ -275,13 +278,27 @@ const GroupedDataViewer = ({ entityType, allData, sessionId, onRefetch }: { enti
 };
 
 // --- Main Component ---
-interface StagingDataReviewTableProps {
-  sessionId: string | null;
-  uploadedEntityTypes: string[];
-}
-
-export function StagingDataReviewTable({ sessionId, uploadedEntityTypes }: StagingDataReviewTableProps) {
+export function StagingDataReviewTable({ sessionId, uploadedEntityTypes }: { sessionId: string | null; uploadedEntityTypes: string[]; }) {
   const { data: allData, isLoading, error, refetch } = useAllStagedData(sessionId);
+  const [activeTab, setActiveTab] = useState(uploadedEntityTypes[0] || '');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    if (uploadedEntityTypes.length > 0 && !uploadedEntityTypes.includes(activeTab)) {
+      setActiveTab(uploadedEntityTypes[0]);
+    }
+  }, [uploadedEntityTypes, activeTab]);
+
+  const filteredData = useMemo(() => {
+    if (!allData || !activeTab || !allData[activeTab]) return [];
+    if (!searchTerm) return allData[activeTab];
+    const lowercasedSearchTerm = searchTerm.toLowerCase();
+    return allData[activeTab].filter((record: StagingRecord) => 
+      Object.values(record).some(value => 
+        String(value).toLowerCase().includes(lowercasedSearchTerm)
+      )
+    );
+  }, [allData, activeTab, searchTerm]);
 
   if (!sessionId) return <Alert variant="destructive"><AlertDescription>A session ID is required to review data.</AlertDescription></Alert>;
   if (isLoading) return <div className="flex justify-center items-center h-64"><Loader2 className="h-8 w-8 animate-spin text-primary" /><p className="ml-2">Loading Staged Data...</p></div>;
@@ -297,18 +314,30 @@ export function StagingDataReviewTable({ sessionId, uploadedEntityTypes }: Stagi
   }
 
   return (
-    <Tabs defaultValue={uploadedEntityTypes[0]} className="w-full">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
       <TabsList className="flex-wrap h-auto">
         {uploadedEntityTypes.map(entityType => (
           <TabsTrigger key={entityType} value={entityType}>{formatHeader(entityType)}</TabsTrigger>
         ))}
       </TabsList>
+
+      <div className="relative my-4">
+        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <Input
+          type="search"
+          placeholder={`Search ${formatHeader(activeTab)}...`}
+          className="w-full rounded-lg bg-background pl-8"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+
       {uploadedEntityTypes.map(entityType => (
         <TabsContent key={entityType} value={entityType}>
           {GROUPED_ENTITIES.includes(entityType) ? (
-            <GroupedDataViewer entityType={entityType} sessionId={sessionId} allData={allData} onRefetch={refetch} />
+            <GroupedDataViewer entityType={entityType} sessionId={sessionId} allData={allData} searchTerm={searchTerm} onRefetch={refetch} />
           ) : (
-            <FlatDataViewer entityType={entityType} data={allData[entityType] || []} sessionId={sessionId} onRefetch={refetch} />
+            <FlatDataViewer entityType={entityType} data={filteredData} sessionId={sessionId} allData={allData} onRefetch={refetch} />
           )}
         </TabsContent>
       ))}

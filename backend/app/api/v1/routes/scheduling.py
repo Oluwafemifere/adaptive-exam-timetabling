@@ -3,7 +3,7 @@
 API endpoints for scheduling-related operations including data retrieval,
 timetable generation, and scheduling configuration management.
 """
-from typing import List, Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel

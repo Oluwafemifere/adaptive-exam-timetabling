@@ -19,11 +19,16 @@ export function Login() {
 
   // --- State for the registration forms ---
   const [registrationType, setRegistrationType] = useState<'student' | 'staff'>('student');
-  const [email, setEmail] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [matricNumber, setMatricNumber] = useState('');
-  const [staffNumber, setStaffNumber] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
+
+  // --- FIX: Separate state for each registration form to prevent data leakage between tabs ---
+  const [studentEmail, setStudentEmail] = useState('');
+  const [studentPassword, setStudentPassword] = useState('');
+  const [matricNumber, setMatricNumber] = useState('');
+
+  const [staffEmail, setStaffEmail] = useState('');
+  const [staffPassword, setStaffPassword] = useState('');
+  const [staffNumber, setStaffNumber] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,9 +36,12 @@ export function Login() {
   };
 
   const resetForm = () => {
-    setEmail('');
-    setNewPassword('');
+    // FIX: Clear all registration form fields
+    setStudentEmail('');
+    setStudentPassword('');
     setMatricNumber('');
+    setStaffEmail('');
+    setStaffPassword('');
     setStaffNumber('');
     setRegistrationType('student');
   };
@@ -43,17 +51,21 @@ export function Login() {
     try {
       let response;
       if (registrationType === 'student') {
-        if (!matricNumber || !email || !newPassword) {
+        // FIX: Use student-specific state and add check to stop loading on validation error
+        if (!matricNumber || !studentEmail || !studentPassword) {
           toast.error('Please fill out all fields for student registration.');
+          setIsRegistering(false);
           return;
         }
-        response = await api.selfRegisterStudent({ matric_number: matricNumber, email, password: newPassword });
+        response = await api.selfRegisterStudent({ matric_number: matricNumber, email: studentEmail, password: studentPassword });
       } else {
-        if (!staffNumber || !email || !newPassword) {
+        // FIX: Use staff-specific state and add check to stop loading on validation error
+        if (!staffNumber || !staffEmail || !staffPassword) {
           toast.error('Please fill out all fields for staff registration.');
+          setIsRegistering(false);
           return;
         }
-        response = await api.selfRegisterStaff({ staff_number: staffNumber, email, password: newPassword });
+        response = await api.selfRegisterStaff({ staff_number: staffNumber, email: staffEmail, password: staffPassword });
       }
 
       if (response.data.success) {
@@ -125,11 +137,13 @@ export function Login() {
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="student-email">Email</Label>
-                        <Input id="student-email" type="email" placeholder="your.email@university.edu" value={email} onChange={e => setEmail(e.target.value)} />
+                        {/* FIX: Use student-specific email state */}
+                        <Input id="student-email" type="email" placeholder="your.email@university.edu" value={studentEmail} onChange={e => setStudentEmail(e.target.value)} />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="student-password">Password</Label>
-                        <Input id="student-password" type="password" placeholder="Choose a secure password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+                        {/* FIX: Use student-specific password state */}
+                        <Input id="student-password" type="password" placeholder="Choose a secure password" value={studentPassword} onChange={e => setStudentPassword(e.target.value)} />
                       </div>
                     </div>
                   </TabsContent>
@@ -143,11 +157,13 @@ export function Login() {
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="staff-email">Email</Label>
-                        <Input id="staff-email" type="email" placeholder="your.email@university.edu" value={email} onChange={e => setEmail(e.target.value)} />
+                        {/* FIX: Use staff-specific email state */}
+                        <Input id="staff-email" type="email" placeholder="your.email@university.edu" value={staffEmail} onChange={e => setStaffEmail(e.target.value)} />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="staff-password">Password</Label>
-                        <Input id="staff-password" type="password" placeholder="Choose a secure password" value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+                        {/* FIX: Use staff-specific password state */}
+                        <Input id="staff-password" type="password" placeholder="Choose a secure password" value={staffPassword} onChange={e => setStaffPassword(e.target.value)} />
                       </div>
                     </div>
                   </TabsContent>

@@ -1,7 +1,7 @@
 # backend/app/schemas/dashboard.py
 """Pydantic schemas for dashboard-specific data structures."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
 
 
@@ -24,8 +24,16 @@ class ConflictHotspot(BaseModel):
 class TopBottleneck(BaseModel):
     """Defines the structure for a single bottleneck item."""
 
-    # --- FIX: Added the 'type' field to match frontend expectations ---
     type: str
-    item: str
-    reason: str
-    issue_count: int
+    # FIX: Renamed fields to match the database function's actual JSON output.
+    name: str = Field(..., alias="item")
+    issue: str = Field(..., alias="reason")
+    value: int = Field(..., alias="issue_count")
+
+
+class DashboardAnalytics(BaseModel):
+    """High-level analytics data for the dashboard."""
+
+    kpis: DashboardKpis
+    conflict_hotspots: List[ConflictHotspot]
+    top_bottlenecks: List[TopBottleneck]

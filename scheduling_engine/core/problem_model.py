@@ -614,37 +614,32 @@ class ExamSchedulingProblem:
                 # --- END OF MODIFICATION ---
 
                 custom_params_data = rule.get("custom_parameters") or {}
-                params = (
-                    [
-                        ParameterDefinition(
-                            key=p["key"],
-                            value=p.get("value"),
-                            type=p.get("type", "any"),
-                            default=p.get("default"),
-                            description=p.get("description"),
-                            options=p.get("options"),
-                            validation=p.get("validation", {}),
+                params = []
+                if isinstance(custom_params_data, dict):
+                    for key, value in custom_params_data.items():
+                        # Attempt to normalize values by converting stringified numbers
+                        if isinstance(value, str):
+                            try:
+                                value = int(value)
+                            except ValueError:
+                                try:
+                                    value = float(value)
+                                except ValueError:
+                                    pass  # Keep as string
+
+                        params.append(
+                            ParameterDefinition(
+                                key=key,
+                                value=value,
+                                default=None,
+                                type=str(type(value).__name__),
+                                description=f"Parameter for {key}",
+                            )
                         )
-                        for p in (
-                            custom_params_data
-                            if isinstance(custom_params_data, list)
-                            else []
-                        )
-                    ]
-                    if isinstance(custom_params_data, list)
-                    else [
-                        ParameterDefinition(
-                            key=key,
-                            value=value,
-                            type=str(type(value).__name__),
-                            default=None,
-                            description=f"Parameter for {key}",
-                            options=None,
-                            validation={},
-                        )
-                        for key, value in custom_params_data.items()
-                    ]
-                )
+                else:
+                    logger.warning(
+                        f"Unsupported format for custom_parameters in rule '{rule.get('code')}'. Expected a dictionary."
+                    )
 
                 definition = ConstraintDefinition(
                     id=rule_code,

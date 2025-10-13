@@ -61,7 +61,6 @@ class TimetableVersion(Base, TimestampMixin):
         foreign_keys="VersionDependency.depends_on_version_id",
         back_populates="depends_on_version",
     )
-    # FIXED: Explicitly define the foreign key for this relationship
     scenario: Mapped[Optional["TimetableScenario"]] = relationship(
         foreign_keys=[scenario_id], back_populates="versions"
     )
@@ -71,6 +70,12 @@ class TimetableVersion(Base, TimestampMixin):
     approver: Mapped[Optional["User"]] = relationship()
     conflicts: Mapped[List["TimetableConflict"]] = relationship(
         back_populates="version", cascade="all, delete-orphan"
+    )
+
+    # ADDED: This new relationship completes the link from TimetableScenario's parent_version
+    scenarios_where_parent: Mapped[List["TimetableScenario"]] = relationship(
+        foreign_keys="TimetableScenario.parent_version_id",
+        back_populates="parent_version",
     )
 
     __table_args__ = (

@@ -21,4 +21,6 @@ class ChangeRequestCreate(BaseModel):
 
 
 class StaffAvailabilityUpdate(BaseModel):
+    # FIX: Added session_id, which is required by the backend service.
+    session_id: UUID
     availability_data: Dict[str, Any]

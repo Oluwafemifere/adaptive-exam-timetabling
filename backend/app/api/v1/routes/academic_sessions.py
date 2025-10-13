@@ -36,11 +36,22 @@ async def create_session(
         p_end_date=session_in.end_date,
         p_timeslot_template_id=session_in.timeslot_template_id,
     )
-    if not result or not result.get("id"):
+    if not result or not result.get("success"):
         raise HTTPException(
-            status_code=400, detail="Failed to create academic session."
+            status_code=400,
+            detail=result.get("message", "Failed to create academic session."),
         )
-    return result
+
+    # Fetch the newly created session to return the full object
+    retrieval_service = DataRetrievalService(db)
+    new_session = await retrieval_service.get_entity_by_id(
+        "academic_sessions", result["session_id"]
+    )
+    if not new_session:
+        raise HTTPException(
+            status_code=404, detail="Could not retrieve session after creation."
+        )
+    return new_session
 
 
 @router.put("/{session_id}", response_model=AcademicSessionRead)
@@ -51,18 +62,56 @@ async def update_session(
     user: User = Depends(current_user),
 ):
     """Update an existing academic session."""
-    service = SystemService(
-        db
-    )  # Assuming an update_academic_session method exists on SystemService
-    # This assumes you would add the corresponding service method.
-    # For now, this is a placeholder for the API structure.
-    # result = await service.update_academic_session(session_id, session_in.model_dump(exclude_unset=True))
-    # if not result:
-    #     raise HTTPException(status_code=404, detail="Academic session not found or update failed.")
-    # return result
-    raise HTTPException(
-        status_code=501, detail="Update functionality not yet implemented in service."
+    service = SystemService(db)
+    # --- START OF FIX ---
+    # The user_id is now required by the service method to log the audit trail.
+    result = await service.update_academic_session(
+        session_id=session_id,
+        update_data=session_in.model_dump(exclude_unset=True),
+        user_id=user.id,
     )
+    # --- END OF FIX ---
+    if not result:
+        raise HTTPException(
+            status_code=404, detail="Academic session not found or update failed."
+        )
+
+    # After update, fetch the updated record to return it
+    retrieval_service = DataRetrievalService(db)
+    updated_session = await retrieval_service.get_entity_by_id(
+        "academic_sessions", session_id
+    )
+    if not updated_session:
+        raise HTTPException(
+            status_code=404, detail="Academic session not found after update."
+        )
+    return updated_session
+
+
+@router.delete(
+    "/{session_id}",
+    response_model=GenericResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Archive an Academic Session",
+)
+async def archive_session(
+    session_id: UUID,
+    db: AsyncSession = Depends(db_session),
+    user: User = Depends(current_user),
+):
+    """
+    Archive (soft-delete) an academic session.
+    """
+    service = SystemService(db)
+    result = await service.archive_academic_session(
+        session_id=session_id, user_id=user.id
+    )
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("message", "Failed to archive session."),
+        )
+    return result
 
 
 @router.get("/", response_model=List[AcademicSessionRead])

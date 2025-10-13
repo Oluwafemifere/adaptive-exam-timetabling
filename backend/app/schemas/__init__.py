@@ -42,11 +42,7 @@ from .admin import (
     UploadSessionCreate,
 )
 
-from .dashboard import (
-    DashboardKpis,
-    ConflictHotspot,
-    TopBottleneck,
-)
+from .dashboard import DashboardKpis, ConflictHotspot, TopBottleneck, DashboardAnalytics
 
 # NEW: Import and export configuration schemas
 from .configuration import (
@@ -182,6 +178,7 @@ __all__ = [
     "DashboardKpis",
     "ConflictHotspot",
     "TopBottleneck",
+    "DashboardAnalytics",
     # configuration
     "SystemConfigListItem",
     "RuleSetting",

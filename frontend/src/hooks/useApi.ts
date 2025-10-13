@@ -29,17 +29,19 @@ return;
 
 setIsLoading(true);
 try {
-// Fetch all dashboard data concurrently
-const [kpisRes, hotspotsRes, bottlenecksRes, activityRes] = await Promise.all([
-api.getDashboardKpis(activeSessionId),
-api.getConflictHotspots(activeSessionId),
-api.getTopBottlenecks(activeSessionId),
-api.getAuditHistory()
+// --- UPDATED: Fetch dashboard and activity data concurrently ---
+const [analyticsRes, activityRes] = await Promise.all([
+  api.getDashboardAnalytics(activeSessionId),
+  api.getAuditHistory()
 ]);
 
-if (kpisRes.data) setDashboardKpis(kpisRes.data);
-if (hotspotsRes.data) setConflictHotspots(hotspotsRes.data);
-if (bottlenecksRes.data) setTopBottlenecks(bottlenecksRes.data);
+// --- UPDATED: Populate store from single analytics response ---
+if (analyticsRes.data) {
+  setDashboardKpis(analyticsRes.data.kpis);
+  setConflictHotspots(analyticsRes.data.conflict_hotspots);
+  setTopBottlenecks(analyticsRes.data.top_bottlenecks);
+}
+
 if (activityRes.data?.logs) {
   const mappedLogs: HistoryEntry[] = activityRes.data.logs.map((log: any) => ({
       id: log.id,
@@ -251,6 +253,10 @@ const schedule = (portalData.schedule || []).map((exam: any): StudentExam => ({
               room: exam.rooms?.[0]?.code || 'N/A',
               building: exam.rooms?.[0]?.building_name || 'N/A',
               duration: exam.duration_minutes,
+              instructor: exam.instructor_name || 'N/A',
+              invigilator: (exam.invigilators || []).map((i: { name: string; }) => i.name).join(', ') || 'N/A',
+              expectedStudents: exam.student_count || 0,
+              roomCapacity: exam.rooms?.[0]?.exam_capacity || 0,
           }));
           
           const conflictReports = (portalData.conflict_reports || []).map((report: any) => {
@@ -316,6 +322,10 @@ const mapToAssignment = (exam: any, role: StaffAssignment['role']): StaffAssignm
               building: exam.rooms?.[0]?.building_name || 'N/A',
               role,
               status: 'assigned',
+              expectedStudents: exam.student_count || 0,
+              roomCapacity: exam.rooms?.[0]?.exam_capacity || 0,
+              instructor: exam.instructor_name || 'N/A',
+              invigilator: (exam.invigilators || []).map((i: { name: string; }) => i.name).join(', ') || 'N/A',
           });
 
           const instructorSchedule = (portalData.instructor_schedule || []).map((exam: any) => mapToAssignment(exam, 'instructor'));
@@ -386,29 +396,52 @@ fetchData(initialFilters);
 return { isLoading, error, refetch: fetchData };
 }
 
-export function useFileUpload() {
-const [isPending, setIsPending] = useState(false);
+export function useSeedingStatus(sessionId: string | null) {
+  const [data, setData] = useState<any | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
 
-// --- REWRITTEN FOR BATCH UPLOADS ---
+  const fetchStatus = useCallback(async () => {
+    if (!sessionId) return;
+    setError(null);
+    try {
+      // The API endpoint for seeding status already exists, we just need to call it.
+      const response = await api.getSeedingStatus(sessionId);
+      if (response.data.success) {
+        setData(response.data.data);
+      } else {
+         throw new Error(response.data.message || 'Failed to fetch seeding status.');
+      }
+    } catch (err: any) {
+      // Don't show a toast on every poll failure, just log it.
+      console.error("Polling for seeding status failed:", err.message);
+      setError(err);
+    }
+  }, [sessionId]);
+
+  return { data, isLoading, error, refetch: fetchStatus };
+}
+export function useFileUpload() {
+  const [isPending, setIsPending] = useState(false);
+
   const mutateAsync = async ({ files, academicSessionId }: { files: File[]; academicSessionId: string }) => {
       setIsPending(true);
       try {
           const response = await api.uploadFilesBatch(files, academicSessionId);
           const resultData = response.data.data;
           
-          // Display summary toast
-          const successCount = resultData.staged_files.length;
+          const successCount = resultData.dispatched_tasks.length;
           const failedCount = resultData.failed_files.length;
           
           if (failedCount > 0) {
-              toast.warning(`${successCount} files processed, ${failedCount} failed.`, {
+              toast.warning(`${successCount} files dispatched, ${failedCount} failed.`, {
                   description: "Check the upload list for details on failed files."
               });
           } else {
-              toast.success("All files uploaded and processed successfully!");
+              toast.success("All files dispatched for processing!");
           }
           
-          return resultData; // Return the detailed results
+          return resultData;
       } catch (error: any) {
           const detail = error.response?.data?.detail || 'Batch upload failed.';
           toast.error(`Upload failed: ${detail}`);
@@ -418,7 +451,6 @@ const [isPending, setIsPending] = useState(false);
       }
   };
   return { mutateAsync, isPending };
-
 }
 
 // --- SESSION SETUP HOOKS ---
@@ -452,13 +484,9 @@ const fetchSummary = useCallback(async () => {
       setError(null);
       try {
           const response = await api.getSessionSummary(sessionId);
-          // FIX: The API might return an empty body while files are still being processed.
-          // This check ensures we only set data when the response is valid,
-          // preventing crashes and correctly showing the loading state.
           if (response.data && Object.keys(response.data).length > 0) {
             setData(response.data);
           } else {
-            // Silently wait for data, or you could set a specific "processing" state
             console.log("Summary data not ready yet, will refetch.");
           }
       } catch (err: any) {
@@ -483,7 +511,6 @@ const response = await api.processStagedData(sessionId);
 return response.data;
 } catch (error: any) {
 const detail = error.response?.data?.detail || 'Failed to process session data.';
-// FIX: Corrected template literal for the error message.
 toast.error(`Processing Failed: ${detail}`);
 throw new Error(detail);
 } finally {
@@ -507,9 +534,6 @@ setIsLoading(true);
 setError(null);
 try {
 const response = await api.getAllStagedData(sessionId);
-// FIX: API responses are wrapped in a generic object with a 'data' property.
-// This change accesses the nested data object, which contains the actual
-// staged data lists (e.g., buildings, rooms).
 setData(response.data.data || {});
 } catch (err: any) {
 const detail = err.response?.data?.detail || 'Failed to fetch staged data.';
@@ -535,20 +559,40 @@ const [isLoading, setIsLoading] = useState(false); // Only for mutation operatio
 const [refetcher, setRefetcher] = useState<() => Promise<void>>();
 const setRefetch = (refetchFn: () => Promise<void>) => setRefetcher(() => refetchFn);
 
+// --- FIX: Correctly generates singular, camelCased API function names ---
+const getApiMethodName = (action: 'add' | 'update' | 'delete', entityType: string): string => {
+    let singularBase = entityType;
+    if (entityType === 'faculties') {
+        singularBase = 'faculty';
+    } else if (entityType.endsWith('s')) {
+        // Handles 'courses' -> 'course', 'departments' -> 'department', etc.
+        singularBase = entityType.slice(0, -1);
+    }
+    // 'staff' is already singular, no change needed.
+
+    // Now camelCase it
+    const camelCaseBase = singularBase.replace(/_([a-z])/g, g => g[1].toUpperCase());
+    const capitalizedBase = camelCaseBase.charAt(0).toUpperCase() + camelCaseBase.slice(1);
+    
+    // The backend uses 'addStaged...', 'updateStaged...', 'deleteStaged...'
+    return `${action}Staged${capitalizedBase}`;
+};
+
+
 // ADD a new record
 const addRecord = async (payload: any): Promise<boolean> => {
 setIsLoading(true);
 try {
-const entityName = entityType.replace(/_([a-z])/g, g => g[1].toUpperCase());
-const apiFunction = (api as any)[`addStaged${entityName.charAt(0).toUpperCase() + entityName.slice(1)}`];
-if (!apiFunction) throw new Error(`API function for adding ${entityType} not found.`);
+      const functionName = getApiMethodName('add', entityType);
+      const apiFunction = (api as any)[functionName];
+      if (!apiFunction) throw new Error(`API function '${functionName}' for adding ${entityType} not found.`);
 
-await apiFunction(sessionId, payload);
+      await apiFunction(sessionId, payload);
       toast.success("Record added successfully.");
       if (refetcher) await refetcher();
       return true;
   } catch (error: any) {
-      const detail = error.response?.data?.detail || "Failed to add record.";
+      const detail = error.response?.data?.detail || `Failed to add record: ${error.message}`;
       toast.error(detail);
       return false;
   } finally {
@@ -561,16 +605,16 @@ await apiFunction(sessionId, payload);
 const updateRecord = async (pks: (string|number)[], payload: any): Promise<boolean> => {
 setIsLoading(true);
 try {
-const entityName = entityType.replace(/_([a-z])/g, g => g[1].toUpperCase());
-const apiFunction = (api as any)[`updateStaged${entityName.charAt(0).toUpperCase() + entityName.slice(1)}`];
-if (!apiFunction) throw new Error(`API function for updating ${entityType} not found.`);
+      const functionName = getApiMethodName('update', entityType);
+      const apiFunction = (api as any)[functionName];
+      if (!apiFunction) throw new Error(`API function '${functionName}' for updating ${entityType} not found.`);
 
-await apiFunction(sessionId, ...pks, payload);
-    toast.success("Record updated successfully.");
-    if (refetcher) await refetcher();
-    return true;
+      await apiFunction(sessionId, ...pks, payload);
+      toast.success("Record updated successfully.");
+      if (refetcher) await refetcher();
+      return true;
   } catch (error: any) {
-      const detail = error.response?.data?.detail || "Failed to update record.";
+      const detail = error.response?.data?.detail || `Failed to update record: ${error.message}`;
       toast.error(detail);
       return false;
   } finally {
@@ -583,16 +627,16 @@ await apiFunction(sessionId, ...pks, payload);
 const deleteRecord = async (pks: (string|number)[]): Promise<boolean> => {
 setIsLoading(true);
 try {
-const entityName = entityType.replace(/_([a-z])/g, g => g[1].toUpperCase());
-const apiFunction = (api as any)[`deleteStaged${entityName.charAt(0).toUpperCase() + entityName.slice(1)}`];
-if (!apiFunction) throw new Error(`API function for deleting ${entityType} not found.`);
+      const functionName = getApiMethodName('delete', entityType);
+      const apiFunction = (api as any)[functionName];
+      if (!apiFunction) throw new Error(`API function '${functionName}' for deleting ${entityType} not found.`);
 
-await apiFunction(sessionId, ...pks);
-    toast.success("Record deleted successfully.");
-    if (refetcher) await refetcher();
-    return true;
+      await apiFunction(sessionId, ...pks);
+      toast.success("Record deleted successfully.");
+      if (refetcher) await refetcher();
+      return true;
   } catch (error: any) {
-      const detail = error.response?.data?.detail || "Failed to delete record.";
+      const detail = error.response?.data?.detail || `Failed to delete record: ${error.message}`;
       toast.error(detail);
       return false;
   } finally {

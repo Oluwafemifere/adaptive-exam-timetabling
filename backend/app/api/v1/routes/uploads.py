@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....api.deps import db_session, current_user
 from ....models.users import User
-from ....services.uploads.file_upload_service import FileUploadService
+from ....services.seeding.file_upload_service import FileUploadService
 from ....services.seeding.data_seeding_service import DataSeedingService
 from ....schemas.system import GenericResponse
 
@@ -81,7 +81,7 @@ async def upload_data_files(
 
     # Dispatch tasks using the refactored service
     upload_service = FileUploadService(db)
-    dispatch_results = await upload_service.handle_file_uploads_and_dispatch_tasks(
+    dispatch_results = await upload_service.handle_file_uploads_and_dispatch(
         academic_session_id=academic_session_id,
         data_seeding_session_id=data_seeding_session_id,
         user_id=user.id,

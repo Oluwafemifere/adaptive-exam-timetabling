@@ -29,7 +29,6 @@ async def get_portal_data(
     Retrieve all necessary data for a specific user's portal, based on the
     currently active academic session.
     """
-    # Authorization: Admins can see anyone's portal, users can only see their own.
     if not user.is_superuser and user.id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -39,13 +38,11 @@ async def get_portal_data(
     service = DataRetrievalService(db)
     portal_data = await service.get_portal_data(user_id)
 
-    # Handle None response
     if portal_data is None:
         raise HTTPException(
             status_code=404, detail=f"Portal data not found for user {user_id}"
         )
 
-    # Handle error case (portal_data is a dict with "error" key)
     if isinstance(portal_data, dict) and portal_data.get("error"):
         raise HTTPException(
             status_code=404,
@@ -65,7 +62,7 @@ async def submit_student_conflict_report(
 ):
     """Endpoint for students to submit an exam conflict report."""
     service = InteractionService(db)
-    result = await service.create_student_conflict_report(
+    result = await service.create_conflict_report(
         user.id, report_in.exam_id, report_in.description
     )
     if not result.get("success"):
@@ -102,7 +99,7 @@ async def submit_staff_change_request(
 ):
     """Endpoint for staff to request a change to their invigilation assignment."""
     service = InteractionService(db)
-    result = await service.create_staff_assignment_change_request(
+    result = await service.create_assignment_change_request(
         user.id, request_in.assignment_id, request_in.reason, request_in.description
     )
     if not result.get("success"):
@@ -137,8 +134,11 @@ async def update_staff_availability(
 ):
     """Endpoint for staff to update their availability preferences."""
     service = InteractionService(db)
+    # FIX: Pass session_id and availability_data correctly to the service.
     result = await service.update_staff_availability(
-        user.id, update_in.availability_data
+        user_id=user.id,
+        session_id=update_in.session_id,
+        availability_data=update_in.availability_data,
     )
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error"))

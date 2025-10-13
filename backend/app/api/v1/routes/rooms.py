@@ -11,9 +11,7 @@ from ....services.data_management.core_data_service import CoreDataService
 from ....services.data_retrieval import DataRetrievalService
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Import the new, complete schemas from the correct location
 from ....schemas.infrastructure import RoomCreate, RoomRead, RoomUpdate
-
 
 router = APIRouter()
 
@@ -21,12 +19,14 @@ router = APIRouter()
 @router.post("/", response_model=RoomRead, status_code=status.HTTP_201_CREATED)
 async def create_room(
     room_in: RoomCreate,
+    session_id: UUID,  # FIX: Added session_id as a required parameter
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
     """Create a new room/venue."""
     service = CoreDataService(db)
-    result = await service.create_room(room_in.model_dump(), user.id)
+    # FIX: Pass session_id to the service method
+    result = await service.create_room(room_in.model_dump(), user.id, session_id)
     if not result.get("success"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -39,6 +39,7 @@ async def create_room(
 
 @router.get("/", response_model=List[RoomRead])
 async def list_rooms(
+    session_id: UUID,  # FIX: Added session_id as a required parameter
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(db_session),
@@ -46,8 +47,9 @@ async def list_rooms(
 ):
     """Retrieve a paginated list of rooms."""
     service = DataRetrievalService(db)
+    # FIX: Pass session_id to the service method
     result = await service.get_paginated_entities(
-        "rooms", page=page, page_size=page_size
+        "rooms", page=page, page_size=page_size, session_id=session_id
     )
     assert result
     return result.get("data", [])
@@ -73,13 +75,15 @@ async def get_room(
 async def update_room(
     room_id: UUID,
     room_in: RoomUpdate,
+    session_id: UUID,  # FIX: Added session_id as a required parameter
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
     """Update an existing room."""
     service = CoreDataService(db)
+    # FIX: Pass session_id to the service method
     result = await service.update_room(
-        room_id, room_in.model_dump(exclude_unset=True), user.id
+        room_id, room_in.model_dump(exclude_unset=True), user.id, session_id
     )
     if not result.get("success"):
         raise HTTPException(
@@ -94,12 +98,14 @@ async def update_room(
 @router.delete("/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_room(
     room_id: UUID,
+    session_id: UUID,  # FIX: Added session_id as a required parameter
     db: AsyncSession = Depends(db_session),
     user: User = Depends(current_user),
 ):
     """Delete a room."""
     service = CoreDataService(db)
-    result = await service.delete_room(room_id, user.id)
+    # FIX: Pass session_id to the service method
+    result = await service.delete_room(room_id, user.id, session_id)
     if not result.get("success"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

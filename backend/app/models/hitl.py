@@ -36,14 +36,13 @@ class TimetableScenario(Base):
 
     creator: Mapped["User"] = relationship()
 
-    # FIXED: Explicitly define the foreign key for this relationship
     versions: Mapped[List["TimetableVersion"]] = relationship(
         foreign_keys="TimetableVersion.scenario_id", back_populates="scenario"
     )
 
-    # ADDED: The missing relationship for parent_version_id
+    # FIXED: The relationship now correctly back-populates the new one in TimetableVersion
     parent_version: Mapped[Optional["TimetableVersion"]] = relationship(
-        foreign_keys=[parent_version_id]
+        foreign_keys=[parent_version_id], back_populates="scenarios_where_parent"
     )
 
     locks: Mapped[List["TimetableLock"]] = relationship(back_populates="scenario")

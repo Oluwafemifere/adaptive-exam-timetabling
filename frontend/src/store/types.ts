@@ -153,6 +153,8 @@ export interface PaginatedUserResponse {
   page: number;
   page_size: number;
   items: UserManagementRecord[];
+  total_active?: number;
+  total_admins?: number;
 }
 export interface StudentSelfRegisterPayload {
   matric_number: string;
@@ -194,6 +196,10 @@ endTime: string;
 room: string;
 building: string;
 duration: number;
+instructor: string;
+invigilator: string;
+expectedStudents: number;
+roomCapacity: number;
 }
 
 export interface StaffAssignment {
@@ -208,6 +214,10 @@ room: string;
 building: string;
 role: 'instructor' | 'invigilator' | 'lead-invigilator';
 status: 'assigned' | 'change-requested' | 'confirmed';
+expectedStudents: number;
+roomCapacity: number;
+instructor: string;
+invigilator: string;
 }
 
 export interface StaffSchedules {
@@ -468,6 +478,7 @@ export interface JobSummary {
   is_published: boolean;
 }
 export type StagingRecord = {
+  id?: string;
   session_id: string;
   [key: string]: any; // Allows for other properties like 'code', 'matric_number', etc.
 };
@@ -488,12 +499,21 @@ export interface StagingCourseDepartmentCreate {
   course_code: string;
   department_code: string;
 }
+// --- FIX: Added missing type ---
+export interface StagingCourseDepartmentUpdate {
+  department_code?: string;
+}
 
 // CourseFaculties
 export interface StagingCourseFacultyCreate {
   course_code: string;
   faculty_code: string;
 }
+// --- FIX: Added missing type ---
+export interface StagingCourseFacultyUpdate {
+  faculty_code?: string;
+}
+
 
 // CourseInstructors
 export interface StagingCourseInstructorCreate {
