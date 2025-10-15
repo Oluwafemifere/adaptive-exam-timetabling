@@ -3,7 +3,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
   ChevronRight, ChevronLeft, Calendar, Upload, FileText, CheckCircle, AlertTriangle, Clock,
   Users, MapPin, Loader2, Building, GraduationCap, Library, ClipboardList, UserCheck,
-  CalendarX, Database, ShieldCheck, XCircle, FolderUp, RefreshCw, PlusCircle, Edit, Trash2, BookOpen
+  CalendarX, Database, ShieldCheck, XCircle, FolderUp, RefreshCw, PlusCircle, Edit, Trash2, BookOpen, UserPlus
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -22,14 +22,14 @@ import { toast } from 'sonner';
 import { useCreateSession, useFileUpload, useSessionSummary, useProcessStagedData, useSeedingStatus, useSessionManager } from '../hooks/useApi';
 import { useAppStore } from '../store';
 import { StagingDataReviewTable } from '../components/StagingDataReviewTable';
-import { SessionDataForm } from '../components/SessionDataForm'; // New component import
+import { SessionDataForm } from '../components/SessionDataForm';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion';
 
 // --- Type Definitions ---
 interface TimeSlot { start_time: string; end_time: string; name: string; }
 export interface SessionSetupCreate { session_name: string; start_date: string; end_date: string; slot_generation_mode: string; time_slots: TimeSlot[]; }
 export interface SessionSetupSummary { session_details: Record<string, any>; data_summary: Record<string, any>; validation_results: { warnings: string[]; errors: string[];[key: string]: any; }; }
 
-// --- Status-to-Style Mapping Object ---
 const statusStyles: Record<string, { bg: string; text: string; icon: React.ReactNode }> = {
   success: { bg: "bg-green-100", text: "text-green-600", icon: <CheckCircle className="h-4 w-4 text-green-500" /> },
   failed: { bg: "bg-red-100", text: "text-red-600", icon: <XCircle className="h-4 w-4 text-red-500" /> },
@@ -37,13 +37,55 @@ const statusStyles: Record<string, { bg: string; text: string; icon: React.React
   processing: { bg: "bg-blue-100", text: "text-blue-600", icon: <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> }
 };
 
-// --- NEW Read-Only Data Table Component ---
+type EditableEntityType = 'courses' | 'buildings' | 'rooms' | 'departments' | 'staff' | 'exams';
+
+// --- UPDATED: Viewer now accepts a Map for efficient lookups ---
+const CourseRegistrationsViewer = ({ courses, studentMap }: { courses: any[], studentMap: Map<string, any> }) => {
+    if (!courses || courses.length === 0) {
+        return <div className="text-center py-8 text-muted-foreground">No courses with student registrations found.</div>;
+    }
+
+    return (
+        <Accordion type="single" collapsible className="w-full">
+            {courses.map(course => (
+                <AccordionItem value={course.id} key={course.id}>
+                    <AccordionTrigger>
+                        <div className="flex items-center justify-between w-full pr-4">
+                            <div className="flex flex-col items-start text-left">
+                                <span className="font-semibold">{course.code} - {course.title}</span>
+                            </div>
+                            <Badge variant="secondary">{course.student_ids?.length || 0} Students</Badge>
+                        </div>
+                    </AccordionTrigger>
+                    <AccordionContent>
+                        <div className="p-2 bg-muted/50 rounded-md">
+                            {course.student_ids && course.student_ids.length > 0 ? (
+                                <ul className="list-disc list-inside space-y-1">
+                                    {course.student_ids.map((studentId: string) => {
+                                        const student = studentMap.get(studentId);
+                                        return (
+                                            <li key={studentId} className="text-sm">
+                                                {student ? `${student.first_name} ${student.last_name} (${student.matric_number})` : `Unknown Student (${studentId.substring(0,8)})`}
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            ) : (
+                                <p className="text-sm text-muted-foreground">No students are registered for this course.</p>
+                            )}
+                        </div>
+                    </AccordionContent>
+                </AccordionItem>
+            ))}
+        </Accordion>
+    );
+};
+
+
 const ReadOnlyDataTable = ({ entityType, data }: { entityType: string; data: any[] }) => {
     const columns = useMemo(() => {
         if (!data || data.length === 0) return [];
-        const allKeys = Object.keys(data[0]);
-        // Filter out ID fields for a cleaner view
-        return allKeys.filter(key => !key.endsWith('_id') && key.toLowerCase() !== 'id');
+        return Object.keys(data[0]).filter(key => !key.endsWith('_id') && key.toLowerCase() !== 'id');
     }, [data]);
 
     if (!data || data.length === 0) {
@@ -53,28 +95,17 @@ const ReadOnlyDataTable = ({ entityType, data }: { entityType: string; data: any
     return (
         <div className="border rounded-lg overflow-auto max-h-[60vh]">
             <Table>
-                <TableHeader className="sticky top-0 bg-background z-10">
-                    <TableRow>
-                        {columns.map(col => <TableHead key={col}>{formatHeader(col)}</TableHead>)}
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {data.map((row, index) => (
-                        <TableRow key={row.id || index}>
-                            {columns.map(col => <TableCell key={col}>{String(row[col] ?? '')}</TableCell>)}
-                        </TableRow>
-                    ))}
-                </TableBody>
+                <TableHeader className="sticky top-0 bg-background z-10"><TableRow>{columns.map(col => <TableHead key={col}>{formatHeader(col)}</TableHead>)}</TableRow></TableHeader>
+                <TableBody>{data.map((row, index) => <TableRow key={row.id || index}>{columns.map(col => <TableCell key={col}>{String(row[col] ?? '')}</TableCell>)}</TableRow>)}</TableBody>
             </Table>
         </div>
     );
 };
 
-// --- MODIFIED & ENHANCED Entity Management Component for LIVE Data ---
 const LiveEntityDataTable = ({ entityType, data, dataGraph, onAdd, onEdit, onDelete }: {
-  entityType: 'courses' | 'buildings' | 'rooms';
+  entityType: EditableEntityType;
   data: any[];
-  dataGraph: any; // Full data graph for relational lookups
+  dataGraph: any;
   onAdd: () => void;
   onEdit: (record: any) => void;
   onDelete: (record: any) => void;
@@ -83,7 +114,7 @@ const LiveEntityDataTable = ({ entityType, data, dataGraph, onAdd, onEdit, onDel
         if (data.length === 0) return [];
         const allKeys = Object.keys(data[0]);
         const filteredKeys = allKeys.filter(key => !key.endsWith('_id') && key.toLowerCase() !== 'id');
-        const preferredOrder = ['code', 'name', 'title', 'department_name', 'building_name', 'capacity', 'exam_capacity'];
+        const preferredOrder = ['code', 'name', 'title', 'staff_number', 'first_name', 'last_name', 'department_name', 'building_name', 'capacity', 'exam_capacity', 'can_invigilate'];
         return filteredKeys.sort((a, b) => {
             const indexA = preferredOrder.indexOf(a);
             const indexB = preferredOrder.indexOf(b);
@@ -94,22 +125,18 @@ const LiveEntityDataTable = ({ entityType, data, dataGraph, onAdd, onEdit, onDel
         });
     }, [data]);
 
-    if (data.length === 0) return (
-        <div className="text-center py-8 text-muted-foreground border-2 border-dashed rounded-lg">
-            <p>No data found for {formatHeader(entityType)}.</p>
-            <Button onClick={onAdd} className="mt-4"><PlusCircle className="h-4 w-4 mr-2" />Add First Record</Button>
-        </div>
-    );
-    
     const renderCellContent = (row: any, col: string) => {
         const value = row[col];
         if (col === 'building_name' && entityType === 'rooms' && dataGraph?.buildings) {
             const building = dataGraph.buildings.find((b: any) => b.id === row.building_id);
             return building ? building.name : 'Unknown';
         }
-        if (col === 'department_name' && entityType === 'courses' && dataGraph?.departments) {
+        if (col === 'department_name' && (entityType === 'courses' || entityType === 'staff') && dataGraph?.departments) {
             const department = dataGraph.departments.find((d: any) => d.id === row.department_id);
             return department ? department.name : 'Unknown';
+        }
+        if (typeof value === 'boolean') {
+            return <Badge variant={value ? 'default' : 'secondary'}>{value ? 'Yes' : 'No'}</Badge>;
         }
         return String(value ?? '');
     };
@@ -121,12 +148,7 @@ const LiveEntityDataTable = ({ entityType, data, dataGraph, onAdd, onEdit, onDel
             </div>
             <div className="border rounded-lg overflow-auto max-h-[60vh]">
                 <Table>
-                    <TableHeader className="sticky top-0 bg-background z-10">
-                        <TableRow>
-                            {columns.map(col => <TableHead key={col}>{formatHeader(col)}</TableHead>)}
-                            <TableHead>Actions</TableHead>
-                        </TableRow>
-                    </TableHeader>
+                    <TableHeader className="sticky top-0 bg-background z-10"><TableRow>{columns.map(col => <TableHead key={col}>{formatHeader(col)}</TableHead>)}<TableHead>Actions</TableHead></TableRow></TableHeader>
                     <TableBody>
                         {data.map((row) => (
                             <TableRow key={row.id}>
@@ -146,37 +168,64 @@ const LiveEntityDataTable = ({ entityType, data, dataGraph, onAdd, onEdit, onDel
     );
 };
 
-
-// --- Active Session Management Component ---
 const ActiveSessionManager = ({ sessionId, onStartNewSession }: { sessionId: string; onStartNewSession: () => void; }) => {
   const { activeSessionName } = useAppStore();
-  const { dataGraph, isLoading, error, createEntity, updateEntity, deleteEntity } = useSessionManager(sessionId);
+  const { dataGraph, isLoading, error, createEntity, updateEntity, deleteEntity, paginatedData, isPaginating, fetchPaginatedEntities } = useSessionManager(sessionId);
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<any | null>(null);
-  const [currentEntityType, setCurrentEntityType] = useState<'courses' | 'buildings' | 'rooms' | null>(null);
+  const [currentEntityType, setCurrentEntityType] = useState<EditableEntityType | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   
-  const toSingularEntityType = (plural: 'courses' | 'buildings' | 'rooms'): 'course' | 'building' | 'room' => {
-    return plural.slice(0, -1) as 'course' | 'building' | 'room';
+  const [studentCache, setStudentCache] = useState<any[]>([]);
+  const studentMap = useMemo(() => new Map(studentCache.map(s => [s.id, s])), [studentCache]);
+
+  // MOVED HOOK TO THE TOP LEVEL
+  const studentData = paginatedData.student;
+  const studentColumns = useMemo(() => {
+    if (!studentData?.items || studentData.items.length === 0) return [];
+    return Object.keys(studentData.items[0]).filter(key => !key.endsWith('_id') && key.toLowerCase() !== 'id');
+  }, [studentData?.items]);
+
+  useEffect(() => {
+    if (sessionId) {
+      fetchPaginatedEntities('student', { page: 1, page_size: 50 });
+    }
+  }, [sessionId, fetchPaginatedEntities]);
+
+  useEffect(() => {
+    const newStudents = paginatedData.student?.items;
+    if (newStudents && newStudents.length > 0) {
+      setStudentCache(prevCache => {
+        const existingIds = new Set(prevCache.map(s => s.id));
+        const uniqueNewStudents = newStudents.filter(s => !existingIds.has(s.id));
+        return [...prevCache, ...uniqueNewStudents];
+      });
+    }
+  }, [paginatedData.student]);
+
+
+  const toSingularEntityType = (plural: EditableEntityType): 'course' | 'building' | 'room' | 'department' | 'staff' | 'exam' => {
+      if (plural === 'staff') return 'staff';
+      return plural.slice(0, -1) as 'course' | 'building' | 'room' | 'department' | 'exam';
   };
 
-  const handleAdd = (entityType: 'courses' | 'buildings' | 'rooms') => {
+  const handleAdd = (entityType: EditableEntityType) => {
     setCurrentEntityType(entityType);
     setSelectedRecord({});
     setIsEditing(false);
     setIsFormOpen(true);
   };
 
-  const handleEdit = (entityType: 'courses' | 'buildings' | 'rooms', record: any) => {
+  const handleEdit = (entityType: EditableEntityType, record: any) => {
     setCurrentEntityType(entityType);
     setSelectedRecord(record);
     setIsEditing(true);
     setIsFormOpen(true);
   };
 
-  const handleDelete = (entityType: 'courses' | 'buildings' | 'rooms', record: any) => {
+  const handleDelete = (entityType: EditableEntityType, record: any) => {
     setCurrentEntityType(entityType);
     setSelectedRecord(record);
     setIsDeleteDialogOpen(true);
@@ -193,37 +242,39 @@ const ActiveSessionManager = ({ sessionId, onStartNewSession }: { sessionId: str
   const handleSave = async (formData: any) => {
     if (currentEntityType) {
       const singularType = toSingularEntityType(currentEntityType);
-      const success = isEditing
-        ? await updateEntity(singularType, selectedRecord.id, formData)
-        : await createEntity(singularType, formData);
-      
-      if (success) {
+      if (await (isEditing ? updateEntity(singularType, selectedRecord.id, formData) : createEntity(singularType, formData))) {
         setIsFormOpen(false);
         setSelectedRecord(null);
       }
     }
   };
 
+  const handleStudentPageChange = (newPage: number) => {
+    fetchPaginatedEntities('student', { page: newPage, page_size: 50 });
+  };
+
+  // CONDITIONAL RETURNS ARE NOW AFTER ALL HOOKS
   if (isLoading) return <div className="flex justify-center items-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>;
   if (error) return <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{error.message}</AlertDescription></Alert>;
   if (!dataGraph) return <div className="text-center py-8 text-muted-foreground">No data found for this session.</div>;
 
   const entities = [
       { type: 'courses', icon: BookOpen, data: dataGraph.courses || [] },
+      { type: 'students', icon: GraduationCap, data: dataGraph.students || [] }, 
+      { type: 'registrations', icon: ClipboardList, data: [] }, 
+      { type: 'staff', icon: Users, data: dataGraph.staff || [] },
+      { type: 'departments', icon: Library, data: dataGraph.departments || [] },
       { type: 'buildings', icon: Building, data: dataGraph.buildings || [] },
       { type: 'rooms', icon: MapPin, data: dataGraph.rooms || [] },
-      { type: 'students', icon: Users, data: dataGraph.students || [] },
+      { type: 'exams', icon: FileText, data: dataGraph.exams || [] },
   ];
 
-  const editableEntities = ['courses', 'buildings', 'rooms'];
+  const editableEntities: EditableEntityType[] = ['courses', 'buildings', 'rooms', 'departments', 'staff', 'exams'];
     
   return (
     <div className="space-y-6">
         <div className="flex items-center justify-between">
-            <div>
-                <h1 className="text-2xl font-semibold">Session Management</h1>
-                <p className="text-muted-foreground">Manage live data for the active session: <span className="font-medium text-primary">{activeSessionName}</span></p>
-            </div>
+            <div><h1 className="text-2xl font-semibold">Session Management</h1><p className="text-muted-foreground">Manage live data for the active session: <span className="font-medium text-primary">{activeSessionName}</span></p></div>
             <Button onClick={onStartNewSession} variant="outline"><PlusCircle className="h-4 w-4 mr-2" />Create New Session</Button>
         </div>
         <Card>
@@ -233,14 +284,35 @@ const ActiveSessionManager = ({ sessionId, onStartNewSession }: { sessionId: str
                     <TabsList className="flex-wrap h-auto">{entities.map(e => <TabsTrigger key={e.type} value={e.type}><e.icon className="h-4 w-4 mr-2"/>{formatHeader(e.type)}</TabsTrigger>)}</TabsList>
                     {entities.map(e => (
                         <TabsContent key={e.type} value={e.type} className="mt-4">
-                            {editableEntities.includes(e.type) ? (
+                           {e.type === 'registrations' ? (
+                                <CourseRegistrationsViewer courses={dataGraph.courses || []} studentMap={studentMap} />
+                           ) : e.type === 'students' ? (
+                                <div className="space-y-4">
+                                    <div className="border rounded-lg overflow-auto max-h-[60vh]">
+                                        <Table>
+                                            <TableHeader className="sticky top-0 bg-background z-10"><TableRow>{studentColumns.map(col => <TableHead key={col}>{formatHeader(col)}</TableHead>)}</TableRow></TableHeader>
+                                            <TableBody>
+                                                {isPaginating && (!studentData || studentData.items.length === 0) ? (
+                                                    <TableRow><TableCell colSpan={studentColumns.length} className="h-24 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin" /></TableCell></TableRow>
+                                                ) : studentData?.items.map((row: any, index: number) => <TableRow key={row.id || index}>{studentColumns.map(col => <TableCell key={col}>{String(row[col] ?? '')}</TableCell>)}</TableRow>)}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+                                    <div className="flex items-center justify-end space-x-2">
+                                        <span className="text-sm text-muted-foreground">
+                                            Page {studentData?.pagination?.page || 1} of {studentData?.pagination?.total_pages || 1}
+                                        </span>
+                                        <Button variant="outline" size="sm" onClick={() => handleStudentPageChange((studentData?.pagination?.page || 1) - 1)} disabled={(studentData?.pagination?.page || 1) <= 1 || isPaginating}><ChevronLeft className="h-4 w-4" />Previous</Button>
+                                        <Button variant="outline" size="sm" onClick={() => handleStudentPageChange((studentData?.pagination?.page || 1) + 1)} disabled={(studentData?.pagination?.page || 1) >= (studentData?.pagination?.total_pages || 1) || isPaginating}>Next<ChevronRight className="h-4 w-4" /></Button>
+                                    </div>
+                                </div>
+                            ) : editableEntities.includes(e.type as any) ? (
                                 <LiveEntityDataTable 
-                                    entityType={e.type as 'courses' | 'buildings' | 'rooms'} 
-                                    data={e.data}
-                                    dataGraph={dataGraph}
-                                    onAdd={() => handleAdd(e.type as 'courses' | 'buildings' | 'rooms')}
-                                    onEdit={(record) => handleEdit(e.type as 'courses' | 'buildings' | 'rooms', record)}
-                                    onDelete={(record) => handleDelete(e.type as 'courses' | 'buildings' | 'rooms', record)}
+                                    entityType={e.type as EditableEntityType} 
+                                    data={e.data} dataGraph={dataGraph}
+                                    onAdd={() => handleAdd(e.type as EditableEntityType)}
+                                    onEdit={(record) => handleEdit(e.type as EditableEntityType, record)}
+                                    onDelete={(record) => handleDelete(e.type as EditableEntityType, record)}
                                 />
                             ) : (
                                 <ReadOnlyDataTable entityType={e.type} data={e.data} />
@@ -253,22 +325,10 @@ const ActiveSessionManager = ({ sessionId, onStartNewSession }: { sessionId: str
 
         <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}><DialogContent className="max-w-3xl">
             <DialogHeader><DialogTitle>{isEditing ? 'Edit' : 'Create'} {formatHeader(currentEntityType || '')}</DialogTitle></DialogHeader>
-            {selectedRecord && currentEntityType && (
-              <SessionDataForm 
-                key={`${currentEntityType}-${selectedRecord.id || 'new'}`}
-                entityType={currentEntityType}
-                initialData={selectedRecord}
-                dataGraph={dataGraph}
-                onSave={handleSave}
-                onCancel={() => setIsFormOpen(false)}
-              />
-            )}
+            {selectedRecord && currentEntityType && <SessionDataForm key={`${currentEntityType}-${selectedRecord.id || 'new'}`} entityType={currentEntityType} initialData={selectedRecord} dataGraph={dataGraph} onSave={handleSave} onCancel={() => setIsFormOpen(false)} />}
         </DialogContent></Dialog>
         
-        <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}><AlertDialogContent>
-            <AlertDialogHeader><AlertDialogTitle>Are you sure?</AlertDialogTitle><AlertDialogDescription>This action cannot be undone. This will permanently delete the record.</AlertDialogDescription></AlertDialogHeader>
-            <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={handleConfirmDelete}>Continue</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent></AlertDialog>
+        <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Are you sure?</AlertDialogTitle><AlertDialogDescription>This will permanently delete the record.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={handleConfirmDelete}>Continue</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
   );
 };
@@ -407,36 +467,38 @@ const SessionSetupWizard = ({ onSessionCreated, onCancel }: { onSessionCreated: 
 
 // --- Main Exported Component ---
 export function SessionManagement() {
-    const { activeSessionId, initializeApp } = useAppStore();
-    const [isCreatingNew, setIsCreatingNew] = useState(!activeSessionId);
-    const [isLoading, setIsLoading] = useState(true);
+  const { activeSessionId, initializeApp } = useAppStore();
+  const [isCreatingNew, setIsCreatingNew] = useState(!activeSessionId);
+  const [isLoading, setIsLoading] = useState(true);
 
-    useEffect(() => {
-        setIsLoading(true);
-        setTimeout(() => {
-            const currentSession = useAppStore.getState().activeSessionId;
-            setIsCreatingNew(!currentSession);
-            setIsLoading(false);
-        }, 500);
-    }, [activeSessionId]);
+  useEffect(() => {
+    setIsLoading(true);
+    // Simulate a brief moment for the app to initialize
+    setTimeout(() => {
+      const currentSession = useAppStore.getState().activeSessionId;
+      setIsCreatingNew(!currentSession);
+      setIsLoading(false);
+    }, 500);
+  }, [activeSessionId]);
 
-    const handleSessionCreated = useCallback(() => {
-        initializeApp().then(() => setIsCreatingNew(false));
-    }, [initializeApp]);
+  const handleSessionCreated = useCallback(() => {
+    initializeApp().then(() => setIsCreatingNew(false));
+  }, [initializeApp]);
 
-    const handleCancelCreation = () => {
-        if (activeSessionId) {
-            setIsCreatingNew(false);
-        }
-    };
-
-    if (isLoading) {
-        return <div className="flex items-center justify-center h-[calc(100vh-200px)]"><Loader2 className="h-12 w-12 animate-spin text-primary" /></div>;
+  const handleCancelCreation = () => {
+    if (activeSessionId) {
+      setIsCreatingNew(false);
     }
+  };
 
-    if (isCreatingNew) {
-        return <SessionSetupWizard onSessionCreated={handleSessionCreated} onCancel={handleCancelCreation} />;
-    }
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-[calc(100vh-200px)]"><Loader2 className="h-12 w-12 animate-spin text-primary" /></div>;
+  }
+
+  if (isCreatingNew) {
+    return <SessionSetupWizard onSessionCreated={handleSessionCreated} onCancel={handleCancelCreation} />;
+  }
   
-    return <ActiveSessionManager sessionId={activeSessionId!} onStartNewSession={() => setIsCreatingNew(true)} />;
+  // Render the manager for the active session
+  return <ActiveSessionManager sessionId={activeSessionId!} onStartNewSession={() => setIsCreatingNew(true)} />;
 }

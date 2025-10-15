@@ -52,7 +52,7 @@ const navigation = [
   { name: 'Timetable', href: 'timetable', icon: Calendar, description: 'View and edit schedule' },
   { name: 'Constraints', href: 'constraints', icon: Sliders, description: 'Configure rules and weights' },
   // --- MODIFICATION START ---
-  { name: 'Session Management', href: 'session-setup', icon: Zap, description: 'Create or manage sessions' },
+  { name: 'Session Setup', href: 'session-setup', icon: Zap, description: 'Create or manage sessions' },
   // --- MODIFICATION END ---
   { name: 'User Management', href: 'user-management', icon: User, description: 'Manage users and permissions' },
   { name: 'Export', href: 'export', icon: Download, description: 'Download timetables as PDF' },
@@ -169,18 +169,6 @@ export function Layout({ children }: LayoutProps) {
                     <Search className="h-4 w-4" /><span className="text-muted-foreground">Search...</span><div className="ml-auto flex items-center gap-1"><kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100"><span className="text-xs">{navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}</span>K</kbd></div>
                   </Button>
                   
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="flex items-center gap-2"><ListCollapse className="h-4 w-4" /><span>Default Config</span></Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuLabel>Constraint Configurations</DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem>Default</DropdownMenuItem>
-                      <DropdownMenuItem>Fast Solve</DropdownMenuItem>
-                      <DropdownMenuItem>High Quality</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
 
                   <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="sm" onClick={() => setCurrentPage('notifications')} className="h-8 w-8 p-0 relative"><Bell className="h-4 w-4" />{unreadNotifications > 0 && <Badge variant="destructive" className="absolute -top-1 -right-1 h-4 w-4 p-0 text-xs">{unreadNotifications}</Badge>}</Button></TooltipTrigger><TooltipContent><p>{unreadNotifications > 0 ? `${unreadNotifications} unread notifications` : 'Notifications'}</p></TooltipContent></Tooltip>
                   <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={toggleTheme}>{settings.theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}</Button></TooltipTrigger><TooltipContent><p>Switch to {settings.theme === 'light' ? 'dark' : 'light'} mode</p></TooltipContent></Tooltip>

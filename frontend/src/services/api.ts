@@ -114,6 +114,7 @@ export const api = {
   // --- START: LIVE SESSION MANAGEMENT API ---
   getFullSessionDataGraph: (sessionId: string) => apiService.get(`/session-management/${sessionId}/data-graph`),
   
+  getPaginatedCoursesInSession: (sessionId: string, params: { page?: number, page_size?: number }) => apiService.get(`/session-management/${sessionId}/courses`, { params }),
   createCourseInSession: (sessionId: string, payload: any) => apiService.post(`/session-management/${sessionId}/courses`, payload),
   updateCourseInSession: (sessionId: string, courseId: string, payload: any) => apiService.put(`/session-management/${sessionId}/courses/${courseId}`, payload),
   deleteCourseInSession: (sessionId: string, courseId: string) => apiService.delete(`/session-management/${sessionId}/courses/${courseId}`),
@@ -125,6 +126,27 @@ export const api = {
   createRoomInSession: (sessionId: string, payload: any) => apiService.post(`/session-management/${sessionId}/rooms`, payload),
   updateRoomInSession: (sessionId: string, roomId: string, payload: any) => apiService.put(`/session-management/${sessionId}/rooms/${roomId}`, payload),
   deleteRoomInSession: (sessionId: string, roomId: string) => apiService.delete(`/session-management/${sessionId}/rooms/${roomId}`),
+  
+  getPaginatedDepartmentsInSession: (sessionId: string, params: { page?: number, page_size?: number }) => apiService.get(`/session-management/${sessionId}/departments`, { params }),
+  createDepartmentInSession: (sessionId: string, payload: any) => apiService.post(`/session-management/${sessionId}/departments`, payload),
+  updateDepartmentInSession: (sessionId: string, departmentId: string, payload: any) => apiService.put(`/session-management/${sessionId}/departments/${departmentId}`, payload),
+  deleteDepartmentInSession: (sessionId: string, departmentId: string) => apiService.delete(`/session-management/${sessionId}/departments/${departmentId}`),
+
+  getPaginatedStaffInSession: (sessionId: string, params: { page?: number, page_size?: number }) => apiService.get(`/session-management/${sessionId}/staff`, { params }),
+  createStaffInSession: (sessionId: string, payload: any) => apiService.post(`/session-management/${sessionId}/staff`, payload),
+  updateStaffInSession: (sessionId: string, staffId: string, payload: any) => apiService.put(`/session-management/${sessionId}/staff/${staffId}`, payload),
+  deleteStaffInSession: (sessionId: string, staffId: string) => apiService.delete(`/session-management/${sessionId}/staff/${staffId}`),
+
+  getPaginatedExamsInSession: (sessionId: string, params: { page?: number, page_size?: number }) => apiService.get(`/session-management/${sessionId}/exams`, { params }),
+  createExamInSession: (sessionId: string, payload: any) => apiService.post(`/session-management/${sessionId}/exams`, payload),
+  updateExamInSession: (sessionId: string, examId: string, payload: any) => apiService.put(`/session-management/${sessionId}/exams/${examId}`, payload),
+  deleteExamInSession: (sessionId: string, examId: string) => apiService.delete(`/session-management/${sessionId}/exams/${examId}`),
+  
+  getPaginatedStudentsInSession: (sessionId: string, params: { page?: number, page_size?: number }) => apiService.get(`/session-management/${sessionId}/students`, { params }),
+
+  createStaffUnavailabilityInSession: (sessionId: string, payload: any) => apiService.post(`/session-management/${sessionId}/staff-unavailability`, payload),
+  getStaffUnavailabilityInSession: (sessionId: string, staffId: string) => apiService.get(`/session-management/${sessionId}/staff/${staffId}/unavailability`),
+  deleteStaffUnavailabilityInSession: (sessionId: string, unavailabilityId: string) => apiService.delete(`/session-management/${sessionId}/staff-unavailability/${unavailabilityId}`),
   // --- END: LIVE SESSION MANAGEMENT API ---
 
   addStagedBuilding: (sessionId: string, data: StagingBuildingCreate) => apiService.post(`/staging-records/${sessionId}/buildings`, data),

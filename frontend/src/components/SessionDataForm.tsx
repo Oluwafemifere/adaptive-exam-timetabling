@@ -5,9 +5,10 @@ import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { formatHeader } from '../utils/utils';
+import { Checkbox } from './ui/checkbox';
 
-// --- Configuration for form fields and their relationships ---
-const ENTITY_FIELD_CONFIG: Record<string, Record<string, { type: 'text' | 'number' | 'relation'; ref?: string; labelField?: string }>> = {
+// --- EXPANDED Configuration for form fields and their relationships ---
+const ENTITY_FIELD_CONFIG: Record<string, Record<string, { type: 'text' | 'number' | 'relation' | 'boolean'; ref?: string; labelField?: string }>> = {
   courses: {
     code: { type: 'text' },
     title: { type: 'text' },
@@ -27,12 +28,33 @@ const ENTITY_FIELD_CONFIG: Record<string, Record<string, { type: 'text' | 'numbe
     capacity: { type: 'number' },
     exam_capacity: { type: 'number' },
     building_id: { type: 'relation', ref: 'buildings', labelField: 'name' },
-    // Add other fields like room_type if needed
+  },
+  departments: {
+    code: { type: 'text' },
+    name: { type: 'text' },
+    faculty_id: { type: 'relation', ref: 'faculties', labelField: 'name' },
+  },
+  staff: {
+    staff_number: { type: 'text' },
+    first_name: { type: 'text' },
+    last_name: { type: 'text' },
+    position: { type: 'text' },
+    staff_type: { type: 'text' },
+    department_id: { type: 'relation', ref: 'departments', labelField: 'name' },
+    can_invigilate: { type: 'boolean' },
+  },
+  exams: {
+    course_id: { type: 'relation', ref: 'courses', labelField: 'title' },
+    duration_minutes: { type: 'number' },
+    expected_students: { type: 'number' },
+    is_practical: { type: 'boolean' },
+    morning_only: { type: 'boolean' },
+    requires_projector: { type: 'boolean' },
   },
 };
 
 interface SessionDataFormProps {
-  entityType: 'courses' | 'buildings' | 'rooms';
+  entityType: 'courses' | 'buildings' | 'rooms' | 'departments' | 'staff' | 'exams';
   initialData: any;
   dataGraph: any; // The full data graph for populating selects
   onSave: (data: any) => void;
@@ -45,7 +67,7 @@ export const SessionDataForm: React.FC<SessionDataFormProps> = ({ entityType, in
   const fieldConfig = ENTITY_FIELD_CONFIG[entityType] || {};
   const formFields = Object.keys(fieldConfig);
 
-  const handleChange = (key: string, value: string | number) => {
+  const handleChange = (key: string, value: string | number | boolean) => {
     const fieldType = fieldConfig[key]?.type;
     const finalValue = fieldType === 'number' ? Number(value) : value;
     setFormData((prev: any) => ({ ...prev, [key]: finalValue }));
@@ -79,6 +101,18 @@ export const SessionDataForm: React.FC<SessionDataFormProps> = ({ entityType, in
           </SelectContent>
         </Select>
       );
+    }
+    
+    if (config.type === 'boolean') {
+        return (
+            <div className="flex items-center h-10">
+                <Checkbox
+                    id={key}
+                    checked={!!value}
+                    onCheckedChange={(checked) => handleChange(key, !!checked)}
+                />
+            </div>
+        );
     }
 
     return (

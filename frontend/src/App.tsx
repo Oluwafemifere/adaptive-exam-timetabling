@@ -8,7 +8,7 @@ import { Scheduling } from "./pages/Scheduling";
 import { Timetable } from "./pages/Timetable";
 import { Constraints } from "./pages/Constraints";
 // --- MODIFICATION START ---
-import { SessionManagement } from "./pages/SessionManagement"; // Updated import
+// import { SessionManagement } from "./pages/SessionManagement"; // Updated import
 // --- MODIFICATION END ---
 import { UserManagement } from "./pages/UserManagement";
 import { Notifications } from "./pages/Notifications";
@@ -17,6 +17,7 @@ import { StudentPortal } from "./pages/StudentPortal";
 import { StaffPortal } from "./pages/StaffPortal";
 import { useAppStore } from "./store";
 import { Export } from "./pages/Export";
+import { SessionSetup } from "./pages/SessionSetup";
 
 function AppContent() {
   const { currentPage, isAuthenticated, user, initializeApp } = useAppStore();
@@ -48,7 +49,7 @@ function AppContent() {
         case "timetable": return <Timetable />;
         case "constraints": return <Constraints />;
         // --- MODIFICATION START ---
-        case "session-setup": return <SessionManagement />; // Render the new component
+        case "session-setup": return <SessionSetup />; // Render the new component
         // --- MODIFICATION END ---
         case "user-management": return <UserManagement />;
         case "notifications": return <Notifications />;

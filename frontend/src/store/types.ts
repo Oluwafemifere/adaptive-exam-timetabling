@@ -481,6 +481,7 @@ export interface SchedulingJob {
   created_at: string;
   started_at?: string | null;
   completed_at?: string | null;
+  is_published?: boolean;
   result_data?: {
       solution?: {
           solution_id: string;

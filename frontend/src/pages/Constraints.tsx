@@ -304,7 +304,7 @@ export function Constraints() {
         <TabsContent value="weights" className="space-y-6">
           <Alert><Info className="h-4 w-4" /><AlertDescription>Adjust the relative importance of soft constraints. Higher weights mean higher priority.</AlertDescription></Alert>
           <Card>
-            <CardHeader><CardTitle>Soft Constraint Priorities</CardTitle><CardDescription>Adjust weights for enabled soft constraints (e.g., 0-1000).</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Soft Constraint Priorities</CardTitle><CardDescription>Adjust weights for enabled soft constraints (e.g., 0-100).</CardDescription></CardHeader>
             <CardContent className="space-y-6 pt-6">
               {localConfig.rules.filter(c => c.type === 'soft' && c.is_enabled).map((rule) => (
                 <div key={rule.rule_id} className="space-y-3">
@@ -312,7 +312,7 @@ export function Constraints() {
                     <div><h4 className="font-medium">{rule.name}</h4><p className="text-sm text-muted-foreground">{rule.description}</p></div>
                     <div className="text-right"><div className="text-sm font-medium">Weight: {rule.weight}</div></div>
                   </div>
-                  <div className="px-2"><Slider value={[rule.weight]} onValueChange={([value]) => handleRuleChange(rule.rule_id, { weight: value })} max={1000} step={10} /></div>
+                  <div className="px-2"><Slider value={[rule.weight]} onValueChange={([value]) => handleRuleChange(rule.rule_id, { weight: value })} max={100} step={5} /></div>
                 </div>
               ))}
             </CardContent>

@@ -8,6 +8,22 @@ import { SessionSetupCreate, SessionSetupSummary } from '../pages/SessionSetup';
 import { config } from '../config';
 // import { SessionSetupCreate, SessionSetupSummary } from '../pages/SessionManagement'; 
 import { StagingRecord } from '../store/types';
+
+export type PaginatedEntityType = 'course' | 'department' | 'staff' | 'exam' | 'student';
+
+interface PaginatedDataState {
+  [key: string]: {
+    items: any[];
+    pagination: {
+      total_items: number;
+      total_pages: number;
+      page: number;
+      page_size: number;
+    } | null;
+  };
+}
+
+
 export function useDashboardData() {
 const {
 activeSessionId,
@@ -78,10 +94,13 @@ return () => clearInterval(interval);
 
 return { isLoading, error, refetch: fetchData };
 }
+
 export function useSessionManager(sessionId: string | null) {
   const [dataGraph, setDataGraph] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [paginatedData, setPaginatedData] = useState<PaginatedDataState>({});
+  const [isPaginating, setIsPaginating] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!sessionId) {
@@ -106,6 +125,49 @@ export function useSessionManager(sessionId: string | null) {
     fetchData();
   }, [fetchData]);
 
+  const fetchPaginatedEntities = useCallback(async (
+    entityType: PaginatedEntityType,
+    params: { page?: number; page_size?: number } = { page: 1, page_size: 10 }
+  ) => {
+    if (!sessionId) return;
+
+    setIsPaginating(true);
+    try {
+      let response;
+      switch (entityType) {
+        case 'course':
+          response = await api.getPaginatedCoursesInSession(sessionId, params);
+          break;
+        case 'department':
+          response = await api.getPaginatedDepartmentsInSession(sessionId, params);
+          break;
+        case 'staff':
+          response = await api.getPaginatedStaffInSession(sessionId, params);
+          break;
+        case 'exam':
+          response = await api.getPaginatedExamsInSession(sessionId, params);
+          break;
+        case 'student':
+          response = await api.getPaginatedStudentsInSession(sessionId, params);
+          break;
+        default:
+          throw new Error(`Unknown paginated entity type: ${entityType}`);
+      }
+      
+      const { items, ...pagination } = response.data;
+      setPaginatedData(prev => ({
+        ...prev,
+        [entityType]: { items, pagination },
+      }));
+
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || `Failed to fetch ${entityType} data.`;
+      toast.error(detail);
+    } finally {
+      setIsPaginating(false);
+    }
+  }, [sessionId]);
+
   const handleMutation = async (
     action: Promise<any>,
     successMessage: string,
@@ -123,43 +185,81 @@ export function useSessionManager(sessionId: string | null) {
     }
   };
 
-  const createEntity = (entityType: 'course' | 'building' | 'room', payload: any) => {
+  const entityTypes = ['course', 'building', 'room', 'department', 'staff', 'exam'] as const;
+  type EntityType = typeof entityTypes[number];
+
+
+  const createEntity = (entityType: 'course' | 'building' | 'room' | 'department' | 'staff' | 'exam', payload: any) => {
     if (!sessionId) return Promise.resolve(false);
     let action;
     switch (entityType) {
       case 'course': action = api.createCourseInSession(sessionId, payload); break;
       case 'building': action = api.createBuildingInSession(sessionId, payload); break;
       case 'room': action = api.createRoomInSession(sessionId, payload); break;
+      case 'department': action = api.createDepartmentInSession(sessionId, payload); break;
+      case 'staff': action = api.createStaffInSession(sessionId, payload); break;
+      case 'exam': action = api.createExamInSession(sessionId, payload); break;
       default: return Promise.resolve(false);
     }
     return handleMutation(action, `${entityType} created successfully.`, `Failed to create ${entityType}.`);
   };
 
-  const updateEntity = (entityType: 'course' | 'building' | 'room', entityId: string, payload: any) => {
+  const updateEntity = (entityType: 'course' | 'building' | 'room' | 'department' | 'staff' | 'exam', entityId: string, payload: any) => {
     if (!sessionId) return Promise.resolve(false);
     let action;
     switch (entityType) {
       case 'course': action = api.updateCourseInSession(sessionId, entityId, payload); break;
       case 'building': action = api.updateBuildingInSession(sessionId, entityId, payload); break;
       case 'room': action = api.updateRoomInSession(sessionId, entityId, payload); break;
+      case 'department': action = api.updateDepartmentInSession(sessionId, entityId, payload); break;
+      case 'staff': action = api.updateStaffInSession(sessionId, entityId, payload); break;
+      case 'exam': action = api.updateExamInSession(sessionId, entityId, payload); break;
       default: return Promise.resolve(false);
     }
     return handleMutation(action, `${entityType} updated successfully.`, `Failed to update ${entityType}.`);
   };
 
-  const deleteEntity = (entityType: 'course' | 'building' | 'room', entityId: string) => {
+  const deleteEntity = (entityType: 'course' | 'building' | 'room' | 'department' | 'staff' | 'exam', entityId: string) => {
     if (!sessionId) return Promise.resolve(false);
     let action;
     switch (entityType) {
       case 'course': action = api.deleteCourseInSession(sessionId, entityId); break;
       case 'building': action = api.deleteBuildingInSession(sessionId, entityId); break;
       case 'room': action = api.deleteRoomInSession(sessionId, entityId); break;
+      case 'department': action = api.deleteDepartmentInSession(sessionId, entityId); break;
+      case 'staff': action = api.deleteStaffInSession(sessionId, entityId); break;
+      case 'exam': action = api.deleteExamInSession(sessionId, entityId); break;
       default: return Promise.resolve(false);
     }
     return handleMutation(action, `${entityType} deleted successfully.`, `Failed to delete ${entityType}.`);
   };
+  
+  const createStaffUnavailability = (payload: any) => {
+    if (!sessionId) return Promise.resolve(false);
+    const action = api.createStaffUnavailabilityInSession(sessionId, payload);
+    return handleMutation(action, 'Staff unavailability added.', 'Failed to add unavailability.');
+  };
 
-  return { dataGraph, isLoading, error, refetch: fetchData, createEntity, updateEntity, deleteEntity };
+  const deleteStaffUnavailability = (unavailabilityId: string) => {
+      if (!sessionId) return Promise.resolve(false);
+      const action = api.deleteStaffUnavailabilityInSession(sessionId, unavailabilityId);
+      return handleMutation(action, 'Staff unavailability removed.', 'Failed to remove unavailability.');
+  };
+
+  return { 
+    dataGraph, 
+    isLoading, 
+    error, 
+    refetch: fetchData, 
+    createEntity, 
+    updateEntity, 
+    deleteEntity,
+    createStaffUnavailability,
+    deleteStaffUnavailability,
+    paginatedData,
+    isPaginating,
+    fetchPaginatedEntities,
+  };
 }
 export function useUserManagementData() {
 const { users, setUsers } = useAppStore(state => ({

@@ -178,7 +178,7 @@ export function SessionSetup() {
         allDone = true;
     }
 
-    if (allDone && allTrackedFiles.length > 0) {
+    if (allDone && isPolling && allTrackedFiles.length > 0) {
       setIsPolling(false);
       toast.info("File processing complete. You may now proceed.");
     }
